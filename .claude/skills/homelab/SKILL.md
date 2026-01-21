@@ -55,6 +55,7 @@ VM and container management via REST API.
 - **[API Reference](proxmox/API.md)** - Endpoints and authentication
 - **[Operations Guide](proxmox/OPERATIONS.md)** - Common tasks
 - **[Python Script](proxmox/scripts/proxmox_api.py)** - CLI tool
+- **[Community Scripts](proxmox/COMMUNITY_SCRIPTS.md)** - Quick app installation (200+ apps)
 
 ### Pi-hole
 DNS and ad-blocking management.
