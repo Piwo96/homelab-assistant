@@ -1,0 +1,11 @@
+# Homelab Assistant - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core - Required for all skills
+requests>=2.28.0
+
+# Home Assistant Dashboard API - WebSocket support
+websockets>=12.0
+
+# YAML support for dashboard configuration files
+pyyaml>=6.0

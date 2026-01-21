@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # Reuse UniFi API client
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "network" / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "unifi-network" / "scripts"))
 try:
     from network_api import UniFiAPI, load_env
 except ImportError:
