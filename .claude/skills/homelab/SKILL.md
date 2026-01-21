@@ -78,6 +78,12 @@ Camera and NVR management.
 NAS mount management for LXC containers.
 - **[NAS Guide](storage/NAS.md)** - QNAP integration and bind mounts
 
+### Home Assistant
+Smart home automation and control.
+- **[API Reference](homeassistant/API.md)** - Endpoints and authentication
+- **[Operations Guide](homeassistant/OPERATIONS.md)** - Common tasks
+- **[Python Script](homeassistant/scripts/homeassistant_api.py)** - CLI tool
+
 ## Common Commands
 
 ```bash
@@ -115,6 +121,16 @@ protect_api.py cameras                  # List cameras
 protect_api.py snapshot <camera-id>     # Get snapshot
 protect_api.py events --last 24h        # Last 24h events
 protect_api.py lights                   # List lights
+
+# Home Assistant
+homeassistant_api.py status             # Check HA status
+homeassistant_api.py entities --domain light  # List lights
+homeassistant_api.py turn-on light.living_room --brightness 200
+homeassistant_api.py turn-off light.kitchen
+homeassistant_api.py list-automations   # List all automations
+homeassistant_api.py trigger automation.motion_light
+homeassistant_api.py activate-scene scene.good_night
+homeassistant_api.py run-script script.morning_routine
 ```
 
 ## Configuration
