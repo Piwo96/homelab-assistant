@@ -33,12 +33,7 @@ Skills are your instruction set. They live in these locations:
 
 ### Creating New Skills
 
-When creating a new skill:
-
-1. **Project skill**: Create in `.claude/skills/skill-name/`
-2. **Global skill**: Create in the `chainmatics-skills` repository under `global-skills/skill-name/`, then run `/skill-sync` to install locally
-
-Always ask the user whether the skill should be project-specific or global.
+When creating a new skill, check if a global `/skill-creator` skill exists and use it. The skill-creator provides structured guidance for authoring skills following best practices.
 
 ### Syncing Global Skills
 
@@ -63,7 +58,7 @@ skills/
 
 ## Self-Annealing
 
-When something breaks:
+### When something breaks:
 1. Read error message and stack trace
 2. Fix the issue and test again
 3. Update the relevant skill with what you learned (API limits, edge cases, better approaches)
@@ -71,7 +66,16 @@ When something breaks:
 
 **For coding errors:** Use the global skill `/error-handling-patterns` for guidance on robust error handling, retry patterns, circuit breakers, and graceful degradation. This skill covers best practices across TypeScript, Python, Rust, and Go.
 
-Skills are living documents. When you discover constraints, better approaches, or common errors: **update the skill** (ask first unless explicitly told to modify freely).
+### When new functionality is needed:
+1. User requests a capability not yet covered by the skill
+2. If it fits thematically: extend the existing skill (API endpoints, scripts, documentation)
+3. If it doesn't fit: create a new skill using `/skill-creator`
+4. Test the new functionality
+5. System now handles more scenarios
+
+**Decision guide:** Follow single responsibility principle - each skill should do one thing well. If the new functionality would dilute the skill's focus or conflict with its naming, create a separate skill.
+
+Skills are living documents. When you discover constraints, better approaches, common errors, or **new capabilities**: **update the skill** (ask first unless explicitly told to modify freely).
 
 ## Operating Principles
 
