@@ -35,10 +35,6 @@ Skills are your instruction set. They live in these locations:
 
 When creating a new skill, check if a global `/skill-creator` skill exists and use it. The skill-creator provides structured guidance for authoring skills following best practices.
 
-### Syncing Global Skills
-
-This repository includes a project skill `/skill-sync` that synchronizes global skills to local directories. Use it to install or update skills selectively. The script pulls latest changes and lets you choose which skills to install.
-
 ### Using Skills
 
 1. **Check for skills first**: Before doing a task manually, check if a skill exists
