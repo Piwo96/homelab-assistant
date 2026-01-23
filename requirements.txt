@@ -9,3 +9,20 @@ websockets>=12.0
 
 # YAML support for dashboard configuration files
 pyyaml>=6.0
+
+# === Telegram Agent Dependencies ===
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# HTTP Client (async)
+httpx>=0.26.0
+
+# Wake-on-LAN
+wakeonlan>=3.1.0
+
+# Claude API for skill creation
+anthropic>=0.40.0
+
+# Configuration
+pydantic-settings>=2.1.0

@@ -1,0 +1,75 @@
+"""Configuration management using Pydantic Settings."""
+
+from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from typing import List
+from pathlib import Path
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    # Telegram Bot
+    telegram_bot_token: str
+    telegram_webhook_secret: str
+    telegram_allowed_users: List[int] = []
+    admin_telegram_id: int
+
+    # LM Studio (local LLM)
+    lm_studio_url: str = "http://192.168.178.50:1234"
+    lm_studio_timeout: int = 30
+
+    # Gaming PC (for Wake-on-LAN)
+    gaming_pc_ip: str = "192.168.178.50"
+    gaming_pc_mac: str = ""
+
+    # Claude API (for skill creation)
+    anthropic_api_key: str = ""
+
+    # Approval settings
+    approval_timeout_minutes: int = 5
+
+    # Project paths
+    project_root: Path = Path(__file__).parent.parent
+
+    @field_validator("telegram_allowed_users", mode="before")
+    @classmethod
+    def parse_allowed_users(cls, v):
+        """Parse comma-separated user IDs into a list of integers."""
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            try:
+                return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
+            except ValueError as e:
+                raise ValueError(f"Invalid telegram_allowed_users format: {e}. Expected comma-separated integers.")
+        return v
+
+    @field_validator("gaming_pc_mac", mode="before")
+    @classmethod
+    def normalize_mac(cls, v):
+        """Normalize MAC address format."""
+        if isinstance(v, str) and v:
+            # Remove common separators and convert to standard format
+            clean = v.replace("-", "").replace(":", "").replace(".", "").upper()
+            if len(clean) == 12:
+                return ":".join(clean[i : i + 2] for i in range(0, 12, 2))
+        return v
+
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
+
+# Singleton instance
+_settings = None
+
+
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings

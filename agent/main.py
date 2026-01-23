@@ -1,0 +1,243 @@
+"""FastAPI application for Telegram webhook."""
+
+import logging
+from contextlib import asynccontextmanager
+from typing import Dict, Any
+
+from fastapi import FastAPI, Request, HTTPException
+
+from .config import get_settings, Settings
+from .telegram_handler import (
+    verify_webhook_signature,
+    send_message,
+    answer_callback_query,
+    parse_telegram_user,
+    HELP_TEXT,
+)
+from .intent_classifier import classify_intent
+from .skill_executor import execute_skill
+from .skill_creator import request_skill_creation, handle_approval
+from .tool_registry import get_registry, reload_registry
+from .wol import wake_gaming_pc
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan handler."""
+    settings = get_settings()
+    logger.info("Starting Telegram Homelab Agent...")
+    logger.info(f"Allowed users: {settings.telegram_allowed_users}")
+    logger.info(f"Admin ID: {settings.admin_telegram_id}")
+
+    # Initialize tool registry
+    logger.info("Loading skill registry...")
+    registry = get_registry(settings)
+    logger.info(
+        f"Loaded {len(registry.skills)} skills: {', '.join(registry.get_skill_names())}"
+    )
+
+    yield
+    logger.info("Shutting down...")
+
+
+app = FastAPI(
+    title="Homelab Telegram Agent",
+    description="Smart Home and Homelab control via Telegram",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "healthy", "version": "1.0.0"}
+
+
+@app.post("/reload-skills")
+async def reload_skills():
+    """Reload all skills from disk (for development/hot-reload)."""
+    settings = get_settings()
+    registry = reload_registry(settings)
+    return {
+        "status": "reloaded",
+        "skills": registry.get_skill_names(),
+        "tool_count": len(registry.tools),
+    }
+
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    """Handle incoming Telegram webhook updates."""
+    settings = get_settings()
+
+    # Verify webhook signature
+    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    if not verify_webhook_signature(secret_header, settings.telegram_webhook_secret):
+        logger.warning("Invalid webhook signature")
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    # Route to appropriate handler
+    if "callback_query" in data:
+        await handle_callback_update(data["callback_query"], settings)
+    elif "message" in data:
+        await handle_message_update(data["message"], settings)
+
+    return {"ok": True}
+
+
+async def handle_message_update(message: Dict[str, Any], settings: Settings):
+    """Handle incoming message from Telegram."""
+    user_data = message.get("from", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "").strip()
+    user_id = user_data.get("id")
+
+    if not chat_id or not text:
+        return
+
+    user = parse_telegram_user(user_data)
+    # Only log first 30 chars to avoid logging sensitive data
+    safe_preview = text[:30] + "..." if len(text) > 30 else text
+    logger.info(f"Message from {user.display_name} ({user_id}): {safe_preview}")
+
+    # Check allowlist
+    if user_id not in settings.telegram_allowed_users:
+        logger.warning(f"Unauthorized user: {user_id}")
+        await send_message(chat_id, "⛔ Du bist nicht autorisiert.", settings)
+        return
+
+    # Handle commands
+    if text.startswith("/"):
+        await handle_command(text, chat_id, user, settings)
+        return
+
+    # Process natural language
+    await process_natural_language(text, chat_id, user, settings)
+
+
+async def handle_command(
+    text: str, chat_id: int, user, settings: Settings
+):
+    """Handle slash commands."""
+    command = text.split()[0].lower()
+
+    if command == "/start" or command == "/help":
+        await send_message(chat_id, HELP_TEXT, settings)
+
+    elif command == "/skills":
+        registry = get_registry(settings)
+        skills_list = []
+        for name, skill in registry.skills.items():
+            cmd_count = len(skill.commands)
+            skills_list.append(f"• **{name}** ({cmd_count} commands)")
+        skills_text = "\n".join(skills_list) if skills_list else "Keine Skills geladen"
+        await send_message(
+            chat_id,
+            f"🛠️ **Geladene Skills:**\n\n{skills_text}",
+            settings,
+        )
+
+    elif command == "/wake":
+        await send_message(chat_id, "🖥️ Gaming-PC wird geweckt...", settings)
+        success = await wake_gaming_pc(settings)
+        if success:
+            await send_message(
+                chat_id,
+                "✅ Wake-on-LAN Paket gesendet. Der PC sollte in ~1 Minute bereit sein.",
+                settings,
+            )
+        else:
+            await send_message(
+                chat_id,
+                "❌ Fehler: Keine MAC-Adresse konfiguriert.",
+                settings,
+            )
+
+    else:
+        await send_message(
+            chat_id,
+            f"❓ Unbekannter Befehl: {command}\n\nTippe /help für Hilfe.",
+            settings,
+        )
+
+
+async def process_natural_language(
+    text: str, chat_id: int, user, settings: Settings
+):
+    """Process natural language input through intent classification."""
+    # Send "thinking" indicator
+    await send_message(chat_id, "🤔 Verstehe...", settings)
+
+    # Classify intent
+    intent = await classify_intent(text, settings)
+    logger.info(f"Classified intent: skill={intent.skill}, action={intent.action}")
+
+    # Handle errors
+    if intent.skill == "error":
+        error_msg = intent.description or intent.action or "Unbekannter Fehler"
+        await send_message(chat_id, f"❌ {error_msg}", settings)
+        return
+
+    # Handle unknown intents - request skill creation
+    if intent.skill == "unknown":
+        response = await request_skill_creation(
+            user_request=text,
+            requester_name=user.display_name,
+            requester_id=user.id,
+            chat_id=chat_id,
+            settings=settings,
+        )
+        await send_message(chat_id, response, settings)
+        return
+
+    # Execute known skill
+    result = await execute_skill(intent, settings)
+
+    if result.success:
+        await send_message(chat_id, result.output, settings)
+    else:
+        await send_message(chat_id, f"❌ {result.error}", settings)
+
+
+async def handle_callback_update(callback_query: Dict[str, Any], settings: Settings):
+    """Handle inline keyboard button press."""
+    callback_id = callback_query.get("id")
+    data = callback_query.get("data", "")
+    user_id = callback_query.get("from", {}).get("id")
+
+    logger.info(f"Callback from {user_id}: {data}")
+
+    # Only admin can approve/reject
+    if user_id != settings.admin_telegram_id:
+        await answer_callback_query(callback_id, "⛔ Nur Admin", settings)
+        return
+
+    # Parse callback data
+    if ":" not in data:
+        await answer_callback_query(callback_id, "❌ Ungültige Daten", settings)
+        return
+
+    action, request_id = data.split(":", 1)
+    approved = action == "approve"
+
+    # Handle the approval
+    result = await handle_approval(request_id, approved, settings)
+
+    # Send feedback
+    feedback = "✅ Genehmigt" if approved else "❌ Abgelehnt"
+    await answer_callback_query(callback_id, feedback, settings)
+
+    logger.info(f"Approval result for {request_id}: {result}")

@@ -482,6 +482,64 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://DOMAIN.duckdns.
 
 ---
 
+## Phase 7: Dynamic Tool-Calling (Upgrade)
+
+> Entscheidung vom 2026-01-23: Wechsel von statischem Intent-Prompt zu dynamischem Tool-Calling
+
+### Problem mit statischem Ansatz
+
+Der ursprüngliche `intent_classifier.py` hatte einen hardcodierten `INTENT_PROMPT` mit allen Skills. Bei neuen Skills mussten zwei Dateien manuell aktualisiert werden:
+- `intent_classifier.py` - INTENT_PROMPT
+- `skill_executor.py` - SKILL_REGISTRY
+
+### Neuer Ansatz: Dynamic Tool-Calling
+
+```
+.claude/skills/ → Tool Registry → LM Studio (Function Calling) → Skill Executor
+```
+
+**Neue Dateien:**
+```
+agent/
+├── skill_loader.py        # SKILL.md YAML-Frontmatter Parser
+├── tool_registry.py       # Zentrale Registry, lädt Skills beim Start
+└── tool_caller.py         # LM Studio mit tools Parameter
+```
+
+**Vorteile:**
+- Neue Skills werden automatisch erkannt
+- Kein manuelles Update von Code nötig
+- Skill-Erstellung via Claude API funktioniert sofort
+
+### LLM-Modell
+
+- **Qwen 2.5 7B Instruct** (nativer Function Calling Support)
+- Format: GGUF Q4 (~4-5GB VRAM)
+- Response Time: ~2-3s auf Gaming-PC GPU
+
+### Tool-Schema (OpenAI-Format)
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "homeassistant",
+    "description": "Manage Home Assistant smart home automation",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {"type": "string", "enum": ["turn-on", "turn-off", ...]},
+        "target": {"type": "string"},
+        "args": {"type": "object"}
+      },
+      "required": ["action"]
+    }
+  }
+}
+```
+
+---
+
 ## Erweiterungsmöglichkeiten (Zukunft)
 
 - Sprachnachrichten via Whisper transkribieren
