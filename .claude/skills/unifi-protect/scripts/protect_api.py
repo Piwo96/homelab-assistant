@@ -8,7 +8,8 @@ Uses same authentication as UniFi Controller.
 Usage:
     python protect_api.py cameras
     python protect_api.py snapshot <camera-id>
-    python protect_api.py events --last 24h
+    python protect_api.py events --last 24h --camera Einfahrt
+    python protect_api.py detections --last 6h --camera Einfahrt
 """
 
 import argparse
@@ -17,6 +18,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 # Reuse UniFi API client
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "unifi-network" / "scripts"))
@@ -77,8 +79,8 @@ class ProtectAPI(UniFiAPI):
         response = self.session.get(url, timeout=10)
         return response.content
 
-    def get_events(self, start: int = None, end: int = None, types: list = None):
-        """Get events."""
+    def get_events(self, start: int = None, end: int = None, types: list = None, camera_id: str = None):
+        """Get events, optionally filtered by camera."""
         params = []
         if start:
             params.append(f"start={start}")
@@ -88,7 +90,82 @@ class ProtectAPI(UniFiAPI):
             params.append(f"types={','.join(types)}")
         query = f"?{'&'.join(params)}" if params else ""
 
-        return self._protect_request("GET", f"/events{query}")
+        events = self._protect_request("GET", f"/events{query}")
+
+        # Filter by camera if specified
+        if camera_id:
+            events = [e for e in events if e.get("camera") == camera_id]
+
+        return events
+
+    def resolve_camera_id(self, camera_ref: str) -> Optional[str]:
+        """Resolve camera name to ID. Returns ID if already an ID."""
+        cameras = self.get_cameras()
+        for cam in cameras:
+            if cam.get("id") == camera_ref or cam.get("name", "").lower() == camera_ref.lower():
+                return cam.get("id")
+        return None
+
+    def get_detections(self, start: int = None, end: int = None, camera_id: str = None,
+                       detection_type: str = None) -> list:
+        """Get smart detections (license plates, faces, vehicles, persons).
+
+        Args:
+            start: Start timestamp in ms
+            end: End timestamp in ms
+            camera_id: Filter by camera ID
+            detection_type: Filter by type (plate, face, vehicle, person)
+
+        Returns:
+            List of detection dicts with time, type, details
+        """
+        events = self.get_events(start, end, types=["smartDetectZone"], camera_id=camera_id)
+        detections = []
+
+        for event in events:
+            ts = datetime.fromtimestamp(event["start"] / 1000)
+            metadata = event.get("metadata", {})
+            thumbnails = metadata.get("detectedThumbnails", [])
+
+            for thumb in thumbnails:
+                det_type = thumb.get("type")
+
+                # Skip if filtering by type and doesn't match
+                if detection_type:
+                    if detection_type == "plate" and det_type != "vehicle":
+                        continue
+                    if detection_type == "face" and det_type != "face":
+                        continue
+                    if detection_type == "vehicle" and det_type != "vehicle":
+                        continue
+                    if detection_type == "person" and det_type != "person":
+                        continue
+
+                detection = {
+                    "time": ts.strftime("%Y-%m-%d %H:%M"),
+                    "type": det_type,
+                    "confidence": thumb.get("confidence", 0),
+                }
+
+                # Extract license plate info
+                if det_type == "vehicle" and thumb.get("name"):
+                    detection["plate"] = thumb.get("name")
+                    attrs = thumb.get("attributes", {})
+                    detection["vehicle_type"] = attrs.get("vehicleType", {}).get("val", "unknown")
+                    detection["color"] = attrs.get("color", {}).get("val", "unknown")
+                    detections.append(detection)
+
+                # Extract face info
+                elif det_type == "face":
+                    attrs = thumb.get("attributes", {})
+                    detection["has_mask"] = attrs.get("faceMask", {}).get("val") == "mask"
+                    detections.append(detection)
+
+                # Extract person (only if not filtering for plates/faces)
+                elif det_type == "person" and detection_type in (None, "person"):
+                    detections.append(detection)
+
+        return detections
 
     def get_nvr(self):
         """Get NVR information."""
@@ -129,6 +206,14 @@ def main():
     events = subparsers.add_parser("events", help="List events")
     events.add_argument("--last", help="Last N hours (e.g., 24h, 1h)")
     events.add_argument("--types", help="Event types (comma-separated: motion,ring)")
+    events.add_argument("--camera", help="Filter by camera name or ID")
+
+    # Smart Detections
+    detections = subparsers.add_parser("detections", help="List smart detections (plates, faces, vehicles)")
+    detections.add_argument("--last", help="Last N hours (e.g., 24h, 1h)", default="6h")
+    detections.add_argument("--camera", help="Filter by camera name or ID")
+    detections.add_argument("--type", choices=["plate", "face", "vehicle", "person"],
+                            help="Filter by detection type")
 
     # Devices
     subparsers.add_parser("nvr", help="NVR information")
@@ -170,7 +255,54 @@ def main():
             end = int(datetime.now().timestamp() * 1000)
             start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
         types = args.types.split(",") if args.types else None
-        result = api.get_events(start, end, types)
+        camera_id = api.resolve_camera_id(args.camera) if args.camera else None
+        if args.camera and not camera_id:
+            print(f"Camera not found: {args.camera}", file=sys.stderr)
+            sys.exit(1)
+        result = api.get_events(start, end, types, camera_id)
+    elif args.command == "detections":
+        hours = int(args.last.replace("h", ""))
+        end = int(datetime.now().timestamp() * 1000)
+        start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
+        camera_id = api.resolve_camera_id(args.camera) if args.camera else None
+        if args.camera and not camera_id:
+            print(f"Camera not found: {args.camera}", file=sys.stderr)
+            sys.exit(1)
+        detections = api.get_detections(start, end, camera_id, args.type)
+
+        if args.json:
+            result = detections
+        else:
+            # Pretty print detections
+            if not detections:
+                print("No detections found.")
+                return
+
+            # Group by type for display
+            plates = [d for d in detections if d.get("plate")]
+            faces = [d for d in detections if d.get("type") == "face"]
+            persons = [d for d in detections if d.get("type") == "person" and "plate" not in d]
+
+            if plates:
+                print("\n=== License Plates ===")
+                print(f"{'Time':<18} {'Plate':<12} {'Vehicle':<10} {'Color':<10} {'Conf':<6}")
+                print("-" * 58)
+                for d in plates:
+                    print(f"{d['time']:<18} {d['plate']:<12} {d['vehicle_type']:<10} {d['color']:<10} {d['confidence']}%")
+
+            if faces:
+                print("\n=== Faces ===")
+                print(f"{'Time':<18} {'Confidence':<12} {'Mask':<6}")
+                print("-" * 38)
+                for d in faces:
+                    mask = "Yes" if d.get("has_mask") else "No"
+                    print(f"{d['time']:<18} {d['confidence']}%{'':<10} {mask:<6}")
+
+            if persons and not args.type:
+                print(f"\n=== Persons ===")
+                print(f"Found {len(persons)} person detections (use --type person for details)")
+
+            return
     elif args.command == "nvr":
         result = api.get_nvr()
     elif args.command == "sensors":
