@@ -77,6 +77,77 @@ skills/
 
 Skills are living documents. When you discover constraints, better approaches, common errors, or **new capabilities**: **update the skill** (ask first unless explicitly told to modify freely).
 
+## Sub-Agents
+
+Sub-Agents are specialized background workers that handle specific tasks autonomously. Unlike skills (which are instructions you follow), sub-agents are independent processes you spawn.
+
+### Concept
+
+| Aspect | Skills | Sub-Agents |
+|--------|--------|------------|
+| What | Instructions (Markdown SOPs) | Autonomous workers |
+| How | You read and follow them | You spawn them via Task tool |
+| When | Before doing work | After doing work (background) |
+| Purpose | Guide your actions | Offload parallel tasks |
+
+### Available Sub-Agents
+
+| Agent | Purpose | Can Edit | Cannot Edit |
+|-------|---------|----------|-------------|
+| `code-reviewer` | Reviews code quality, security, best practices | Scripts (`.py`, `.sh`, `.ts`...) | Markdown (`.md`) |
+| `skill-documenter` | Documents learnings into skill files | Markdown (`.md`) | Scripts |
+
+### Storage Locations
+
+- **Global agents (Claude)**: `~/.claude/agents/` - Available across all projects
+- **Global agents (Gemini)**: `~/.gemini/antigravity/agents/` - Available across all projects
+- **Project agents**: `.claude/agents/` - Project-specific agents
+
+### Self-Annealing Workflow with Sub-Agents
+
+```
+You complete a task
+        │
+        ├─► Code written?
+        │   └─► Spawn: code-reviewer (background)
+        │       → Reviews scripts, fixes HIGH/CRITICAL issues
+        │
+        └─► Error resolved? New pattern discovered?
+            └─► Spawn: skill-documenter (background)
+                → Documents learning in relevant skill MD
+```
+
+### Usage
+
+Spawn sub-agents as background tasks using the Task tool:
+
+```
+# After writing code
+Task:
+  subagent_type: code-reviewer
+  run_in_background: true
+  prompt: "Review the code I created: [file paths]"
+
+# After self-annealing (error resolved, new pattern found)
+Task:
+  subagent_type: skill-documenter
+  run_in_background: true
+  prompt: "Document this learning: [what was learned]"
+```
+
+### When to Spawn Sub-Agents
+
+**code-reviewer**: After any code creation or modification
+- New scripts added
+- Existing code changed
+- Bug fixes implemented
+
+**skill-documenter**: After any learning event
+- Error was encountered and resolved
+- API limit or constraint discovered
+- Better approach found through trial
+- Edge case handled
+
 ## Operating Principles
 
 1. **Skills first**: Before manual work, check `~/.claude/skills/` and `.claude/skills/`
