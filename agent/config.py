@@ -2,7 +2,7 @@
 
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
-from typing import List
+from typing import List, Union
 from pathlib import Path
 
 
@@ -12,16 +12,17 @@ class Settings(BaseSettings):
     # Telegram Bot
     telegram_bot_token: str
     telegram_webhook_secret: str
-    telegram_allowed_users: List[int] = []
+    # Use str type to prevent automatic JSON parsing, validator converts to list
+    telegram_allowed_users: Union[str, List[int]] = []
     admin_telegram_id: int
 
-    # LM Studio (local LLM)
-    lm_studio_url: str = "http://192.168.178.50:1234"
+    # LM Studio (local LLM) - must be set in .env
+    lm_studio_url: str
     lm_studio_timeout: int = 30
 
-    # Gaming PC (for Wake-on-LAN)
-    gaming_pc_ip: str = "192.168.178.50"
-    gaming_pc_mac: str = ""
+    # Gaming PC (for Wake-on-LAN) - must be set in .env
+    gaming_pc_ip: str
+    gaming_pc_mac: str
 
     # Claude API (for skill creation)
     anthropic_api_key: str = ""

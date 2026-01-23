@@ -502,9 +502,12 @@ Der ursprüngliche `intent_classifier.py` hatte einen hardcodierten `INTENT_PROM
 ```
 agent/
 ├── skill_loader.py        # SKILL.md YAML-Frontmatter Parser
-├── tool_registry.py       # Zentrale Registry, lädt Skills beim Start
-└── tool_caller.py         # LM Studio mit tools Parameter
+└── tool_registry.py       # Zentrale Registry, lädt Skills beim Start
 ```
+
+**Geänderte Dateien:**
+- `intent_classifier.py` - Nutzt jetzt Tool-Calling statt statischem Prompt
+- `skill_executor.py` - Holt Skills aus der Registry statt statischem Dict
 
 **Vorteile:**
 - Neue Skills werden automatisch erkannt
@@ -513,9 +516,10 @@ agent/
 
 ### LLM-Modell
 
-- **Qwen 2.5 7B Instruct** (nativer Function Calling Support)
-- Format: GGUF Q4 (~4-5GB VRAM)
+- **Qwen 3 4B** oder **Qwen 2.5 7B Instruct** (nativer Function Calling Support)
+- Format: GGUF Q4 (~3-5GB VRAM)
 - Response Time: ~2-3s auf Gaming-PC GPU
+- Getestet: Tool-Calling funktioniert korrekt mit Qwen 3 4B
 
 ### Tool-Schema (OpenAI-Format)
 
