@@ -14,7 +14,6 @@ Usage:
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -238,9 +237,56 @@ def main():
     result = None
 
     if args.command == "cameras":
-        result = api.get_cameras()
+        cameras = api.get_cameras()
+        if args.json:
+            result = cameras
+        else:
+            if not cameras:
+                print("Keine Kameras gefunden.")
+                return
+
+            print(f"📹 **Kameras** ({len(cameras)} Geräte)\n")
+            for cam in cameras:
+                name = cam.get("name", "Unbekannt")
+                state = cam.get("state", "unknown")
+                is_recording = cam.get("isRecording", False)
+                is_connected = state == "CONNECTED"
+
+                status_icon = "🟢" if is_connected else "🔴"
+                rec_icon = "⏺️" if is_recording else ""
+
+                # Get resolution
+                channels = cam.get("channels", [])
+                resolution = ""
+                if channels:
+                    ch = channels[0]
+                    resolution = f"{ch.get('width', '?')}x{ch.get('height', '?')}"
+
+                print(f"{status_icon} **{name}** {rec_icon}")
+                print(f"   Modell: {cam.get('type', 'Unbekannt')}")
+                if resolution:
+                    print(f"   Auflösung: {resolution}")
+                print()
+            return
+
     elif args.command == "camera":
-        result = api.get_camera(args.id)
+        cam = api.get_camera(args.id)
+        if args.json:
+            result = cam
+        else:
+            name = cam.get("name", "Unbekannt")
+            state = cam.get("state", "unknown")
+            is_connected = state == "CONNECTED"
+            status_icon = "🟢" if is_connected else "🔴"
+
+            print(f"{status_icon} **{name}**")
+            print(f"   ID: {cam.get('id')}")
+            print(f"   Modell: {cam.get('type', 'Unbekannt')}")
+            print(f"   Status: {state}")
+            print(f"   Aufnahme: {'Ja' if cam.get('isRecording') else 'Nein'}")
+            print(f"   Mikrofon: {'An' if cam.get('isMicEnabled') else 'Aus'}")
+            print(f"   IP: {cam.get('host', 'Unbekannt')}")
+            return
     elif args.command == "snapshot":
         data = api.get_snapshot(args.id, args.width, args.height)
         output = args.output or f"snapshot_{args.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
@@ -257,7 +303,72 @@ def main():
         if args.camera and not camera_id:
             print(f"Camera not found: {args.camera}", file=sys.stderr)
             sys.exit(1)
-        result = api.get_events(start, end, types, camera_id)
+        events = api.get_events(start, end, types, camera_id)
+
+        if args.json:
+            result = events
+        else:
+            # Pretty print events
+            if not events:
+                print(f"Keine Ereignisse in den letzten {hours} Stunden.")
+                return
+
+            # Build camera ID to name mapping
+            cameras = {c["id"]: c.get("name", "Unknown") for c in api.get_cameras()}
+
+            # Event type icons
+            type_icons = {
+                "motion": "🏃",
+                "smartDetectZone": "🔍",
+                "ring": "🔔",
+                "sensorMotion": "📡",
+                "sensorContact": "🚪",
+            }
+
+            # Smart detect type translations
+            smart_types = {
+                "person": "Person",
+                "vehicle": "Fahrzeug",
+                "animal": "Tier",
+                "package": "Paket",
+                "licensePlate": "Kennzeichen",
+                "face": "Gesicht",
+            }
+
+            print(f"📹 **Kamera-Ereignisse** (letzte {hours}h)\n")
+
+            # Group events by camera
+            by_camera = {}
+            for e in events:
+                cam_id = e.get("camera")
+                cam_name = cameras.get(cam_id, "Unbekannt")
+                if cam_name not in by_camera:
+                    by_camera[cam_name] = []
+                by_camera[cam_name].append(e)
+
+            for cam_name, cam_events in by_camera.items():
+                print(f"**{cam_name}** ({len(cam_events)} Ereignisse)")
+
+                # Show last 5 events per camera
+                for e in cam_events[:5]:
+                    ts = datetime.fromtimestamp(e["start"] / 1000)
+                    time_str = ts.strftime("%H:%M")
+                    event_type = e.get("type", "unknown")
+                    icon = type_icons.get(event_type, "📷")
+
+                    # For smart detections, show what was detected
+                    if event_type == "smartDetectZone":
+                        detected = e.get("smartDetectTypes", [])
+                        detected_str = ", ".join(smart_types.get(d, d) for d in detected)
+                        print(f"  {icon} {time_str} - {detected_str}")
+                    else:
+                        print(f"  {icon} {time_str} - {event_type}")
+
+                if len(cam_events) > 5:
+                    print(f"  ... und {len(cam_events) - 5} weitere")
+                print()
+
+            return
     elif args.command == "detections":
         hours = int(args.last.replace("h", ""))
         end = int(datetime.now().timestamp() * 1000)
@@ -302,22 +413,86 @@ def main():
 
             return
     elif args.command == "nvr":
-        result = api.get_nvr()
+        nvr = api.get_nvr()
+        if args.json:
+            result = nvr
+        else:
+            print("🖥️ **NVR Status**\n")
+            print(f"   Name: {nvr.get('name', 'Unbekannt')}")
+            print(f"   Version: {nvr.get('version', 'Unbekannt')}")
+            print(f"   Uptime: {nvr.get('uptime', 0) // 86400} Tage")
+
+            # Storage info
+            storage = nvr.get("storageInfo", {})
+            used_gb = storage.get("usedSpace", 0) / (1024**3)
+            total_gb = storage.get("totalSpace", 0) / (1024**3)
+            if total_gb > 0:
+                pct = (used_gb / total_gb) * 100
+                print(f"   Speicher: {used_gb:.0f} GB / {total_gb:.0f} GB ({pct:.0f}%)")
+
+            # Recording stats
+            print(f"   Kameras: {nvr.get('deviceCount', {}).get('cameras', 0)}")
+            return
+
     elif args.command == "sensors":
-        result = api.get_sensors()
+        sensors = api.get_sensors()
+        if args.json:
+            result = sensors
+        else:
+            if not sensors:
+                print("Keine Sensoren gefunden.")
+                return
+
+            print(f"📡 **Sensoren** ({len(sensors)} Geräte)\n")
+            for sensor in sensors:
+                name = sensor.get("name", "Unbekannt")
+                is_open = sensor.get("isOpened", False)
+                battery = sensor.get("batteryStatus", {}).get("percentage", 0)
+                state = sensor.get("state", "unknown")
+
+                status_icon = "🟢" if state == "CONNECTED" else "🔴"
+                open_icon = "🚪" if is_open else "🔒"
+
+                print(f"{status_icon} **{name}** {open_icon}")
+                print(f"   Status: {'Offen' if is_open else 'Geschlossen'}")
+                print(f"   Batterie: {battery}%")
+                print()
+            return
+
     elif args.command == "lights":
-        result = api.get_lights()
+        lights = api.get_lights()
+        if args.json:
+            result = lights
+        else:
+            if not lights:
+                print("Keine Lichter gefunden.")
+                return
+
+            print(f"💡 **Lichter** ({len(lights)} Geräte)\n")
+            for light in lights:
+                name = light.get("name", "Unbekannt")
+                is_on = light.get("isLightOn", False)
+                state = light.get("state", "unknown")
+
+                status_icon = "🟢" if state == "CONNECTED" else "🔴"
+                light_icon = "💡" if is_on else "🌑"
+
+                print(f"{status_icon} **{name}** {light_icon}")
+                print(f"   Status: {'An' if is_on else 'Aus'}")
+                print()
+            return
+
     elif args.command == "light-on":
         api.control_light(args.id, True)
-        print(f"Light {args.id} turned on")
+        print(f"💡 Licht eingeschaltet")
         return
     elif args.command == "light-off":
         api.control_light(args.id, False)
-        print(f"Light {args.id} turned off")
+        print(f"🌑 Licht ausgeschaltet")
         return
 
     if result:
-        print(json.dumps(result, indent=2) if args.json else json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

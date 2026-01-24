@@ -339,27 +339,122 @@ def main():
 
     # Execute command
     if args.command == "nodes":
-        result = api.get_nodes()
+        nodes = api.get_nodes()
+        if args.json:
+            result = nodes
+        else:
+            print("🖥️ **Proxmox Nodes**\n")
+            for node in nodes:
+                name = node.get("node", "?")
+                status = node.get("status", "unknown")
+                icon = "🟢" if status == "online" else "🔴"
+                cpu = node.get("cpu", 0) * 100
+                mem_used = node.get("mem", 0) / (1024**3)
+                mem_total = node.get("maxmem", 0) / (1024**3)
+                print(f"{icon} **{name}**")
+                print(f"   CPU: {cpu:.1f}%")
+                print(f"   RAM: {mem_used:.1f} GB / {mem_total:.1f} GB")
+                print()
+            return
+
     elif args.command == "node-status":
-        result = api.get_node_status(args.node)
+        status = api.get_node_status(args.node)
+        if args.json:
+            result = status
+        else:
+            cpu = status.get("cpu", 0) * 100
+            mem = status.get("memory", {})
+            mem_used = mem.get("used", 0) / (1024**3)
+            mem_total = mem.get("total", 0) / (1024**3)
+            uptime_days = status.get("uptime", 0) // 86400
+
+            print(f"🖥️ **Node: {args.node}**\n")
+            print(f"   CPU: {cpu:.1f}%")
+            print(f"   RAM: {mem_used:.1f} GB / {mem_total:.1f} GB")
+            print(f"   Uptime: {uptime_days} Tage")
+            return
+
     elif args.command == "vms":
         vms = api.get_vms(args.node)
         if args.ids_only:
             print("\n".join(str(vm["vmid"]) for vm in vms))
             return
-        result = vms
+        if args.json:
+            result = vms
+        else:
+            if not vms:
+                print("Keine VMs gefunden.")
+                return
+            print(f"💻 **VMs auf {args.node}** ({len(vms)} Geräte)\n")
+            for vm in vms:
+                vmid = vm.get("vmid", "?")
+                name = vm.get("name", "unnamed")
+                status = vm.get("status", "unknown")
+                icon = "🟢" if status == "running" else "⚫"
+                cpu = vm.get("cpu", 0) * 100
+                mem_used = vm.get("mem", 0) / (1024**3)
+                mem_max = vm.get("maxmem", 0) / (1024**3)
+
+                print(f"{icon} **{vmid}: {name}**")
+                if status == "running":
+                    print(f"   CPU: {cpu:.1f}% | RAM: {mem_used:.1f}/{mem_max:.1f} GB")
+                print()
+            return
+
     elif args.command == "containers":
         containers = api.get_containers(args.node)
         if args.ids_only:
             print("\n".join(str(c["vmid"]) for c in containers))
             return
-        result = containers
+        if args.json:
+            result = containers
+        else:
+            if not containers:
+                print("Keine Container gefunden.")
+                return
+            print(f"📦 **Container auf {args.node}** ({len(containers)} Geräte)\n")
+            for ct in containers:
+                vmid = ct.get("vmid", "?")
+                name = ct.get("name", "unnamed")
+                status = ct.get("status", "unknown")
+                icon = "🟢" if status == "running" else "⚫"
+                cpu = ct.get("cpu", 0) * 100
+                mem_used = ct.get("mem", 0) / (1024**3)
+                mem_max = ct.get("maxmem", 0) / (1024**3)
+
+                print(f"{icon} **{vmid}: {name}**")
+                if status == "running":
+                    print(f"   CPU: {cpu:.1f}% | RAM: {mem_used:.1f}/{mem_max:.1f} GB")
+                print()
+            return
+
     elif args.command == "status":
         # Try VM first, then container
         try:
-            result = api.get_vm_status(args.node, args.vmid)
+            status = api.get_vm_status(args.node, args.vmid)
+            vm_type = "VM"
         except SystemExit:
-            result = api.get_container_status(args.node, args.vmid)
+            status = api.get_container_status(args.node, args.vmid)
+            vm_type = "Container"
+
+        if args.json:
+            result = status
+        else:
+            state = status.get("status", "unknown")
+            icon = "🟢" if state == "running" else "⚫"
+            name = status.get("name", "unnamed")
+            cpu = status.get("cpu", 0) * 100
+            mem_used = status.get("mem", 0) / (1024**3)
+            mem_max = status.get("maxmem", 0) / (1024**3)
+            uptime = status.get("uptime", 0) // 3600
+
+            print(f"{icon} **{vm_type} {args.vmid}: {name}**\n")
+            print(f"   Status: {state}")
+            if state == "running":
+                print(f"   CPU: {cpu:.1f}%")
+                print(f"   RAM: {mem_used:.1f} GB / {mem_max:.1f} GB")
+                print(f"   Uptime: {uptime} Stunden")
+            return
     elif args.command in ["start", "stop", "shutdown", "reboot"]:
         # Try VM first, then container
         try:

@@ -369,28 +369,128 @@ def main():
 
     # Execute command
     if args.command == "info":
-        result = api.get_info()
-    elif args.command == "summary":
-        result = api.get_summary()
-    elif args.command == "status":
-        result = api.get_status()
-    elif args.command == "enable":
-        result = api.enable_blocking()
-        print("Blocking enabled")
-        return
-    elif args.command == "disable":
-        result = api.disable_blocking(args.duration)
-        if args.duration > 0:
-            print(f"Blocking disabled for {args.duration} seconds")
+        info = api.get_info()
+        if args.json:
+            result = info
         else:
-            print("Blocking disabled")
+            print("🔵 **Pi-hole Info**\n")
+            print(f"   Version: {info.get('version', 'Unbekannt')}")
+            print(f"   Branch: {info.get('branch', 'Unbekannt')}")
+            return
+
+    elif args.command == "summary":
+        summary = api.get_summary()
+        if args.json:
+            result = summary
+        else:
+            # Handle both v5 and v6 response formats
+            data = summary.get("data", summary)
+
+            print("📊 **Pi-hole Statistiken**\n")
+
+            # DNS queries
+            total = data.get("dns_queries_today", data.get("total_queries", 0))
+            blocked = data.get("ads_blocked_today", data.get("blocked_queries", 0))
+            pct = data.get("ads_percentage_today", data.get("percent_blocked", 0))
+
+            print(f"   Anfragen heute: {total:,}")
+            print(f"   Blockiert: {blocked:,} ({pct:.1f}%)")
+
+            # Domains
+            domains_blocked = data.get("domains_being_blocked", data.get("gravity_size", 0))
+            print(f"   Domains auf Blocklist: {domains_blocked:,}")
+
+            # Clients
+            clients = data.get("unique_clients", data.get("total_clients", 0))
+            print(f"   Aktive Clients: {clients}")
+            return
+
+    elif args.command == "enable":
+        api.enable_blocking()
+        print("🟢 Blocking aktiviert")
         return
+
+    elif args.command == "disable":
+        api.disable_blocking(args.duration)
+        if args.duration > 0:
+            print(f"🔴 Blocking deaktiviert für {args.duration} Sekunden")
+        else:
+            print("🔴 Blocking deaktiviert")
+        return
+
     elif args.command == "top-domains":
-        result = api.get_top_domains(args.count)
+        domains = api.get_top_domains(args.count)
+        if args.json:
+            result = domains
+        else:
+            data = domains.get("data", domains)
+            print(f"🌐 **Top Domains** (Top {args.count})\n")
+
+            # Handle different API formats
+            if "top_queries" in data:
+                items = data["top_queries"]
+            elif isinstance(data, dict):
+                items = data
+            else:
+                items = {}
+
+            for i, (domain, count) in enumerate(list(items.items())[:args.count], 1):
+                print(f"  {i}. {domain} ({count})")
+            return
+
     elif args.command == "top-clients":
-        result = api.get_top_clients(args.count)
+        clients = api.get_top_clients(args.count)
+        if args.json:
+            result = clients
+        else:
+            data = clients.get("data", clients)
+            print(f"💻 **Top Clients** (Top {args.count})\n")
+
+            if "top_clients" in data:
+                items = data["top_clients"]
+            elif isinstance(data, dict):
+                items = data
+            else:
+                items = {}
+
+            for i, (client, count) in enumerate(list(items.items())[:args.count], 1):
+                print(f"  {i}. {client} ({count} Anfragen)")
+            return
+
     elif args.command == "queries":
-        result = api.get_queries(domain=args.domain, client=args.client)
+        queries = api.get_queries(domain=args.domain, client=args.client)
+        if args.json:
+            result = queries
+        else:
+            data = queries.get("data", queries)
+            if isinstance(data, list):
+                query_list = data
+            else:
+                query_list = data.get("queries", [])
+
+            if not query_list:
+                print("Keine Anfragen gefunden.")
+                return
+
+            print(f"🔍 **Letzte Anfragen** ({len(query_list)} Einträge)\n")
+            for q in query_list[:20]:
+                if isinstance(q, list):
+                    # v5 format: [timestamp, type, domain, client, status, ...]
+                    domain = q[2] if len(q) > 2 else "?"
+                    client = q[3] if len(q) > 3 else "?"
+                    status = "✅" if q[4] in [1, 2, 3] else "🚫" if len(q) > 4 else "?"
+                    print(f"  {status} {domain} ({client})")
+                else:
+                    # v6 format
+                    domain = q.get("domain", "?")
+                    client = q.get("client", "?")
+                    blocked = q.get("blocked", False)
+                    status = "🚫" if blocked else "✅"
+                    print(f"  {status} {domain} ({client})")
+
+            if len(query_list) > 20:
+                print(f"  ... und {len(query_list) - 20} weitere")
+            return
     elif args.command == "block":
         result = api.add_to_blocklist(args.domain, args.comment)
         print(f"Added {args.domain} to blocklist")

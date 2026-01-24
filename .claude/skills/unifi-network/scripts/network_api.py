@@ -458,37 +458,154 @@ def main():
 
     # Execute commands
     if args.command == "health":
-        result = api.get_health()
+        health = api.get_health()
+        if args.json:
+            result = health
+        else:
+            print("🌐 **Netzwerk-Gesundheit**\n")
+            for item in health:
+                subsystem = item.get("subsystem", "?")
+                status = item.get("status", "unknown")
+                icon = "🟢" if status == "ok" else "🟡" if status == "warning" else "🔴"
+                print(f"   {icon} {subsystem}: {status}")
+            return
+
     elif args.command == "sysinfo":
         result = api.get_sysinfo()
+
     elif args.command == "clients":
-        result = api.get_clients(active_only=not args.all)
+        clients = api.get_clients(active_only=not args.all)
+        if args.json:
+            result = clients
+        else:
+            if not clients:
+                print("Keine Clients gefunden.")
+                return
+
+            print(f"💻 **Netzwerk-Clients** ({len(clients)} Geräte)\n")
+
+            # Group by network/SSID
+            wired = [c for c in clients if not c.get("is_wired") == False and not c.get("essid")]
+            wireless = [c for c in clients if c.get("essid")]
+
+            if wired:
+                print(f"**Kabelgebunden** ({len(wired)})")
+                for c in wired[:10]:
+                    name = c.get("name") or c.get("hostname") or c.get("mac", "?")
+                    ip = c.get("ip", "?")
+                    print(f"  📡 {name} ({ip})")
+                if len(wired) > 10:
+                    print(f"  ... und {len(wired) - 10} weitere")
+                print()
+
+            if wireless:
+                print(f"**WLAN** ({len(wireless)})")
+                for c in wireless[:10]:
+                    name = c.get("name") or c.get("hostname") or c.get("mac", "?")
+                    ip = c.get("ip", "?")
+                    ssid = c.get("essid", "?")
+                    print(f"  📶 {name} ({ip}) - {ssid}")
+                if len(wireless) > 10:
+                    print(f"  ... und {len(wireless) - 10} weitere")
+            return
+
     elif args.command == "kick":
         api.kick_client(args.mac)
-        print(f"Kicked client {args.mac}")
+        print(f"🚫 Client {args.mac} getrennt")
         return
+
     elif args.command == "block":
         api.block_client(args.mac)
-        print(f"Blocked client {args.mac}")
+        print(f"🔒 Client {args.mac} blockiert")
         return
+
     elif args.command == "unblock":
         api.unblock_client(args.mac)
-        print(f"Unblocked client {args.mac}")
+        print(f"🔓 Client {args.mac} entsperrt")
         return
+
     elif args.command == "devices":
-        result = api.get_devices()
+        devices = api.get_devices()
+        if args.json:
+            result = devices
+        else:
+            if not devices:
+                print("Keine Geräte gefunden.")
+                return
+
+            print(f"🔌 **Netzwerk-Geräte** ({len(devices)} Geräte)\n")
+            for dev in devices:
+                name = dev.get("name", dev.get("mac", "?"))
+                model = dev.get("model", "?")
+                state = dev.get("state", 0)
+                icon = "🟢" if state == 1 else "🔴"
+                dev_type = dev.get("type", "unknown")
+
+                type_icons = {"ugw": "🌐", "usw": "🔀", "uap": "📡"}
+                type_icon = type_icons.get(dev_type, "📦")
+
+                print(f"{icon} {type_icon} **{name}**")
+                print(f"   Modell: {model}")
+
+                # Show connected clients for APs
+                if dev_type == "uap":
+                    num_clients = dev.get("num_sta", 0)
+                    print(f"   Clients: {num_clients}")
+                print()
+            return
+
     elif args.command == "restart-device":
         api.restart_device(args.mac)
-        print(f"Restarting device {args.mac}")
+        print(f"🔄 Gerät {args.mac} wird neugestartet")
         return
+
     elif args.command == "adopt":
         api.adopt_device(args.mac)
-        print(f"Adopting device {args.mac}")
+        print(f"✅ Gerät {args.mac} wird adoptiert")
         return
+
     elif args.command == "networks":
-        result = api.get_networks()
+        networks = api.get_networks()
+        if args.json:
+            result = networks
+        else:
+            if not networks:
+                print("Keine Netzwerke gefunden.")
+                return
+
+            print(f"🌐 **Netzwerke** ({len(networks)} Netzwerke)\n")
+            for net in networks:
+                name = net.get("name", "?")
+                subnet = net.get("ip_subnet", "?")
+                vlan = net.get("vlan", "")
+
+                print(f"  **{name}**")
+                print(f"     Subnet: {subnet}")
+                if vlan:
+                    print(f"     VLAN: {vlan}")
+                print()
+            return
+
     elif args.command == "wifis":
-        result = api.get_wifis()
+        wifis = api.get_wifis()
+        if args.json:
+            result = wifis
+        else:
+            if not wifis:
+                print("Keine WLANs gefunden.")
+                return
+
+            print(f"📶 **WLAN-Netzwerke** ({len(wifis)} Netzwerke)\n")
+            for wifi in wifis:
+                name = wifi.get("name", "?")
+                enabled = wifi.get("enabled", False)
+                icon = "🟢" if enabled else "⚫"
+                security = wifi.get("security", "?")
+
+                print(f"{icon} **{name}**")
+                print(f"   Sicherheit: {security}")
+                print()
+            return
     elif args.command == "dpi-stats":
         result = api.get_dpi_stats()
     elif args.command == "port-forwards":
