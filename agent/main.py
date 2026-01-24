@@ -202,8 +202,16 @@ async def process_natural_language(
         await send_message(chat_id, f"❌ {error_msg}", settings)
         return
 
-    # Handle unknown intents - request skill creation
+    # Handle unknown intents - either conversational or skill creation request
     if intent.skill == "unknown":
+        # If model gave a text response, use it (conversational)
+        if intent.description and len(intent.description) > 10:
+            await send_message(chat_id, intent.description, settings)
+            add_message(chat_id, "user", text)
+            add_message(chat_id, "assistant", intent.description)
+            return
+
+        # Otherwise, request skill creation for missing capability
         response = await request_skill_creation(
             user_request=text,
             requester_name=user.display_name,
