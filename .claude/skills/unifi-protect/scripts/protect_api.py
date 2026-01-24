@@ -204,7 +204,7 @@ def main():
 
     # Events
     events = subparsers.add_parser("events", help="List events")
-    events.add_argument("--last", help="Last N hours (e.g., 24h, 1h)")
+    events.add_argument("--last", help="Last N hours (e.g., 24h, 1h)", default="24h")
     events.add_argument("--types", help="Event types (comma-separated: motion,ring)")
     events.add_argument("--camera", help="Filter by camera name or ID")
 
@@ -249,11 +249,9 @@ def main():
         print(f"Snapshot saved to {output}")
         return
     elif args.command == "events":
-        start = end = None
-        if args.last:
-            hours = int(args.last.replace("h", ""))
-            end = int(datetime.now().timestamp() * 1000)
-            start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
+        hours = int(args.last.replace("h", ""))
+        end = int(datetime.now().timestamp() * 1000)
+        start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
         types = args.types.split(",") if args.types else None
         camera_id = api.resolve_camera_id(args.camera) if args.camera else None
         if args.camera and not camera_id:
