@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     @classmethod
     def parse_allowed_users(cls, v):
         """Parse comma-separated user IDs into a list of integers."""
+        if isinstance(v, int):
+            # Single user ID as integer
+            return [v]
         if isinstance(v, str):
             if not v.strip():
                 return []
@@ -44,6 +47,8 @@ class Settings(BaseSettings):
                 return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
             except ValueError as e:
                 raise ValueError(f"Invalid telegram_allowed_users format: {e}. Expected comma-separated integers.")
+        if isinstance(v, list):
+            return v
         return v
 
     @field_validator("gaming_pc_mac", mode="before")

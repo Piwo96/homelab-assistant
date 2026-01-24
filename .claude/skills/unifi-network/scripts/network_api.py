@@ -305,6 +305,37 @@ class UniFiAPI:
         """Get WiFi networks."""
         return self.get(f"/api/s/{self.site}/rest/wlanconf")
 
+    # Port Forwarding
+    def get_port_forwards(self) -> list:
+        """Get all port forwarding rules."""
+        return self.get(f"/api/s/{self.site}/rest/portforward")
+
+    def create_port_forward(
+        self,
+        name: str,
+        dst_port: int,
+        fwd_ip: str,
+        fwd_port: int,
+        proto: str = "tcp_udp",
+        enabled: bool = True,
+    ) -> dict:
+        """Create a port forwarding rule."""
+        data = {
+            "name": name,
+            "dst_port": str(dst_port),
+            "fwd": fwd_ip,
+            "fwd_port": str(fwd_port),
+            "proto": proto,  # tcp, udp, tcp_udp
+            "enabled": enabled,
+            "src": "any",
+            "log": False,
+        }
+        return self.post(f"/api/s/{self.site}/rest/portforward", data)
+
+    def delete_port_forward(self, rule_id: str) -> dict:
+        """Delete a port forwarding rule."""
+        return self._request("DELETE", f"/api/s/{self.site}/rest/portforward/{rule_id}")
+
 
 def format_output(data: Any, format_type: str = "table") -> str:
     """Format output for display."""
@@ -372,6 +403,19 @@ def main():
 
     # Stats
     subparsers.add_parser("dpi-stats", help="DPI statistics")
+
+    # Port Forwarding
+    subparsers.add_parser("port-forwards", help="List port forwarding rules")
+
+    pf_create = subparsers.add_parser("create-port-forward", help="Create port forwarding rule")
+    pf_create.add_argument("name", help="Rule name")
+    pf_create.add_argument("dst_port", type=int, help="External port")
+    pf_create.add_argument("fwd_ip", help="Forward to IP address")
+    pf_create.add_argument("fwd_port", type=int, help="Forward to port")
+    pf_create.add_argument("--proto", default="tcp_udp", choices=["tcp", "udp", "tcp_udp"], help="Protocol")
+
+    pf_delete = subparsers.add_parser("delete-port-forward", help="Delete port forwarding rule")
+    pf_delete.add_argument("rule_id", help="Rule ID")
 
     args = parser.parse_args()
 
@@ -447,6 +491,22 @@ def main():
         result = api.get_wifis()
     elif args.command == "dpi-stats":
         result = api.get_dpi_stats()
+    elif args.command == "port-forwards":
+        result = api.get_port_forwards()
+    elif args.command == "create-port-forward":
+        result = api.create_port_forward(
+            name=args.name,
+            dst_port=args.dst_port,
+            fwd_ip=args.fwd_ip,
+            fwd_port=args.fwd_port,
+            proto=args.proto,
+        )
+        print(f"Created port forward: {args.name} ({args.dst_port} -> {args.fwd_ip}:{args.fwd_port})")
+        return
+    elif args.command == "delete-port-forward":
+        api.delete_port_forward(args.rule_id)
+        print(f"Deleted port forward rule {args.rule_id}")
+        return
 
     if result is not None:
         print(format_output(result, output_format))
