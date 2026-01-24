@@ -1,7 +1,6 @@
 """Skill execution - maps intents to skill script calls using dynamic registry."""
 
 import asyncio
-import json
 import logging
 import subprocess
 from pathlib import Path
@@ -35,8 +34,7 @@ def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:
 
     cmd = ["python", str(skill.script_path)]
 
-    # Add --json flag early (before subcommand) for scripts that expect it there
-    cmd.append("--json")
+    # Don't add --json - let scripts use their user-friendly formatted output
 
     # Action is the subcommand
     if intent.action:
@@ -173,157 +171,24 @@ async def execute_skill(intent: IntentResult, settings: Settings) -> SkillExecut
         )
 
 
-def format_skill_output(output: str, skill: str, action: str) -> str:
+def format_skill_output(output: str, skill: str = "", action: str = "") -> str:  # noqa: ARG001
     """Format skill output for Telegram display.
 
+    Scripts now have their own user-friendly formatting, so we just
+    pass through the output and truncate for Telegram limits.
+
     Args:
-        output: Raw JSON output from skill script
-        skill: Skill name
-        action: Action that was executed
+        output: Output from skill script (already formatted)
+        skill: Skill name (unused, kept for compatibility)
+        action: Action that was executed (unused, kept for compatibility)
 
     Returns:
         Formatted string for Telegram
     """
-    try:
-        data = json.loads(output)
-    except json.JSONDecodeError:
-        # If not JSON, return as-is
-        return output[:2000]  # Telegram message limit
-
-    # Format based on skill and action
-    try:
-        if skill == "homeassistant":
-            return format_homeassistant_output(data, action)
-        elif skill == "proxmox":
-            return format_proxmox_output(data, action)
-        elif skill == "unifi-network":
-            return format_unifi_network_output(data, action)
-        elif skill == "unifi-protect":
-            return format_unifi_protect_output(data, action)
-        elif skill == "pihole":
-            return format_pihole_output(data, action)
-    except (KeyError, TypeError, AttributeError) as e:
-        logger.warning(f"Error formatting {skill} output: {e}")
-
-    # Default: pretty print JSON (truncated)
-    return json.dumps(data, indent=2, ensure_ascii=False)[:2000]
-
-
-def format_homeassistant_output(data: dict, action: str) -> str:
-    """Format Home Assistant output."""
-    if action in ["turn_on", "turn-on", "turn_off", "turn-off", "toggle"]:
-        entity = data.get("entity_id", "Unbekannt")
-        state = data.get("state", "unbekannt")
-        return f"✅ {entity}: {state}"
-
-    if action == "status":
-        return f"🏠 Home Assistant: {data.get('state', 'unknown')}"
-
-    if action in ["entities", "list_scenes", "list-scenes"]:
-        if isinstance(data, list):
-            items = [f"• {item.get('entity_id', item)}" for item in data[:20]]
-            result = "\n".join(items)
-            if len(data) > 20:
-                result += f"\n... und {len(data) - 20} weitere"
-            return result
-
-    return json.dumps(data, indent=2, ensure_ascii=False)[:2000]
-
-
-def format_proxmox_output(data: dict, action: str) -> str:
-    """Format Proxmox output."""
-    if action in ["start", "stop"]:
-        return f"✅ Aktion ausgeführt"
-
-    if action == "overview" and isinstance(data, list):
-        lines = []
-        for node in data:
-            name = node.get("node", "?")
-            status = node.get("status", "?")
-            cpu = node.get("cpu", 0) * 100
-            mem_used = node.get("mem", 0) / (1024**3)
-            mem_total = node.get("maxmem", 1) / (1024**3)
-            lines.append(
-                f"🖥️ {name}: {status} | CPU: {cpu:.1f}% | RAM: {mem_used:.1f}/{mem_total:.1f}GB"
-            )
-        return "\n".join(lines)
-
-    if action in ["vms", "containers"] and isinstance(data, list):
-        lines = []
-        for vm in data[:15]:
-            vmid = vm.get("vmid", "?")
-            name = vm.get("name", "?")
-            status = vm.get("status", "?")
-            emoji = "🟢" if status == "running" else "⚪"
-            lines.append(f"{emoji} {vmid}: {name} ({status})")
-        if len(data) > 15:
-            lines.append(f"... und {len(data) - 15} weitere")
-        return "\n".join(lines) or "Keine VMs/Container gefunden"
-
-    return json.dumps(data, indent=2, ensure_ascii=False)[:2000]
-
-
-def format_unifi_network_output(data: dict, action: str) -> str:
-    """Format UniFi Network output."""
-    if action == "clients" and isinstance(data, list):
-        lines = []
-        for client in data[:20]:
-            name = client.get("name") or client.get("hostname") or client.get("mac", "?")
-            ip = client.get("ip", "?")
-            lines.append(f"📱 {name}: {ip}")
-        if len(data) > 20:
-            lines.append(f"... und {len(data) - 20} weitere")
-        return "\n".join(lines) or "Keine Clients gefunden"
-
-    if action == "health":
-        return f"✅ Netzwerk-Status: OK"
-
-    return json.dumps(data, indent=2, ensure_ascii=False)[:2000]
-
-
-def format_unifi_protect_output(data: dict, action: str) -> str:
-    """Format UniFi Protect output."""
-    if action == "cameras" and isinstance(data, list):
-        lines = []
-        for cam in data:
-            name = cam.get("name", "?")
-            state = cam.get("state", "?")
-            emoji = "🟢" if state == "CONNECTED" else "🔴"
-            lines.append(f"{emoji} {name}")
-        return "\n".join(lines) or "Keine Kameras gefunden"
-
-    if action in ["events", "detections"] and isinstance(data, list):
-        if not data:
-            return "Keine Ereignisse gefunden"
-        lines = []
-        for event in data[:10]:
-            event_type = event.get("type", "?")
-            camera = event.get("camera", {}).get("name", "?")
-            lines.append(f"📹 {camera}: {event_type}")
-        if len(data) > 10:
-            lines.append(f"... und {len(data) - 10} weitere")
-        return "\n".join(lines)
-
-    return json.dumps(data, indent=2, ensure_ascii=False)[:2000]
-
-
-def format_pihole_output(data: dict, action: str) -> str:
-    """Format Pi-hole output."""
-    if action == "summary":
-        total = data.get("dns_queries_today", 0)
-        blocked = data.get("ads_blocked_today", 0)
-        percent = data.get("ads_percentage_today", 0)
-        return f"🛡️ Pi-hole\nAnfragen heute: {total}\nBlockiert: {blocked} ({percent:.1f}%)"
-
-    if action == "status":
-        status = data.get("status", "unknown")
-        emoji = "🟢" if status == "enabled" else "🔴"
-        return f"{emoji} Pi-hole: {status}"
-
-    if action in ["enable", "disable"]:
-        return f"✅ Pi-hole {action}d"
-
-    return json.dumps(data, indent=2, ensure_ascii=False)[:2000]
+    # Scripts output formatted text directly - just truncate for Telegram
+    if len(output) > 4000:
+        return output[:3950] + "\n\n... (gekürzt)"
+    return output.strip()
 
 
 def get_available_skills(settings: Settings) -> list:
