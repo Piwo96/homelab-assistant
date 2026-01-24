@@ -31,7 +31,11 @@ Wenn du ein passendes Tool findest:
 Wenn du kein passendes Tool findest, antworte einfach mit Text."""
 
 
-async def classify_intent(message: str, settings: Settings) -> IntentResult:
+async def classify_intent(
+    message: str,
+    settings: Settings,
+    history: List[Dict[str, str]] | None = None,
+) -> IntentResult:
     """Classify user message into structured intent using tool-calling.
 
     This function uses dynamic tool definitions loaded from the skill
@@ -40,6 +44,7 @@ async def classify_intent(message: str, settings: Settings) -> IntentResult:
     Args:
         message: User's natural language message
         settings: Application settings
+        history: Optional conversation history for context
 
     Returns:
         IntentResult with classified skill, action, and parameters
@@ -73,7 +78,9 @@ async def classify_intent(message: str, settings: Settings) -> IntentResult:
         )
 
     try:
-        response = await _call_with_tools(message, settings, registry.get_tools_json())
+        response = await _call_with_tools(
+            message, settings, registry.get_tools_json(), history or []
+        )
         result = _parse_tool_call_response(response)
 
         logger.info(
@@ -117,6 +124,7 @@ async def _call_with_tools(
     message: str,
     settings: Settings,
     tools: List[Dict[str, Any]],
+    history: List[Dict[str, str]],
 ) -> Dict[str, Any]:
     """Call LM Studio with tool definitions.
 
@@ -124,15 +132,19 @@ async def _call_with_tools(
         message: User message
         settings: Application settings
         tools: Tool definitions in OpenAI format
+        history: Conversation history for context
 
     Returns:
         Raw API response from LM Studio
     """
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *history,
+        {"role": "user", "content": message},
+    ]
+
     payload = {
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": message},
-        ],
+        "messages": messages,
         "tools": tools,
         "tool_choice": "auto",  # Let model decide
         "temperature": 0.1,  # Low temperature for consistent results

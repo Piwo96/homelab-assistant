@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Approval settings
     approval_timeout_minutes: int = 5
 
+    # Chat history
+    chat_history_limit: int = 50
+
     # Project paths
     project_root: Path = Path(__file__).parent.parent
 

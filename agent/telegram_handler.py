@@ -253,5 +253,7 @@ Ich kann dir bei der Steuerung deines Smart Homes und Homelabs helfen.
 *Befehle:*
 /help - Diese Hilfe anzeigen
 /wake - Gaming-PC aufwecken
+/skills - Geladene Skills anzeigen
+/clear - Chat-Verlauf löschen
 
 *Hinweis:* Wenn ich etwas nicht kann, frage ich den Admin, ob ich die Fähigkeit lernen soll."""

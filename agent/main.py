@@ -19,6 +19,7 @@ from .skill_executor import execute_skill
 from .skill_creator import request_skill_creation, handle_approval
 from .tool_registry import get_registry, reload_registry
 from .wol import wake_gaming_pc
+from .chat_history import get_history, add_message, clear_history
 
 # Configure logging
 logging.basicConfig(
@@ -166,6 +167,13 @@ async def handle_command(
                 settings,
             )
 
+    elif command == "/clear":
+        cleared = clear_history(chat_id)
+        if cleared:
+            await send_message(chat_id, "🗑️ Chat-Verlauf gelöscht.", settings)
+        else:
+            await send_message(chat_id, "ℹ️ Kein Verlauf vorhanden.", settings)
+
     else:
         await send_message(
             chat_id,
@@ -181,8 +189,11 @@ async def process_natural_language(
     # Send "thinking" indicator
     await send_message(chat_id, "🤔 Verstehe...", settings)
 
-    # Classify intent
-    intent = await classify_intent(text, settings)
+    # Get conversation history for context
+    history = get_history(chat_id)
+
+    # Classify intent with history context
+    intent = await classify_intent(text, settings, history)
     logger.info(f"Classified intent: skill={intent.skill}, action={intent.action}")
 
     # Handle errors
@@ -206,10 +217,17 @@ async def process_natural_language(
     # Execute known skill
     result = await execute_skill(intent, settings)
 
+    # Determine response message
     if result.success:
-        await send_message(chat_id, result.output, settings)
+        response_msg = result.output
+        await send_message(chat_id, response_msg, settings)
     else:
-        await send_message(chat_id, f"❌ {result.error}", settings)
+        response_msg = f"❌ {result.error}"
+        await send_message(chat_id, response_msg, settings)
+
+    # Store conversation in history
+    add_message(chat_id, "user", text)
+    add_message(chat_id, "assistant", response_msg)
 
 
 async def handle_callback_update(callback_query: Dict[str, Any], settings: Settings):
