@@ -149,10 +149,14 @@ async def _call_with_tools(
     Returns:
         Raw API response from LM Studio
     """
+    # For thinking models like Qwen3, append /no_think for faster, direct responses
+    # This skips the extended reasoning which isn't needed for tool classification
+    user_message = f"{message} /no_think"
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         *history,
-        {"role": "user", "content": message},
+        {"role": "user", "content": user_message},
     ]
 
     payload = {
@@ -218,6 +222,8 @@ def _parse_tool_call_response(response: Dict[str, Any]) -> IntentResult:
     else:
         # Model responded without tool (conversational response)
         content = message.get("content", "")
+        # Strip thinking tags from thinking models (e.g., Qwen3)
+        content = _strip_thinking_tags(content)
         return IntentResult(
             skill="unknown",
             action="",
@@ -225,6 +231,24 @@ def _parse_tool_call_response(response: Dict[str, Any]) -> IntentResult:
             confidence=0.0,
             raw_response=content,
         )
+
+
+def _strip_thinking_tags(text: str) -> str:
+    """Remove <think>...</think> tags from thinking model output.
+
+    Args:
+        text: Raw model output that may contain thinking tags
+
+    Returns:
+        Text with thinking sections removed
+    """
+    import re
+
+    # Remove <think>...</think> blocks (including multiline)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Also handle unclosed think tags (model cut off mid-thinking)
+    text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
+    return text.strip()
 
 
 def get_available_skills(settings: Settings) -> list:
