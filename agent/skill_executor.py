@@ -35,6 +35,9 @@ def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:
 
     cmd = ["python", str(skill.script_path)]
 
+    # Add --json flag early (before subcommand) for scripts that expect it there
+    cmd.append("--json")
+
     # Action is the subcommand
     if intent.action:
         cmd.append(intent.action)
@@ -49,9 +52,6 @@ def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:
             continue
         cmd.append(f"--{key}")
         cmd.append(str(value))
-
-    # Always add --json for structured output
-    cmd.append("--json")
 
     return cmd
 
