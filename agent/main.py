@@ -56,6 +56,41 @@ async def periodic_git_pull(settings: Settings):
             logger.error(f"Error during periodic git pull: {e}")
 
 
+async def periodic_nightly_review(_settings: Settings):
+    """Background task that runs nightly conversation review.
+
+    Runs once per day at ~3:00 AM (or 24h after startup).
+    """
+    from .nightly_review import run_review
+
+    # Wait 24 hours between reviews (or run immediately if first time)
+    interval = 24 * 60 * 60  # 24 hours in seconds
+
+    # Check when last review was run
+    try:
+        stats = database.get_database_stats()
+        if stats["total_reviews"] == 0:
+            # First run - wait a bit to collect some data first
+            logger.info("Nightly review: waiting 1 hour before first run")
+            await asyncio.sleep(60 * 60)  # 1 hour
+        else:
+            # Wait until next scheduled time
+            logger.info("Nightly review: scheduled to run every 24 hours")
+            await asyncio.sleep(interval)
+    except Exception:
+        await asyncio.sleep(interval)
+
+    while True:
+        try:
+            logger.info("Starting nightly conversation review...")
+            result = await run_review(dry_run=False)
+            logger.info(f"Nightly review completed: {result}")
+        except Exception as e:
+            logger.error(f"Error during nightly review: {e}")
+
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -82,6 +117,11 @@ async def lifespan(app: FastAPI):
     if settings.git_pull_interval_minutes > 0:
         pull_task = asyncio.create_task(periodic_git_pull(settings))
         background_tasks.append(pull_task)
+
+    # Start nightly review task
+    review_task = asyncio.create_task(periodic_nightly_review(settings))
+    background_tasks.append(review_task)
+    logger.info("Nightly review task started")
 
     yield
 
