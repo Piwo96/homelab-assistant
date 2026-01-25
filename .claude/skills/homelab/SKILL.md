@@ -1,7 +1,7 @@
 ---
 name: homelab
 description: Overview of all homelab automation skills - meta-skill that guides you to the right specialized skill
-version: 2.1.0
+version: 2.2.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -63,6 +63,15 @@ Manage Home Assistant: entities, scenes, automations, scripts.
 
 ---
 
+### [/self-annealing](../self-annealing/SKILL.md) - Autonomous Self-Improvement
+Track errors, update skills, and automatically commit/push to GitHub.
+
+**Use for**: Error tracking, skill updates, git automation, autonomous learning
+**Triggers**: `/self-annealing`, `/anneal`, `/git`
+**Tags**: `meta`, `git`, `automation`, `self-improvement`
+
+---
+
 ## Quick Reference
 
 | Need to...                          | Use Skill          | Example Command                          |
@@ -78,6 +87,8 @@ Manage Home Assistant: entities, scenes, automations, scripts.
 | Take camera snapshot                | `/protect`         | `protect_api.py snapshot <camera-id>`    |
 | Control smart lights                | `/hass`            | `homeassistant_api.py turn-on light.room`|
 | Run automation                      | `/hass`            | `homeassistant_api.py trigger auto.name` |
+| Commit and push changes             | `/anneal`          | `annealing_api.py anneal "fix: message"` |
+| Track an error                      | `/anneal`          | `annealing_api.py log-error "err" "ctx"` |
 
 ## Configuration
 
@@ -136,6 +147,7 @@ Additional resources per skill:
 
 ## Version History
 
+**v2.2.0** - Added self-annealing skill for autonomous self-improvement
 **v2.1.0** - NAS storage merged into Proxmox skill, added TROUBLESHOOTING.md to all skills
 **v2.0.0** - Split monolithic skill into 5 focused skills + meta-skill
 **v1.0.0** - Original monolithic homelab skill
