@@ -238,7 +238,7 @@ async def request_error_fix_approval(
         pending[request_id] = _error_to_dict(error_request, extra_data)
         _save_pending_errors(pending)
 
-        logger.info(f"PR created: {pr_result.get('url')} for {request_id}")
+        logger.info(f"Fix branch created: {compare_url} for {request_id}")
         return request_id
 
     except Exception as e:
