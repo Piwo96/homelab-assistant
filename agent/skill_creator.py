@@ -544,12 +544,21 @@ Du MUSST deine Antwort als JSON zurückgeben:
   "summary": "Kurze Beschreibung was hinzugefügt wurde (nicht ersetzt!)",
   "files": [
     {{
-      "path": "relativer/pfad/zur/datei",
+      "path": "name-des-skills/scripts/name_des_skills_api.py",
       "content": "Vollständiger Dateiinhalt"
     }}
   ]
 }}
 ```
+
+## KRITISCH: Dateipfade
+
+Die Pfade sind RELATIV zu `.claude/skills/`.
+- ✅ RICHTIG: `"path": "proxmox/scripts/proxmox_api.py"`
+- ❌ FALSCH: `"path": ".claude/skills/proxmox/scripts/proxmox_api.py"`
+- ❌ FALSCH: `"path": "/proxmox/scripts/proxmox_api.py"`
+
+Die Dateien werden automatisch nach `.claude/skills/<dein-pfad>` geschrieben.
 
 WARNUNG: Bei "extend" muss der content die KOMPLETTE Datei enthalten,
 aber mit dem BESTEHENDEN Code PLUS den neuen Änderungen.

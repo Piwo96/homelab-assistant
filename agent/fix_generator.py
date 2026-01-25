@@ -50,6 +50,9 @@ async def generate_fix(
 
     client = Anthropic(api_key=settings.anthropic_api_key)
 
+    # Determine expected path prefix for this skill
+    skill_base_path = f".claude/skills/{skill}/"
+
     prompt = f"""Analysiere diesen Fehler und schlage einen Fix vor:
 
 ## Fehler
@@ -62,6 +65,14 @@ async def generate_fix(
 ## Relevanter Quellcode
 {source_context}
 
+## WICHTIG: Projektstruktur
+
+Skills befinden sich IMMER in `.claude/skills/<skill-name>/`:
+- Scripts: `.claude/skills/{skill}/scripts/`
+- Dokumentation: `.claude/skills/{skill}/SKILL.md`
+
+Der zu ändernde Skill befindet sich in: `{skill_base_path}`
+
 ## Aufgabe
 
 Analysiere den Fehler und erstelle einen Fix. Der Fix sollte:
@@ -69,6 +80,7 @@ Analysiere den Fehler und erstelle einen Fix. Der Fix sollte:
 2. Eine minimale, gezielte Änderung vorschlagen
 3. Keine Breaking Changes einführen
 4. Error-Handling verbessern wenn sinnvoll
+5. **NIEMALS bestehenden Code komplett ersetzen - nur ändern was nötig ist**
 
 ## WICHTIG: Ausgabeformat
 
@@ -81,7 +93,7 @@ Antworte NUR mit diesem JSON-Format:
   "commit_message": "fix(scope): beschreibung",
   "files": [
     {{
-      "path": "relativer/pfad/zur/datei.py",
+      "path": "{skill_base_path}scripts/{skill.replace('-', '_')}_api.py",
       "content": "Vollständiger neuer Dateiinhalt..."
     }}
   ],
@@ -92,7 +104,7 @@ Antworte NUR mit diesem JSON-Format:
 - analysis: 1-2 Sätze zur Fehlerursache
 - fix_description: Was der Fix ändert
 - commit_message: Conventional Commits Format
-- files: Array mit geänderten Dateien (vollständiger Inhalt)
+- files: Array mit geänderten Dateien (MUSS mit `{skill_base_path}` beginnen!)
 - confidence: 0.0-1.0 wie sicher du dir beim Fix bist
 
 Bei niedriger Confidence (< 0.5) oder wenn der Fehler extern ist (API down, Netzwerk):
@@ -136,15 +148,18 @@ def _load_error_context(skill: str, action: str, settings: Settings) -> str:
     """
     context_parts = []
 
-    # Load skill script
+    # Load skill script - IMPORTANT: use full relative path in context
     skill_script = settings.project_root / ".claude" / "skills" / skill / "scripts" / f"{skill.replace('-', '_')}_api.py"
+    skill_script_rel = f".claude/skills/{skill}/scripts/{skill.replace('-', '_')}_api.py"
+
     if skill_script.exists():
         try:
             content = skill_script.read_text()
             # Truncate if too long
             if len(content) > 8000:
                 content = content[:8000] + "\n... (truncated)"
-            context_parts.append(f"### {skill_script.name}\n```python\n{content}\n```")
+            # Use FULL RELATIVE PATH so Claude knows exactly where the file is
+            context_parts.append(f"### Datei: `{skill_script_rel}`\n```python\n{content}\n```")
         except Exception as e:
             logger.warning(f"Failed to read skill script: {e}")
 
@@ -237,10 +252,16 @@ async def apply_fix(fix_data: dict[str, Any], settings: Settings) -> dict[str, A
         if not rel_path or not content:
             continue
 
+        # VALIDATION 1: Skill files must be in .claude/skills/ or agent/
+        valid_prefixes = [".claude/skills/", "agent/"]
+        if not any(rel_path.startswith(prefix) for prefix in valid_prefixes):
+            logger.error(f"Invalid path (must be in .claude/skills/ or agent/): {rel_path}")
+            return {"success": False, "error": f"Ungültiger Pfad: {rel_path} - Muss in .claude/skills/ oder agent/ sein"}
+
         # Resolve full path
         full_path = (settings.project_root / rel_path).resolve()
 
-        # Security: ensure path stays within project
+        # VALIDATION 2: Security - ensure path stays within project (no path traversal)
         if not str(full_path).startswith(str(settings.project_root.resolve())):
             logger.error(f"Path traversal attempt blocked: {rel_path}")
             continue
