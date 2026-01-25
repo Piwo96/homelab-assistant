@@ -118,6 +118,11 @@ async def lifespan(app: FastAPI):
     stats = database.get_database_stats()
     logger.info(f"Database: {stats['total_conversations']} conversations, {stats['flagged_conversations']} flagged")
 
+    # Cleanup old processed updates (keep last 7 days)
+    cleaned = database.cleanup_old_updates(days=7)
+    if cleaned > 0:
+        logger.info(f"Cleaned up {cleaned} old processed update records")
+
     # Initialize tool registry
     logger.info("Loading skill registry...")
     registry = get_registry(settings)
@@ -190,6 +195,14 @@ async def webhook(request: Request):
         data = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    # Deduplicate: Check if we already processed this update
+    update_id = data.get("update_id")
+    if update_id:
+        if not database.mark_update_processed(update_id):
+            # Already processed (e.g., during server restart)
+            logger.info(f"Skipping duplicate update_id: {update_id}")
+            return {"ok": True}
 
     # Route to appropriate handler
     if "callback_query" in data:

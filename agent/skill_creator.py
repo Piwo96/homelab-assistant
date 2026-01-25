@@ -1,25 +1,61 @@
-"""Skill creation via Claude API with admin approval workflow."""
+"""Skill creation via Claude API with feature branch approval workflow.
+
+When a user requests a new capability:
+1. Admin approves the initial request
+2. Claude API generates skill code
+3. Changes are pushed to a feature branch
+4. Admin receives GitHub compare link for review
+5. On second approval, branch is merged and skills reloaded
+6. On rejection, branch is deleted
+"""
 
 import asyncio
 import json
 import re
-import uuid
+import sys
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# Add skills path to import git_api
+_git_scripts_path = str(Path(__file__).parent.parent / ".claude" / "skills" / "git" / "scripts")
+if _git_scripts_path not in sys.path:
+    sys.path.insert(0, _git_scripts_path)
+
 from .config import Settings
 from .models import ApprovalRequest, ApprovalStatus
 from .telegram_handler import send_message, send_approval_request, edit_message_text
-from . import self_annealing
+from .tool_registry import reload_registry
 
 logger = logging.getLogger(__name__)
 
-# In-memory storage for pending approvals
-# In production, consider using Redis or a database
+# File-based storage for pending skill approvals (persists across restarts)
+PENDING_SKILLS_FILE = Path(__file__).parent.parent / ".claude" / "pending_skills.json"
+
+# In-memory storage for initial approval requests (before skill creation)
 pending_approvals: dict[str, ApprovalRequest] = {}
 _approvals_lock = asyncio.Lock()
+
+
+def _load_pending_skills() -> dict[str, dict]:
+    """Load pending skill merge requests from file."""
+    if not PENDING_SKILLS_FILE.exists():
+        return {}
+    try:
+        return json.loads(PENDING_SKILLS_FILE.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to load pending skills: {e}")
+        return {}
+
+
+def _save_pending_skills(skills: dict[str, dict]) -> None:
+    """Save pending skill merge requests to file."""
+    try:
+        PENDING_SKILLS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PENDING_SKILLS_FILE.write_text(json.dumps(skills, indent=2, default=str))
+    except OSError as e:
+        logger.error(f"Failed to save pending skills: {e}")
 
 
 async def request_skill_creation(
@@ -41,7 +77,7 @@ async def request_skill_creation(
     Returns:
         Message to send to the user
     """
-    request_id = str(uuid.uuid4())[:8]
+    request_id = f"skill_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     approval = ApprovalRequest(
         request_id=request_id,
@@ -121,6 +157,9 @@ async def approval_timeout(request_id: str, settings: Settings):
 async def handle_approval(request_id: str, approved: bool, settings: Settings) -> str:
     """Handle admin's approval or rejection decision.
 
+    For initial approval: creates skill and pushes to feature branch.
+    For merge approval: merges branch and cleans up.
+
     Args:
         request_id: The approval request ID
         approved: True if approved, False if rejected
@@ -129,6 +168,12 @@ async def handle_approval(request_id: str, approved: bool, settings: Settings) -
     Returns:
         Status message
     """
+    # Check if this is a merge approval (stored in file)
+    pending_skills = _load_pending_skills()
+    if request_id in pending_skills:
+        return await handle_skill_merge_approval(request_id, approved, settings)
+
+    # Otherwise, it's an initial skill creation approval (in memory)
     async with _approvals_lock:
         if request_id not in pending_approvals:
             return "❌ Anfrage nicht gefunden oder bereits abgelaufen."
@@ -159,7 +204,7 @@ async def handle_approval(request_id: str, approved: bool, settings: Settings) -
 
         return "Anfrage abgelehnt."
 
-    # Approved - create skill via Claude API
+    # Approved - create skill and push to feature branch
     approval.status = ApprovalStatus.APPROVED
     logger.info(f"Approval request {request_id} approved, creating skill...")
 
@@ -175,40 +220,14 @@ async def handle_approval(request_id: str, approved: bool, settings: Settings) -
         )
 
     try:
-        result = await create_skill(approval.user_request, settings)
-
-        # Notify user
-        await send_message(
-            approval.chat_id,
-            f"✅ Skill erstellt! Du kannst es jetzt nochmal versuchen:\n\"{approval.user_request}\"",
-            settings,
-        )
-
-        # Update admin message with result
-        if approval.message_id:
-            # Truncate result for Telegram
-            truncated_result = result[:1500] + "..." if len(result) > 1500 else result
-            await edit_message_text(
-                chat_id=settings.admin_telegram_id,
-                message_id=approval.message_id,
-                text=f"✅ *Skill erstellt*\n\n"
-                     f"Von: {approval.requester_name}\n"
-                     f"Anfrage: \"{approval.user_request}\"\n\n"
-                     f"Ergebnis:\n```\n{truncated_result}\n```",
-                settings=settings,
-            )
-
-        # Self-annealing: commit and push changes
-        anneal_result = await self_annealing.commit_and_push(
-            f"feat(skill): auto-created via agent request",
+        result = await create_skill_on_branch(
+            request_id=request_id,
+            user_request=approval.user_request,
+            requester_name=approval.requester_name,
+            chat_id=approval.chat_id,
             settings=settings,
         )
-        if anneal_result.get("success"):
-            logger.info(f"Self-annealing: {anneal_result.get('output')}")
-        else:
-            logger.warning(f"Self-annealing failed: {anneal_result.get('output')}")
-
-        return f"Skill erstellt: {result[:200]}..."
+        return result
 
     except Exception as e:
         logger.error(f"Error creating skill: {e}")
@@ -220,10 +239,238 @@ async def handle_approval(request_id: str, approved: bool, settings: Settings) -
             settings,
         )
 
+        # Update admin message
+        if approval.message_id:
+            await edit_message_text(
+                chat_id=settings.admin_telegram_id,
+                message_id=approval.message_id,
+                text=f"❌ *Fehler*\n\n"
+                     f"Von: {approval.requester_name}\n"
+                     f"Anfrage: \"{approval.user_request}\"\n\n"
+                     f"Fehler: {str(e)[:200]}",
+                settings=settings,
+            )
+
         return f"Fehler: {str(e)}"
 
 
-async def create_skill(user_request: str, settings: Settings) -> str:
+async def create_skill_on_branch(
+    request_id: str,
+    user_request: str,
+    requester_name: str,
+    chat_id: int,
+    settings: Settings,
+) -> str:
+    """Create skill on a feature branch and request merge approval.
+
+    Args:
+        request_id: The skill request ID
+        user_request: The user's original request
+        requester_name: Name of the requester
+        chat_id: Chat ID to respond to
+        settings: Application settings
+
+    Returns:
+        Status message
+    """
+    from git_api import GitAPI
+
+    branch_name = f"feat/{request_id}"
+    git = GitAPI()
+    original_branch = git.get_current_branch()
+
+    try:
+        # Create feature branch
+        branch_result = git.create_branch(branch_name)
+        if not branch_result.get("success"):
+            raise Exception(f"Branch creation failed: {branch_result.get('error')}")
+
+        # Generate and write skill files
+        skill_result = await create_skill(user_request, settings)
+
+        if not skill_result.get("success"):
+            raise Exception(skill_result.get("error", "Skill-Erstellung fehlgeschlagen"))
+
+        # Commit changes
+        commit_msg = f"feat(skill): {skill_result.get('summary', 'auto-created skill')}"
+        commit_result = git.commit(message=commit_msg, add_all=True)
+        if not commit_result.get("success"):
+            raise Exception(f"Commit failed: {commit_result.get('error')}")
+
+        # Push branch to remote
+        push_result = git.push(set_upstream=True)
+        if not push_result.get("success"):
+            raise Exception(f"Push failed: {push_result.get('error')}")
+
+        # Generate compare URL
+        compare_url = git.get_github_compare_url(original_branch, branch_name)
+
+        # Switch back to original branch
+        git.checkout(original_branch)
+
+        # Store skill data for merge approval
+        skill_data = {
+            "request_id": request_id,
+            "user_request": user_request,
+            "requester_name": requester_name,
+            "chat_id": chat_id,
+            "branch_name": branch_name,
+            "original_branch": original_branch,
+            "compare_url": compare_url,
+            "skill_name": skill_result.get("skill_name"),
+            "action": skill_result.get("action"),
+            "summary": skill_result.get("summary"),
+            "files": skill_result.get("files", []),
+            "created_at": datetime.now().isoformat(),
+        }
+
+        pending_skills = _load_pending_skills()
+        pending_skills[request_id] = skill_data
+        _save_pending_skills(pending_skills)
+
+        # Send merge approval request to admin
+        files_list = ", ".join(skill_result.get("files", []))
+        approval_text = (
+            f"🔧 *Skill bereit zur Überprüfung*\n\n"
+            f"**Von:** {requester_name}\n"
+            f"**Anfrage:** \"{user_request}\"\n\n"
+            f"**Skill:** {skill_result.get('skill_name')}\n"
+            f"**Aktion:** {skill_result.get('action')}\n"
+            f"**Dateien:** {files_list}\n\n"
+            f"🔗 [Änderungen ansehen]({compare_url})\n\n"
+            f"_Merge in master?_"
+        )
+
+        await send_approval_request(
+            admin_id=settings.admin_telegram_id,
+            text=approval_text,
+            request_id=request_id,
+            settings=settings,
+        )
+
+        # Notify user that skill is being reviewed
+        await send_message(
+            chat_id,
+            f"⏳ Skill wurde erstellt und wartet auf Merge-Genehmigung.\n"
+            f"Du bekommst Bescheid!",
+            settings,
+        )
+
+        logger.info(f"Skill branch created: {branch_name} for {request_id}")
+        return f"Skill-Branch erstellt: {branch_name}"
+
+    except Exception as e:
+        logger.error(f"Failed to create skill branch: {e}")
+
+        # Cleanup: switch back to original branch and delete feature branch
+        try:
+            git.checkout(original_branch)
+            git.delete_branch(branch_name, force=True)
+        except Exception:
+            pass
+
+        raise
+
+
+async def handle_skill_merge_approval(
+    request_id: str,
+    approved: bool,
+    settings: Settings,
+) -> str:
+    """Handle admin's approval or rejection of a skill merge.
+
+    Args:
+        request_id: The skill request ID
+        approved: True if approved, False if rejected
+        settings: Application settings
+
+    Returns:
+        Status message
+    """
+    from git_api import GitAPI
+
+    pending_skills = _load_pending_skills()
+
+    if request_id not in pending_skills:
+        return "❌ Skill-Anfrage nicht gefunden."
+
+    skill_data = pending_skills.pop(request_id)
+    _save_pending_skills(pending_skills)
+
+    branch_name = skill_data.get("branch_name")
+    original_branch = skill_data.get("original_branch", "master")
+    chat_id = skill_data.get("chat_id")
+    user_request = skill_data.get("user_request")
+
+    git = GitAPI()
+
+    if not approved:
+        # Rejected - delete branch (local and remote)
+        logger.info(f"Skill merge {request_id} rejected, deleting branch {branch_name}")
+
+        git.delete_remote_branch(branch_name)
+        git.delete_branch(branch_name, force=True)
+
+        # Notify user
+        await send_message(
+            chat_id,
+            f"❌ Skill-Änderungen wurden abgelehnt:\n\"{user_request}\"",
+            settings,
+        )
+
+        return f"Branch {branch_name} gelöscht."
+
+    # Approved - merge branch locally and push
+    logger.info(f"Skill merge {request_id} approved, merging branch {branch_name}")
+
+    try:
+        # Ensure we're on the original branch
+        current = git.get_current_branch()
+        if current != original_branch:
+            checkout_result = git.checkout(original_branch)
+            if not checkout_result.get("success"):
+                raise Exception(f"Checkout failed: {checkout_result.get('error')}")
+
+        # Merge the feature branch
+        merge_result = git.merge_branch(branch_name)
+        if not merge_result.get("success"):
+            raise Exception(f"Merge failed: {merge_result.get('error')}")
+
+        # Push to remote
+        push_result = git.push()
+        if not push_result.get("success"):
+            raise Exception(f"Push failed: {push_result.get('error')}")
+
+        # Delete remote and local feature branch
+        git.delete_remote_branch(branch_name)
+        git.delete_branch(branch_name, force=True)
+
+        # Reload tool registry with new skills
+        reload_registry(settings)
+
+        # Notify user
+        await send_message(
+            chat_id,
+            f"✅ Skill erstellt! Du kannst es jetzt nochmal versuchen:\n\"{user_request}\"",
+            settings,
+        )
+
+        logger.info(f"Skill merged: {request_id}")
+        return f"Branch {branch_name} gemerged und gepusht. Skills neu geladen."
+
+    except Exception as e:
+        logger.error(f"Error merging skill branch: {e}")
+
+        await send_message(
+            chat_id,
+            f"❌ Merge fehlgeschlagen:\n{str(e)}",
+            settings,
+        )
+
+        return f"Merge fehlgeschlagen: {str(e)}"
+
+
+async def create_skill(user_request: str, settings: Settings) -> dict[str, Any]:
     """Create or extend a skill using Claude API.
 
     Args:
@@ -231,16 +478,16 @@ async def create_skill(user_request: str, settings: Settings) -> str:
         settings: Application settings
 
     Returns:
-        Summary of what was created/modified
+        Dict with skill_name, action, summary, files, success
     """
     if not settings.anthropic_api_key:
-        raise ValueError("ANTHROPIC_API_KEY nicht konfiguriert")
+        return {"success": False, "error": "ANTHROPIC_API_KEY nicht konfiguriert"}
 
     # Import here to avoid startup error if not installed
     try:
         from anthropic import Anthropic
     except ImportError:
-        raise ImportError("anthropic Paket nicht installiert: pip install anthropic")
+        return {"success": False, "error": "anthropic Paket nicht installiert: pip install anthropic"}
 
     client = Anthropic(api_key=settings.anthropic_api_key)
 
@@ -259,40 +506,54 @@ async def create_skill(user_request: str, settings: Settings) -> str:
 ## Bestehende Skill-Struktur:
 {skill_context}
 
+## WICHTIGE REGELN - UNBEDINGT BEACHTEN:
+
+1. **NIEMALS bestehenden Code komplett ersetzen!**
+   - Wenn ein Skill erweitert wird: NUR neue Funktionen/Commands HINZUFÜGEN
+   - Bestehende Funktionen, Klassen, Imports BEIBEHALTEN
+   - Bei Erweiterung: Nur die DIFF-Änderungen, nicht die komplette Datei
+
+2. **Bei "extend":**
+   - Lies den bestehenden Code und FÜGE NUR NEUES hinzu
+   - Keine Rewrites, keine Refactorings, keine "Verbesserungen"
+   - Behalte die bestehende Architektur (z.B. Token-Auth vs Passwort-Auth)
+
+3. **Bei "create":**
+   - Nur für komplett neue Skills
+   - Folge dem bestehenden Muster anderer Skills
+
 ## Skill-Format (SKILL.md):
 - Frontmatter mit name, description, version, triggers
 - Abschnitte: Goal, Inputs, Tools, Outputs, Commands, Edge Cases
+- Bei extend: Nur neue Commands zur bestehenden Liste hinzufügen
 
 ## Script-Format (*_api.py):
 - argparse CLI mit Subcommands
 - --json Flag für strukturierte Ausgabe
 - load_env() für .env Unterstützung
-- Fehler auf stderr
+- Bei extend: NUR neue add_parser() und Handler hinzufügen
 
 ## WICHTIG: Ausgabeformat
 
-Du MUSST deine Antwort als JSON zurückgeben mit folgendem Format:
+Du MUSST deine Antwort als JSON zurückgeben:
 
 ```json
 {{
   "skill_name": "name-des-skills",
   "action": "create" oder "extend",
-  "summary": "Kurze Beschreibung was erstellt/geändert wurde",
+  "summary": "Kurze Beschreibung was hinzugefügt wurde (nicht ersetzt!)",
   "files": [
     {{
-      "path": "relativer/pfad/zur/datei.md",
-      "content": "Vollständiger Dateiinhalt hier..."
+      "path": "relativer/pfad/zur/datei",
+      "content": "Vollständiger Dateiinhalt"
     }}
   ]
 }}
 ```
 
-- skill_name: Name des Skills (lowercase, mit Bindestrichen)
-- action: "create" für neuen Skill, "extend" für Erweiterung
-- summary: 1-2 Sätze was gemacht wurde
-- files: Array mit allen Dateien die erstellt/überschrieben werden sollen
-  - path: Relativer Pfad ab .claude/skills/ (z.B. "pihole/SKILL.md" oder "pihole/scripts/pihole_api.py")
-  - content: Vollständiger Inhalt der Datei
+WARNUNG: Bei "extend" muss der content die KOMPLETTE Datei enthalten,
+aber mit dem BESTEHENDEN Code PLUS den neuen Änderungen.
+Nicht nur die neuen Teile, sondern alles - aber ohne bestehende Funktionen zu ändern oder zu entfernen!
 
 Gib NUR das JSON zurück, keine weiteren Erklärungen.""",
             }
@@ -302,16 +563,10 @@ Gib NUR das JSON zurück, keine weiteren Erklärungen.""",
     response_text = message.content[0].text
 
     # Parse JSON from response
-    files_written = await _parse_and_write_skill_files(response_text, settings)
-
-    if not files_written:
-        logger.warning("No files were written from Claude response")
-        return f"Keine Dateien erstellt. Claude Antwort: {response_text[:500]}..."
-
-    return f"Skill '{files_written['skill_name']}' ({files_written['action']}): {files_written['summary']} - {len(files_written['files'])} Datei(en) geschrieben"
+    return await _parse_and_write_skill_files(response_text, settings)
 
 
-async def _parse_and_write_skill_files(response_text: str, settings: Settings) -> dict[str, Any] | None:
+async def _parse_and_write_skill_files(response_text: str, settings: Settings) -> dict[str, Any]:
     """Parse Claude's JSON response and write skill files to disk.
 
     Args:
@@ -319,7 +574,7 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
         settings: Application settings
 
     Returns:
-        Parsed data with written files info, or None if parsing failed
+        Dict with skill_name, action, summary, files, success
     """
     # Try to extract JSON from response (might be wrapped in markdown code block)
     json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
@@ -334,14 +589,14 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON from Claude response: {e}")
         logger.debug(f"Response was: {response_text[:1000]}")
-        return None
+        return {"success": False, "error": f"JSON parse error: {e}"}
 
     skill_name = data.get("skill_name")
     files = data.get("files", [])
 
     if not skill_name or not files:
         logger.error(f"Missing skill_name or files in response: {data}")
-        return None
+        return {"success": False, "error": "Missing skill_name or files in response"}
 
     skills_base = settings.project_root / ".claude" / "skills"
     files_written = []
@@ -368,7 +623,11 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
         logger.info(f"Wrote skill file: {full_path}")
         files_written.append(str(rel_path))
 
+    if not files_written:
+        return {"success": False, "error": "No files were written"}
+
     return {
+        "success": True,
         "skill_name": skill_name,
         "action": data.get("action", "create"),
         "summary": data.get("summary", "Skill erstellt"),
@@ -379,11 +638,13 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
 def load_skill_context(settings: Settings) -> str:
     """Load existing skill structure for Claude context.
 
+    Includes FULL content of existing scripts to prevent rewrites.
+
     Args:
         settings: Application settings
 
     Returns:
-        String describing existing skills
+        String describing existing skills with full code
     """
     skills_base = settings.project_root / ".claude" / "skills"
     if not skills_base.exists():
@@ -401,19 +662,28 @@ def load_skill_context(settings: Settings) -> str:
 
         parts = [f"\n### {skill_name}"]
 
-        # Read first 500 chars of SKILL.md if exists
+        # Read FULL SKILL.md if exists (important for understanding structure)
         if skill_md.exists():
             try:
-                content = skill_md.read_text()[:500]
-                parts.append(f"SKILL.md:\n{content}...")
+                content = skill_md.read_text()
+                # Truncate if very long, but include more than before
+                if len(content) > 2000:
+                    content = content[:2000] + "\n... (truncated)"
+                parts.append(f"SKILL.md:\n```markdown\n{content}\n```")
             except Exception:
                 pass
 
-        # List scripts
+        # Read FULL script content (critical to prevent rewrites!)
         if scripts_dir.exists():
-            scripts = [f.name for f in scripts_dir.glob("*.py")]
-            if scripts:
-                parts.append(f"Scripts: {', '.join(scripts)}")
+            for script in scripts_dir.glob("*.py"):
+                try:
+                    script_content = script.read_text()
+                    # Include full script to prevent Claude from rewriting
+                    if len(script_content) > 5000:
+                        script_content = script_content[:5000] + "\n# ... (truncated, but preserve all existing code!)"
+                    parts.append(f"\n{script.name}:\n```python\n{script_content}\n```")
+                except Exception:
+                    pass
 
         context_parts.append("\n".join(parts))
 
@@ -442,3 +712,15 @@ def cancel_approval(request_id: str) -> bool:
         del pending_approvals[request_id]
         return True
     return False
+
+
+def is_skill_request(request_id: str) -> bool:
+    """Check if a request ID is a skill request.
+
+    Args:
+        request_id: The request ID to check
+
+    Returns:
+        True if it's a skill request
+    """
+    return request_id.startswith("skill_")

@@ -87,6 +87,16 @@ def init_database(project_root: Path) -> None:
                 active BOOLEAN DEFAULT TRUE,
                 FOREIGN KEY (source_conversation_id) REFERENCES conversations(id)
             );
+
+            -- Processed Telegram updates (for deduplication)
+            CREATE TABLE IF NOT EXISTS processed_updates (
+                update_id INTEGER PRIMARY KEY,
+                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Auto-cleanup old processed updates (keep last 7 days)
+            CREATE INDEX IF NOT EXISTS idx_processed_updates_time
+                ON processed_updates(processed_at);
         """)
         conn.commit()
 
@@ -422,6 +432,66 @@ def clear_chat_history(chat_id: int) -> int:
         count = cursor.fetchone()[0]
 
     return count
+
+
+def is_update_processed(update_id: int) -> bool:
+    """Check if a Telegram update was already processed.
+
+    Args:
+        update_id: Telegram update ID
+
+    Returns:
+        True if already processed
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM processed_updates WHERE update_id = ?",
+            (update_id,)
+        ).fetchone()
+        return row is not None
+
+
+def mark_update_processed(update_id: int) -> bool:
+    """Mark a Telegram update as processed (idempotent).
+
+    Args:
+        update_id: Telegram update ID
+
+    Returns:
+        True if newly marked, False if already existed
+    """
+    with get_connection() as conn:
+        try:
+            conn.execute(
+                "INSERT INTO processed_updates (update_id) VALUES (?)",
+                (update_id,)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            # Already exists (duplicate)
+            return False
+
+
+def cleanup_old_updates(days: int = 7) -> int:
+    """Remove old processed update records.
+
+    Args:
+        days: Keep updates from last N days
+
+    Returns:
+        Number of records deleted
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM processed_updates
+            WHERE processed_at < datetime('now', '-' || ? || ' days')
+            """,
+            (days,)
+        )
+        conn.commit()
+        return cursor.rowcount
 
 
 def get_database_stats() -> Dict[str, Any]:
