@@ -10,6 +10,7 @@ from .config import Settings
 from .models import IntentResult, SkillExecutionResult
 from .skill_loader import SkillDefinition
 from .tool_registry import get_registry
+from . import self_annealing
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,15 @@ async def execute_skill(intent: IntentResult, settings: Settings) -> SkillExecut
                 action=intent.action,
             )
         else:
+            # Log script error for self-annealing
+            error_msg = result.stderr or f"Exit code {result.returncode}"
+            asyncio.create_task(
+                self_annealing.log_error(
+                    error="ScriptError",
+                    context=f"Skill {skill_name}:{intent.action} failed: {error_msg[:200]}",
+                    settings=settings,
+                )
+            )
             return SkillExecutionResult(
                 success=False,
                 output="",
@@ -154,6 +164,14 @@ async def execute_skill(intent: IntentResult, settings: Settings) -> SkillExecut
             )
 
     except subprocess.TimeoutExpired:
+        # Log timeout error for self-annealing
+        asyncio.create_task(
+            self_annealing.log_error(
+                error="TimeoutExpired",
+                context=f"Skill {skill_name}:{intent.action} timeout after 30s",
+                settings=settings,
+            )
+        )
         return SkillExecutionResult(
             success=False,
             output="",
@@ -162,6 +180,14 @@ async def execute_skill(intent: IntentResult, settings: Settings) -> SkillExecut
             action=intent.action,
         )
     except Exception as e:
+        # Log execution error for self-annealing
+        asyncio.create_task(
+            self_annealing.log_error(
+                error=type(e).__name__,
+                context=f"Skill {skill_name}:{intent.action} failed: {str(e)}",
+                settings=settings,
+            )
+        )
         return SkillExecutionResult(
             success=False,
             output="",

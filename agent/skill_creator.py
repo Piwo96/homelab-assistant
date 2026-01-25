@@ -9,6 +9,7 @@ from pathlib import Path
 from .config import Settings
 from .models import ApprovalRequest, ApprovalStatus
 from .telegram_handler import send_message, send_approval_request, edit_message_text
+from . import self_annealing
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,16 @@ async def handle_approval(request_id: str, approved: bool, settings: Settings) -
                      f"Ergebnis:\n```\n{truncated_result}\n```",
                 settings=settings,
             )
+
+        # Self-annealing: commit and push changes
+        anneal_result = await self_annealing.commit_and_push(
+            f"feat(skill): auto-created via agent request",
+            settings=settings,
+        )
+        if anneal_result.get("success"):
+            logger.info(f"Self-annealing: {anneal_result.get('output')}")
+        else:
+            logger.warning(f"Self-annealing failed: {anneal_result.get('output')}")
 
         return f"Skill erstellt: {result[:200]}..."
 
