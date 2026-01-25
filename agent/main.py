@@ -35,7 +35,13 @@ logger = logging.getLogger(__name__)
 
 
 async def periodic_git_pull(settings: Settings):
-    """Background task that periodically pulls updates from git."""
+    """Background task that periodically pulls updates from git.
+
+    Automatically restarts the server if Python files changed.
+    """
+    import os
+    import sys
+
     interval = settings.git_pull_interval_minutes * 60
     logger.info(f"Starting periodic git pull (every {settings.git_pull_interval_minutes} min)")
 
@@ -47,9 +53,16 @@ async def periodic_git_pull(settings: Settings):
                 output = result.get("output", "")
                 if "Already up to date" not in output:
                     logger.info(f"Git pull: {output}")
-                    # Reload skills if new code was pulled
-                    reload_registry(settings)
-                    logger.info("Skills reloaded after git pull")
+
+                    # Check if Python files changed (requires full restart)
+                    if ".py" in output:
+                        logger.info("Python files changed - restarting server...")
+                        await asyncio.sleep(1)  # Brief delay for cleanup
+                        os.execv(sys.executable, [sys.executable] + sys.argv)
+                    else:
+                        # Only non-Python files changed - just reload skills
+                        reload_registry(settings)
+                        logger.info("Skills reloaded after git pull")
             else:
                 logger.warning(f"Git pull failed: {result.get('output')}")
         except Exception as e:
