@@ -41,14 +41,19 @@ def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:
     if intent.action:
         cmd.append(intent.action)
 
-    # Target as positional argument (if present)
-    if intent.target:
-        cmd.append(intent.target)
+    # Known positional argument names (order matters!)
+    # These are passed as positional args, not flags
+    positional_args = ["node", "vmid", "storage", "domain", "entity_id"]
 
-    # Additional args as flags
+    # First pass: add positional args in order
+    for pos_arg in positional_args:
+        if pos_arg in intent.args:
+            cmd.append(str(intent.args[pos_arg]))
+
+    # Second pass: add remaining args as flags
     for key, value in intent.args.items():
-        if key in ("action", "target"):  # Skip already handled
-            continue
+        if key in ("action",) or key in positional_args:
+            continue  # Already handled
         cmd.append(f"--{key}")
         cmd.append(str(value))
 

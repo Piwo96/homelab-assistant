@@ -42,13 +42,9 @@ def skill_to_tool(skill: SkillDefinition) -> Dict[str, Any]:
                         "description": f"Die auszuführende Aktion.\n{action_help}",
                         "enum": action_enum if action_enum else None,
                     },
-                    "target": {
-                        "type": "string",
-                        "description": "Ziel der Aktion (z.B. entity_id, camera name, VM name, domain)",
-                    },
                     "args": {
                         "type": "object",
-                        "description": "Zusätzliche Argumente als Key-Value Paare",
+                        "description": "Argumente für die Aktion (z.B. vmid, entity_id, name)",
                         "additionalProperties": True,
                     },
                 },
