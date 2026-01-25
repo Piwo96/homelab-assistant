@@ -41,9 +41,14 @@ def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:
     if intent.action:
         cmd.append(intent.action)
 
-    # Known positional argument names (order matters!)
-    # These are passed as positional args, not flags
-    positional_args = ["node", "vmid", "storage", "domain", "entity_id"]
+    # Determine positional argument order based on skill and action
+    # Proxmox action commands: vmid first, then optional node
+    # Other commands: standard order (node, vmid, ...)
+    proxmox_action_commands = ["start", "stop", "shutdown", "reboot"]
+    if skill.name == "proxmox" and intent.action in proxmox_action_commands:
+        positional_args = ["vmid", "node", "storage", "domain", "entity_id"]
+    else:
+        positional_args = ["node", "vmid", "storage", "domain", "entity_id"]
 
     # First pass: add positional args in order
     for pos_arg in positional_args:

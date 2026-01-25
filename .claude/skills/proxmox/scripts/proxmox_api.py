@@ -277,22 +277,22 @@ def main():
     status.add_argument("node", help="Node name")
     status.add_argument("vmid", type=int, help="VM/Container ID")
 
-    # Action commands (explicit for skill loader compatibility)
+    # Action commands (vmid first, node optional with auto-detection)
     start_cmd = subparsers.add_parser("start", help="Start VM or container")
-    start_cmd.add_argument("node", help="Node name")
     start_cmd.add_argument("vmid", type=int, help="VM/Container ID")
+    start_cmd.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
 
     stop_cmd = subparsers.add_parser("stop", help="Stop VM or container (hard)")
-    stop_cmd.add_argument("node", help="Node name")
     stop_cmd.add_argument("vmid", type=int, help="VM/Container ID")
+    stop_cmd.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
 
     shutdown_cmd = subparsers.add_parser("shutdown", help="Shutdown VM or container (graceful)")
-    shutdown_cmd.add_argument("node", help="Node name")
     shutdown_cmd.add_argument("vmid", type=int, help="VM/Container ID")
+    shutdown_cmd.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
 
     reboot_cmd = subparsers.add_parser("reboot", help="Reboot VM or container")
-    reboot_cmd.add_argument("node", help="Node name")
     reboot_cmd.add_argument("vmid", type=int, help="VM/Container ID")
+    reboot_cmd.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
 
     # Storage commands
     storage = subparsers.add_parser("storage", help="List storage")
@@ -354,7 +354,7 @@ def main():
     result = None
 
     # Auto-detect node for commands that support it
-    commands_with_optional_node = ["node-status", "vms", "containers", "overview"]
+    commands_with_optional_node = ["node-status", "vms", "containers", "overview", "start", "stop", "shutdown", "reboot"]
     if args.command in commands_with_optional_node:
         provided_node = getattr(args, "node", None)
         if not provided_node:
