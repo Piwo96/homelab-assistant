@@ -81,3 +81,46 @@ class ErrorFixRequest(BaseModel):
     created_at: datetime
     message_id: Optional[int] = None  # Telegram message ID for updating
     status: ApprovalStatus = ApprovalStatus.PENDING
+
+
+# Infrastructure skills that require admin for write operations
+# Key: skill name, Value: set of read-only actions (everything else requires admin)
+INFRASTRUCTURE_SKILLS: Dict[str, set] = {
+    "proxmox": {
+        "nodes", "node-status", "overview", "vms", "containers",
+        "status", "storage", "snapshots", "lxc-config",
+    },
+    "pihole": {
+        "summary", "status", "top-domains", "top-ads", "top-clients",
+        "query-types", "recent-queries", "recent-blocked", "query",
+    },
+    "unifi-network": {
+        "health", "devices", "device-status", "clients", "client-info",
+        "networks", "port-forwards", "firewall-rules",
+    },
+    "unifi-protect": {
+        "cameras", "camera", "snapshot", "events", "detections", "lights",
+    },
+}
+
+
+def is_admin_required(skill: str, action: str) -> bool:
+    """Check if an action requires admin privileges.
+
+    Args:
+        skill: The skill name (e.g., "proxmox", "pihole")
+        action: The action to perform (e.g., "start", "status")
+
+    Returns:
+        True if admin is required, False if action is allowed for all users
+    """
+    if skill not in INFRASTRUCTURE_SKILLS:
+        # Non-infrastructure skills don't require admin
+        return False
+
+    # Normalize action name (underscores to dashes)
+    action_normalized = action.replace("_", "-")
+
+    # If action is in the read-only set, no admin required
+    read_only_actions = INFRASTRUCTURE_SKILLS[skill]
+    return action_normalized not in read_only_actions

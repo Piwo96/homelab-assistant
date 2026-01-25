@@ -370,6 +370,201 @@ class GitAPI:
 
         return {"success": True, "commits": commits}
 
+    # --- Branching Operations ---
+
+    def get_current_branch(self) -> str:
+        """Get the current branch name."""
+        _, branch, _ = self._run_git("rev-parse", "--abbrev-ref", "HEAD")
+        return branch
+
+    def create_branch(self, branch_name: str, checkout: bool = True) -> Dict:
+        """Create a new branch.
+
+        Args:
+            branch_name: Name for the new branch
+            checkout: If True, switch to the new branch
+
+        Returns:
+            Dict with success status
+        """
+        # Create the branch
+        returncode, _, stderr = self._run_git("branch", branch_name)
+        if returncode != 0:
+            if "already exists" in stderr:
+                # Branch exists, just checkout if requested
+                if checkout:
+                    return self.checkout(branch_name)
+                return {"success": True, "message": "Branch existiert bereits"}
+            return {"success": False, "error": stderr}
+
+        if checkout:
+            return self.checkout(branch_name)
+
+        return {"success": True, "branch": branch_name}
+
+    def checkout(self, branch_name: str) -> Dict:
+        """Switch to a branch.
+
+        Args:
+            branch_name: Branch to switch to
+
+        Returns:
+            Dict with success status
+        """
+        returncode, _, stderr = self._run_git("checkout", branch_name)
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        return {"success": True, "branch": branch_name}
+
+    def delete_branch(self, branch_name: str, force: bool = False) -> Dict:
+        """Delete a branch.
+
+        Args:
+            branch_name: Branch to delete
+            force: Force delete even if not merged
+
+        Returns:
+            Dict with success status
+        """
+        flag = "-D" if force else "-d"
+        returncode, _, stderr = self._run_git("branch", flag, branch_name)
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        return {"success": True, "deleted": branch_name}
+
+    # --- GitHub PR Operations (requires gh CLI) ---
+
+    def _run_gh(self, *args) -> Tuple[int, str, str]:
+        """Run a GitHub CLI command."""
+        cmd = ["gh"] + list(args)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=self.repo_path,
+            )
+            return result.returncode, result.stdout.strip(), result.stderr.strip()
+        except FileNotFoundError:
+            return 1, "", "GitHub CLI (gh) nicht installiert"
+        except Exception as e:
+            return 1, "", str(e)
+
+    def create_pr(self, title: str, body: str, base: str = "master") -> Dict:
+        """Create a Pull Request.
+
+        Args:
+            title: PR title
+            body: PR description
+            base: Base branch to merge into
+
+        Returns:
+            Dict with PR URL and number if successful
+        """
+        returncode, stdout, stderr = self._run_gh(
+            "pr", "create",
+            "--title", title,
+            "--body", body,
+            "--base", base,
+        )
+
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        # Parse PR URL from output
+        pr_url = stdout.strip()
+
+        # Extract PR number from URL
+        pr_number = None
+        if "/pull/" in pr_url:
+            pr_number = pr_url.split("/pull/")[-1].split("/")[0]
+
+        return {
+            "success": True,
+            "url": pr_url,
+            "number": pr_number,
+        }
+
+    def merge_pr(self, pr_number: str, delete_branch: bool = True) -> Dict:
+        """Merge a Pull Request.
+
+        Args:
+            pr_number: PR number to merge
+            delete_branch: Delete the branch after merge
+
+        Returns:
+            Dict with success status
+        """
+        args = ["pr", "merge", pr_number, "--merge"]
+        if delete_branch:
+            args.append("--delete-branch")
+
+        returncode, stdout, stderr = self._run_gh(*args)
+
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        return {"success": True, "message": stdout or "PR gemerged"}
+
+    def close_pr(self, pr_number: str, delete_branch: bool = True) -> Dict:
+        """Close a Pull Request without merging.
+
+        Args:
+            pr_number: PR number to close
+            delete_branch: Delete the associated branch
+
+        Returns:
+            Dict with success status
+        """
+        # Close the PR
+        returncode, _, stderr = self._run_gh("pr", "close", pr_number)
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        result = {"success": True, "closed": pr_number}
+
+        # Delete branch if requested
+        if delete_branch:
+            # Get branch name from PR
+            rc, stdout, _ = self._run_gh("pr", "view", pr_number, "--json", "headRefName", "-q", ".headRefName")
+            if rc == 0 and stdout:
+                branch_name = stdout.strip()
+                # Delete remote branch
+                self._run_git("push", "origin", "--delete", branch_name)
+                # Delete local branch
+                self.delete_branch(branch_name, force=True)
+                result["deleted_branch"] = branch_name
+
+        return result
+
+    def get_pr_info(self, pr_number: str) -> Dict:
+        """Get information about a Pull Request.
+
+        Args:
+            pr_number: PR number
+
+        Returns:
+            Dict with PR info
+        """
+        returncode, stdout, stderr = self._run_gh(
+            "pr", "view", pr_number,
+            "--json", "number,title,state,url,headRefName,baseRefName"
+        )
+
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        import json as json_module
+        try:
+            data = json_module.loads(stdout)
+            return {"success": True, **data}
+        except json_module.JSONDecodeError:
+            return {"success": False, "error": "Konnte PR-Info nicht parsen"}
+
 
 def main():
     parser = argparse.ArgumentParser(

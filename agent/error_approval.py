@@ -1,28 +1,39 @@
-"""Error fix approval workflow with persistent storage.
+"""Error fix approval workflow with automatic PR creation.
 
 When an error occurs during skill execution:
-1. Error is logged and approval request sent to admin
-2. Request is stored in JSON file (persists across restarts)
-3. No timeout - admin can approve whenever
-4. On approval, self-annealing process runs
+1. Claude API analyzes the error and proposes a fix
+2. A fix branch is created with the changes
+3. A Pull Request is created on GitHub
+4. Admin receives Telegram notification with PR link
+5. On approval, PR is merged and changes pulled
+6. On rejection, PR is closed and branch deleted
 """
 
 import json
 import logging
-import uuid
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# Add skills path to import git_api
+_git_scripts_path = str(Path(__file__).parent.parent / ".claude" / "skills" / "git" / "scripts")
+if _git_scripts_path not in sys.path:
+    sys.path.insert(0, _git_scripts_path)
+
 from .config import Settings
 from .models import ApprovalStatus, ErrorFixRequest
 from .telegram_handler import send_message, send_approval_request, edit_message_text
+from .fix_generator import generate_fix, apply_fix
 from . import self_annealing
 
 logger = logging.getLogger(__name__)
 
 # File-based storage for pending error fixes (persists across restarts)
 PENDING_ERRORS_FILE = Path(__file__).parent.parent / ".claude" / "pending_errors.json"
+
+# Minimum confidence for auto-PR creation
+MIN_FIX_CONFIDENCE = 0.5
 
 
 def _load_pending_errors() -> dict[str, dict]:
@@ -45,9 +56,9 @@ def _save_pending_errors(errors: dict[str, dict]) -> None:
         logger.error(f"Failed to save pending errors: {e}")
 
 
-def _error_to_dict(error: ErrorFixRequest) -> dict:
+def _error_to_dict(error: ErrorFixRequest, extra: dict = None) -> dict:
     """Convert ErrorFixRequest to dict for JSON storage."""
-    return {
+    data = {
         "request_id": error.request_id,
         "error_type": error.error_type,
         "error_message": error.error_message,
@@ -58,6 +69,9 @@ def _error_to_dict(error: ErrorFixRequest) -> dict:
         "message_id": error.message_id,
         "status": error.status.value,
     }
+    if extra:
+        data.update(extra)
+    return data
 
 
 def _dict_to_error(data: dict) -> ErrorFixRequest:
@@ -83,7 +97,7 @@ async def request_error_fix_approval(
     context: str,
     settings: Settings,
 ) -> Optional[str]:
-    """Request admin approval for an error fix.
+    """Request admin approval for an error fix with automatic PR creation.
 
     Args:
         error_type: Type of error (e.g., "ScriptError", "TimeoutExpired")
@@ -96,46 +110,180 @@ async def request_error_fix_approval(
     Returns:
         Request ID if sent successfully, None otherwise
     """
-    request_id = f"err_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:4]}"
+    from git_api import GitAPI
+
+    request_id = f"err_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    branch_name = f"fix/{request_id}"
 
     error_request = ErrorFixRequest(
         request_id=request_id,
         error_type=error_type,
-        error_message=error_message[:500],  # Truncate long errors
+        error_message=error_message[:500],
         skill=skill,
         action=action,
-        context=context[:500],  # Truncate long context
+        context=context[:500],
         created_at=datetime.now(),
     )
 
-    # Send approval request to admin
-    approval_text = (
-        f"🔴 *Fehler aufgetreten*\n\n"
-        f"**Skill:** {skill}\n"
-        f"**Aktion:** {action}\n"
-        f"**Fehler:** `{error_type}`\n\n"
-        f"```\n{error_message[:300]}\n```\n\n"
-        f"Soll ich versuchen, diesen Fehler zu beheben?"
-    )
+    extra_data = {}
 
-    message_id = await send_approval_request(
-        admin_id=settings.admin_telegram_id,
-        text=approval_text,
-        request_id=request_id,
+    # Try to generate a fix via Claude API
+    logger.info(f"Generating fix for {skill}:{action} - {error_type}")
+
+    fix_data = await generate_fix(
+        error_type=error_type,
+        error_message=error_message,
+        skill=skill,
+        action=action,
+        context=context,
         settings=settings,
     )
 
-    if message_id:
-        error_request.message_id = message_id
+    if not fix_data or fix_data.get("confidence", 0) < MIN_FIX_CONFIDENCE:
+        # Low confidence or no fix - just notify admin without PR
+        analysis = fix_data.get("analysis", "Automatischer Fix nicht möglich") if fix_data else "Fix-Generierung fehlgeschlagen"
 
-    # Store in persistent file
-    pending = _load_pending_errors()
-    pending[request_id] = _error_to_dict(error_request)
-    _save_pending_errors(pending)
+        approval_text = (
+            f"🔴 *Fehler aufgetreten*\n\n"
+            f"**Skill:** {skill}\n"
+            f"**Aktion:** {action}\n"
+            f"**Fehler:** `{error_type}`\n\n"
+            f"```\n{error_message[:200]}\n```\n\n"
+            f"**Analyse:** {analysis}\n\n"
+            f"_Kein automatischer Fix möglich._"
+        )
 
-    logger.info(f"Error fix requested: {request_id} - {skill}:{action} - {error_type}")
+        extra_data["fix_analysis"] = analysis
+        extra_data["has_pr"] = False
 
-    return request_id
+        await send_message(settings.admin_telegram_id, approval_text, settings)
+
+        # Store for reference (no approval needed)
+        pending = _load_pending_errors()
+        pending[request_id] = _error_to_dict(error_request, extra_data)
+        _save_pending_errors(pending)
+
+        logger.info(f"Error logged without PR: {request_id} - {analysis}")
+        return request_id
+
+    # High confidence fix - create PR
+    logger.info(f"Fix generated with confidence {fix_data.get('confidence')}, creating PR...")
+
+    git = GitAPI()
+    original_branch = git.get_current_branch()
+
+    try:
+        # Create fix branch
+        branch_result = git.create_branch(branch_name)
+        if not branch_result.get("success"):
+            raise Exception(f"Branch creation failed: {branch_result.get('error')}")
+
+        # Apply the fix
+        apply_result = await apply_fix(fix_data, settings)
+        if not apply_result.get("success"):
+            raise Exception(f"Fix application failed: {apply_result.get('error')}")
+
+        # Commit changes
+        commit_msg = fix_data.get("commit_message", f"fix({skill}): auto-fix for {error_type}")
+        commit_result = git.commit(message=commit_msg, add_all=True)
+        if not commit_result.get("success"):
+            raise Exception(f"Commit failed: {commit_result.get('error')}")
+
+        # Push branch
+        push_result = git.push(set_upstream=True)
+        if not push_result.get("success"):
+            raise Exception(f"Push failed: {push_result.get('error')}")
+
+        # Create PR
+        pr_body = f"""## Automatisch generierter Fix
+
+**Fehler:** `{error_type}`
+**Skill:** {skill}
+**Aktion:** {action}
+
+### Analyse
+{fix_data.get('analysis', 'Keine Analyse verfügbar')}
+
+### Änderungen
+{fix_data.get('fix_description', 'Keine Beschreibung verfügbar')}
+
+### Geänderte Dateien
+{chr(10).join('- ' + f for f in apply_result.get('files', []))}
+
+---
+_Automatisch generiert von Homelab Assistant_
+"""
+        pr_result = git.create_pr(
+            title=commit_msg,
+            body=pr_body,
+            base=original_branch,
+        )
+
+        if not pr_result.get("success"):
+            raise Exception(f"PR creation failed: {pr_result.get('error')}")
+
+        # Store PR info
+        extra_data = {
+            "pr_url": pr_result.get("url"),
+            "pr_number": pr_result.get("number"),
+            "branch_name": branch_name,
+            "fix_analysis": fix_data.get("analysis"),
+            "has_pr": True,
+        }
+
+        # Switch back to original branch
+        git.checkout(original_branch)
+
+        # Send approval request to admin with PR link
+        approval_text = (
+            f"🔧 *Fix bereit zur Überprüfung*\n\n"
+            f"**Skill:** {skill}\n"
+            f"**Fehler:** `{error_type}`\n\n"
+            f"**Analyse:** {fix_data.get('analysis', '')}\n\n"
+            f"**Fix:** {fix_data.get('fix_description', '')}\n\n"
+            f"🔗 [Pull Request #{pr_result.get('number')}]({pr_result.get('url')})\n\n"
+            f"_Confidence: {fix_data.get('confidence', 0):.0%}_"
+        )
+
+        message_id = await send_approval_request(
+            admin_id=settings.admin_telegram_id,
+            text=approval_text,
+            request_id=request_id,
+            settings=settings,
+        )
+
+        if message_id:
+            error_request.message_id = message_id
+
+        # Store in persistent file
+        pending = _load_pending_errors()
+        pending[request_id] = _error_to_dict(error_request, extra_data)
+        _save_pending_errors(pending)
+
+        logger.info(f"PR created: {pr_result.get('url')} for {request_id}")
+        return request_id
+
+    except Exception as e:
+        logger.error(f"Failed to create fix PR: {e}")
+
+        # Cleanup: switch back to original branch and delete fix branch
+        try:
+            git.checkout(original_branch)
+            git.delete_branch(branch_name, force=True)
+        except Exception:
+            pass
+
+        # Notify admin about failure
+        await send_message(
+            settings.admin_telegram_id,
+            f"❌ *Fix-PR Erstellung fehlgeschlagen*\n\n"
+            f"**Skill:** {skill}\n"
+            f"**Fehler:** `{error_type}`\n\n"
+            f"```\n{str(e)[:300]}\n```",
+            settings,
+        )
+
+        return None
 
 
 async def handle_error_fix_approval(
@@ -143,7 +291,7 @@ async def handle_error_fix_approval(
     approved: bool,
     settings: Settings,
 ) -> str:
-    """Handle admin's approval or rejection of an error fix.
+    """Handle admin's approval or rejection of an error fix PR.
 
     Args:
         request_id: The error fix request ID
@@ -153,6 +301,8 @@ async def handle_error_fix_approval(
     Returns:
         Status message
     """
+    from git_api import GitAPI
+
     pending = _load_pending_errors()
 
     if request_id not in pending:
@@ -163,9 +313,21 @@ async def handle_error_fix_approval(
 
     error_request = _dict_to_error(error_data)
 
+    # Check if this has a PR
+    pr_number = error_data.get('pr_number')
+    has_pr = error_data.get('has_pr', False)
+
+    if not has_pr or not pr_number:
+        # No PR - this was just a notification
+        return "ℹ️ Keine Aktion erforderlich (kein PR vorhanden)."
+
+    git = GitAPI()
+
     if not approved:
-        error_request.status = ApprovalStatus.REJECTED
-        logger.info(f"Error fix {request_id} rejected")
+        # Rejected - close PR and delete branch
+        logger.info(f"Error fix {request_id} rejected, closing PR #{pr_number}")
+
+        close_result = git.close_pr(pr_number, delete_branch=True)
 
         # Update admin message
         if error_request.message_id:
@@ -174,68 +336,75 @@ async def handle_error_fix_approval(
                 message_id=error_request.message_id,
                 text=f"❌ *Abgelehnt*\n\n"
                      f"**Skill:** {error_request.skill}\n"
-                     f"**Fehler:** `{error_request.error_type}`",
+                     f"**Fehler:** `{error_request.error_type}`\n\n"
+                     f"PR #{pr_number} geschlossen.",
                 settings=settings,
             )
 
-        return "Fehler-Fix abgelehnt."
+        return f"PR #{pr_number} geschlossen und Branch gelöscht."
 
-    # Approved - run self-annealing
-    error_request.status = ApprovalStatus.APPROVED
-    logger.info(f"Error fix {request_id} approved, running self-annealing...")
+    # Approved - merge PR
+    logger.info(f"Error fix {request_id} approved, merging PR #{pr_number}")
 
     # Update admin message to show processing
     if error_request.message_id:
         await edit_message_text(
             chat_id=settings.admin_telegram_id,
             message_id=error_request.message_id,
-            text=f"⏳ *Wird behoben...*\n\n"
+            text=f"⏳ *Wird gemerged...*\n\n"
                  f"**Skill:** {error_request.skill}\n"
                  f"**Fehler:** `{error_request.error_type}`",
             settings=settings,
         )
 
     try:
-        # Log the error in self-annealing
-        log_result = await self_annealing.log_error(
-            error=error_request.error_type,
-            context=f"{error_request.skill}:{error_request.action} - {error_request.error_message}",
-            settings=settings,
-        )
+        merge_result = git.merge_pr(pr_number, delete_branch=True)
 
-        error_id = log_result.get("error_id")
-        result_text = f"Fehler geloggt: {error_id}" if error_id else "Fehler geloggt"
+        if not merge_result.get("success"):
+            raise Exception(merge_result.get("error"))
 
-        # Update admin message with result
+        # Pull changes to local
+        status = git.status()
+        if status.get("branch") != "master":
+            git.checkout("master")
+
+        # Pull merged changes
+        await self_annealing.git_pull(settings)
+
+        # Reload skills
+        from .tool_registry import reload_registry
+        reload_registry(settings)
+
+        # Update admin message with success
         if error_request.message_id:
             await edit_message_text(
                 chat_id=settings.admin_telegram_id,
                 message_id=error_request.message_id,
-                text=f"✅ *Fehler dokumentiert*\n\n"
+                text=f"✅ *Fix angewendet*\n\n"
                      f"**Skill:** {error_request.skill}\n"
                      f"**Fehler:** `{error_request.error_type}`\n\n"
-                     f"Der Fehler wurde im Self-Annealing-System erfasst.",
+                     f"PR #{pr_number} gemerged. Skills neu geladen.",
                 settings=settings,
             )
 
-        logger.info(f"Error fix completed: {request_id}")
-        return result_text
+        logger.info(f"Error fix merged: {request_id}")
+        return f"PR #{pr_number} gemerged und Skills neu geladen."
 
     except Exception as e:
-        logger.error(f"Error during self-annealing: {e}")
+        logger.error(f"Error merging PR: {e}")
 
         if error_request.message_id:
             await edit_message_text(
                 chat_id=settings.admin_telegram_id,
                 message_id=error_request.message_id,
-                text=f"❌ *Fehler bei der Behebung*\n\n"
+                text=f"❌ *Merge fehlgeschlagen*\n\n"
                      f"**Skill:** {error_request.skill}\n"
                      f"**Fehler:** `{error_request.error_type}`\n\n"
-                     f"Fehler: {str(e)}",
+                     f"Fehler: {str(e)[:200]}",
                 settings=settings,
             )
 
-        return f"Fehler: {str(e)}"
+        return f"Merge fehlgeschlagen: {str(e)}"
 
 
 def get_pending_error_fixes() -> list[ErrorFixRequest]:

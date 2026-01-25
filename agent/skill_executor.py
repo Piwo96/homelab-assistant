@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 
 from .config import Settings
-from .models import IntentResult, SkillExecutionResult
+from .models import IntentResult, SkillExecutionResult, is_admin_required
 from .skill_loader import SkillDefinition
 from .tool_registry import get_registry
 from .error_approval import request_error_fix_approval
@@ -55,17 +55,33 @@ def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:
     return cmd
 
 
-async def execute_skill(intent: IntentResult, settings: Settings) -> SkillExecutionResult:
+async def execute_skill(
+    intent: IntentResult,
+    settings: Settings,
+    user_id: int | None = None,
+) -> SkillExecutionResult:
     """Execute a skill based on classified intent.
 
     Args:
         intent: Parsed intent from LM Studio
         settings: Application settings
+        user_id: Telegram user ID (for permission checks)
 
     Returns:
         SkillExecutionResult with success status and output
     """
     skill_name = intent.skill
+
+    # Check admin permission for infrastructure write operations
+    if is_admin_required(skill_name, intent.action):
+        if user_id != settings.admin_telegram_id:
+            return SkillExecutionResult(
+                success=False,
+                output="",
+                error=f"Nur Admins dürfen '{intent.action}' auf {skill_name} ausführen.",
+                skill=skill_name,
+                action=intent.action,
+            )
 
     # Get skill from registry
     registry = get_registry(settings)

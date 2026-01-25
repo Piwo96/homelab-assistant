@@ -267,8 +267,8 @@ async def process_natural_language(
         await send_message(chat_id, response, settings)
         return
 
-    # Execute known skill
-    result = await execute_skill(intent, settings)
+    # Execute known skill (with user_id for permission checks)
+    result = await execute_skill(intent, settings, user_id=user.id)
 
     # Determine response message
     if result.success:
