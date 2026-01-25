@@ -434,6 +434,91 @@ class GitAPI:
 
         return {"success": True, "deleted": branch_name}
 
+    def merge_branch(self, branch_name: str, message: str = None) -> Dict:
+        """Merge a branch into the current branch.
+
+        Args:
+            branch_name: Branch to merge
+            message: Optional merge commit message
+
+        Returns:
+            Dict with success status
+        """
+        args = ["merge", branch_name]
+        if message:
+            args.extend(["-m", message])
+
+        returncode, stdout, stderr = self._run_git(*args)
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        return {"success": True, "message": stdout or "Branch gemerged"}
+
+    def delete_remote_branch(self, branch_name: str) -> Dict:
+        """Delete a branch on the remote.
+
+        Args:
+            branch_name: Branch to delete on remote
+
+        Returns:
+            Dict with success status
+        """
+        returncode, _, stderr = self._run_git("push", "origin", "--delete", branch_name)
+        if returncode != 0:
+            if "remote ref does not exist" in stderr:
+                return {"success": True, "message": "Branch existiert nicht auf Remote"}
+            return {"success": False, "error": stderr}
+
+        return {"success": True, "deleted": branch_name}
+
+    def get_remote_url(self) -> Optional[str]:
+        """Get the remote URL for origin.
+
+        Returns:
+            Remote URL or None
+        """
+        _, url, _ = self._run_git("remote", "get-url", "origin")
+        return url if url else None
+
+    def get_github_compare_url(self, base_branch: str, compare_branch: str) -> Optional[str]:
+        """Generate a GitHub compare URL for two branches.
+
+        Args:
+            base_branch: Base branch (e.g., 'master')
+            compare_branch: Branch to compare (e.g., 'fix/err_123')
+
+        Returns:
+            GitHub compare URL or None
+        """
+        remote_url = self.get_remote_url()
+        if not remote_url:
+            return None
+
+        # Convert git URL to HTTPS
+        # git@github.com:user/repo.git -> https://github.com/user/repo
+        # https://github.com/user/repo.git -> https://github.com/user/repo
+        if remote_url.startswith("git@"):
+            # git@github.com:user/repo.git
+            remote_url = remote_url.replace("git@", "https://").replace(":", "/", 1)
+
+        # Remove .git suffix
+        if remote_url.endswith(".git"):
+            remote_url = remote_url[:-4]
+
+        return f"{remote_url}/compare/{base_branch}...{compare_branch}"
+
+    def pull(self) -> Dict:
+        """Pull changes from remote.
+
+        Returns:
+            Dict with success status and output
+        """
+        returncode, stdout, stderr = self._run_git("pull")
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        return {"success": True, "output": stdout or stderr or "Erfolgreich gepullt"}
+
     # --- GitHub PR Operations (requires gh CLI) ---
 
     def _run_gh(self, *args) -> Tuple[int, str, str]:

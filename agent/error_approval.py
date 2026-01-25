@@ -25,7 +25,6 @@ from .config import Settings
 from .models import ApprovalStatus, ErrorFixRequest
 from .telegram_handler import send_message, send_approval_request, edit_message_text
 from .fix_generator import generate_fix, apply_fix
-from . import self_annealing
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +165,8 @@ async def request_error_fix_approval(
         logger.info(f"Error logged without PR: {request_id} - {analysis}")
         return request_id
 
-    # High confidence fix - create PR
-    logger.info(f"Fix generated with confidence {fix_data.get('confidence')}, creating PR...")
+    # High confidence fix - create branch
+    logger.info(f"Fix generated with confidence {fix_data.get('confidence')}, creating fix branch...")
 
     git = GitAPI()
     original_branch = git.get_current_branch()
@@ -189,59 +188,38 @@ async def request_error_fix_approval(
         if not commit_result.get("success"):
             raise Exception(f"Commit failed: {commit_result.get('error')}")
 
-        # Push branch
+        # Push branch to remote
         push_result = git.push(set_upstream=True)
         if not push_result.get("success"):
             raise Exception(f"Push failed: {push_result.get('error')}")
 
-        # Create PR
-        pr_body = f"""## Automatisch generierter Fix
+        # Generate compare URL (shows diff on GitHub)
+        compare_url = git.get_github_compare_url(original_branch, branch_name)
 
-**Fehler:** `{error_type}`
-**Skill:** {skill}
-**Aktion:** {action}
-
-### Analyse
-{fix_data.get('analysis', 'Keine Analyse verfügbar')}
-
-### Änderungen
-{fix_data.get('fix_description', 'Keine Beschreibung verfügbar')}
-
-### Geänderte Dateien
-{chr(10).join('- ' + f for f in apply_result.get('files', []))}
-
----
-_Automatisch generiert von Homelab Assistant_
-"""
-        pr_result = git.create_pr(
-            title=commit_msg,
-            body=pr_body,
-            base=original_branch,
-        )
-
-        if not pr_result.get("success"):
-            raise Exception(f"PR creation failed: {pr_result.get('error')}")
-
-        # Store PR info
+        # Store branch info
         extra_data = {
-            "pr_url": pr_result.get("url"),
-            "pr_number": pr_result.get("number"),
+            "compare_url": compare_url,
             "branch_name": branch_name,
+            "original_branch": original_branch,
             "fix_analysis": fix_data.get("analysis"),
-            "has_pr": True,
+            "commit_message": commit_msg,
+            "files_changed": apply_result.get("files", []),
+            "has_fix": True,
         }
 
         # Switch back to original branch
         git.checkout(original_branch)
 
-        # Send approval request to admin with PR link
+        # Send approval request to admin with compare link
+        files_list = ", ".join(apply_result.get("files", []))
         approval_text = (
             f"🔧 *Fix bereit zur Überprüfung*\n\n"
             f"**Skill:** {skill}\n"
             f"**Fehler:** `{error_type}`\n\n"
             f"**Analyse:** {fix_data.get('analysis', '')}\n\n"
             f"**Fix:** {fix_data.get('fix_description', '')}\n\n"
-            f"🔗 [Pull Request #{pr_result.get('number')}]({pr_result.get('url')})\n\n"
+            f"**Dateien:** {files_list}\n\n"
+            f"🔗 [Änderungen ansehen]({compare_url})\n\n"
             f"_Confidence: {fix_data.get('confidence', 0):.0%}_"
         )
 
@@ -291,7 +269,7 @@ async def handle_error_fix_approval(
     approved: bool,
     settings: Settings,
 ) -> str:
-    """Handle admin's approval or rejection of an error fix PR.
+    """Handle admin's approval or rejection of an error fix branch.
 
     Args:
         request_id: The error fix request ID
@@ -313,21 +291,25 @@ async def handle_error_fix_approval(
 
     error_request = _dict_to_error(error_data)
 
-    # Check if this has a PR
-    pr_number = error_data.get('pr_number')
-    has_pr = error_data.get('has_pr', False)
+    # Check if this has a fix branch
+    branch_name = error_data.get('branch_name')
+    has_fix = error_data.get('has_fix', False)
 
-    if not has_pr or not pr_number:
-        # No PR - this was just a notification
-        return "ℹ️ Keine Aktion erforderlich (kein PR vorhanden)."
+    if not has_fix or not branch_name:
+        # No fix branch - this was just a notification
+        return "ℹ️ Keine Aktion erforderlich (kein Fix vorhanden)."
 
     git = GitAPI()
+    original_branch = error_data.get('original_branch', 'master')
 
     if not approved:
-        # Rejected - close PR and delete branch
-        logger.info(f"Error fix {request_id} rejected, closing PR #{pr_number}")
+        # Rejected - delete fix branch (local and remote)
+        logger.info(f"Error fix {request_id} rejected, deleting branch {branch_name}")
 
-        close_result = git.close_pr(pr_number, delete_branch=True)
+        # Delete remote branch
+        git.delete_remote_branch(branch_name)
+        # Delete local branch
+        git.delete_branch(branch_name, force=True)
 
         # Update admin message
         if error_request.message_id:
@@ -337,14 +319,14 @@ async def handle_error_fix_approval(
                 text=f"❌ *Abgelehnt*\n\n"
                      f"**Skill:** {error_request.skill}\n"
                      f"**Fehler:** `{error_request.error_type}`\n\n"
-                     f"PR #{pr_number} geschlossen.",
+                     f"Branch `{branch_name}` gelöscht.",
                 settings=settings,
             )
 
-        return f"PR #{pr_number} geschlossen und Branch gelöscht."
+        return f"Branch {branch_name} gelöscht."
 
-    # Approved - merge PR
-    logger.info(f"Error fix {request_id} approved, merging PR #{pr_number}")
+    # Approved - merge branch locally and push
+    logger.info(f"Error fix {request_id} approved, merging branch {branch_name}")
 
     # Update admin message to show processing
     if error_request.message_id:
@@ -358,18 +340,27 @@ async def handle_error_fix_approval(
         )
 
     try:
-        merge_result = git.merge_pr(pr_number, delete_branch=True)
+        # Ensure we're on the original branch (usually master)
+        current = git.get_current_branch()
+        if current != original_branch:
+            checkout_result = git.checkout(original_branch)
+            if not checkout_result.get("success"):
+                raise Exception(f"Checkout failed: {checkout_result.get('error')}")
 
+        # Merge the fix branch
+        merge_result = git.merge_branch(branch_name)
         if not merge_result.get("success"):
-            raise Exception(merge_result.get("error"))
+            raise Exception(f"Merge failed: {merge_result.get('error')}")
 
-        # Pull changes to local
-        status = git.status()
-        if status.get("branch") != "master":
-            git.checkout("master")
+        # Push to remote
+        push_result = git.push()
+        if not push_result.get("success"):
+            raise Exception(f"Push failed: {push_result.get('error')}")
 
-        # Pull merged changes
-        await self_annealing.git_pull(settings)
+        # Delete remote fix branch
+        git.delete_remote_branch(branch_name)
+        # Delete local fix branch
+        git.delete_branch(branch_name, force=True)
 
         # Reload skills
         from .tool_registry import reload_registry
@@ -383,15 +374,15 @@ async def handle_error_fix_approval(
                 text=f"✅ *Fix angewendet*\n\n"
                      f"**Skill:** {error_request.skill}\n"
                      f"**Fehler:** `{error_request.error_type}`\n\n"
-                     f"PR #{pr_number} gemerged. Skills neu geladen.",
+                     f"Branch gemerged und gepusht. Skills neu geladen.",
                 settings=settings,
             )
 
         logger.info(f"Error fix merged: {request_id}")
-        return f"PR #{pr_number} gemerged und Skills neu geladen."
+        return f"Branch {branch_name} gemerged und gepusht. Skills neu geladen."
 
     except Exception as e:
-        logger.error(f"Error merging PR: {e}")
+        logger.error(f"Error merging branch: {e}")
 
         if error_request.message_id:
             await edit_message_text(
