@@ -115,6 +115,22 @@ class ProxmoxAPI:
         """Get all cluster nodes."""
         return self.get("/nodes")
 
+    def get_default_node(self) -> str:
+        """Get the default node name (first/only node in cluster).
+
+        Returns:
+            Node name string
+
+        Raises:
+            SystemExit if no nodes found
+        """
+        nodes = self.get_nodes()
+        if not nodes:
+            print("Error: No nodes found in cluster", file=sys.stderr)
+            sys.exit(1)
+        # Return first node (usually the only one in single-node setups)
+        return nodes[0].get("node")
+
     def get_node_status(self, node: str) -> dict:
         """Get node status (CPU, RAM, uptime)."""
         return self.get(f"/nodes/{node}/status")
@@ -244,16 +260,16 @@ def main():
     subparsers.add_parser("nodes", help="List all nodes")
 
     node_status = subparsers.add_parser("node-status", help="Get node status")
-    node_status.add_argument("node", help="Node name")
+    node_status.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
 
     # VM commands
     vms = subparsers.add_parser("vms", help="List VMs on node")
-    vms.add_argument("node", help="Node name")
+    vms.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
     vms.add_argument("--ids-only", action="store_true", help="Output only VMIDs")
 
     # Container commands
     containers = subparsers.add_parser("containers", help="List containers on node")
-    containers.add_argument("node", help="Node name")
+    containers.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
     containers.add_argument("--ids-only", action="store_true", help="Output only VMIDs")
 
     # Status command
@@ -325,7 +341,7 @@ def main():
 
     # Overview
     overview = subparsers.add_parser("overview", help="Show node overview")
-    overview.add_argument("node", help="Node name")
+    overview.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
 
     args = parser.parse_args()
 
@@ -336,6 +352,11 @@ def main():
     api = ProxmoxAPI()
     output_format = "json" if args.json else "table"
     result = None
+
+    # Auto-detect node for commands that support it
+    commands_with_optional_node = ["node-status", "vms", "containers", "overview"]
+    if args.command in commands_with_optional_node and not getattr(args, "node", None):
+        args.node = api.get_default_node()
 
     # Execute command
     if args.command == "nodes":
