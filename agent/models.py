@@ -67,3 +67,17 @@ class SkillExecutionResult(BaseModel):
     error: Optional[str] = None
     skill: str
     action: str
+
+
+class ErrorFixRequest(BaseModel):
+    """A pending error fix approval request."""
+
+    request_id: str
+    error_type: str  # e.g., "ScriptError", "TimeoutExpired"
+    error_message: str  # The actual error message
+    skill: str  # Which skill failed
+    action: str  # Which action failed
+    context: str  # Additional context (command, etc.)
+    created_at: datetime
+    message_id: Optional[int] = None  # Telegram message ID for updating
+    status: ApprovalStatus = ApprovalStatus.PENDING

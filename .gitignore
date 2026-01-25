@@ -28,3 +28,4 @@ Thumbs.db
 
 # Self-annealing runtime data (local only)
 .claude/skills/*/data/
+.claude/pending_errors.json

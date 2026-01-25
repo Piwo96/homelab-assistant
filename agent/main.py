@@ -20,6 +20,7 @@ from .telegram_handler import (
 from .intent_classifier import classify_intent
 from .skill_executor import execute_skill
 from .skill_creator import request_skill_creation, handle_approval
+from .error_approval import handle_error_fix_approval, is_error_request
 from .tool_registry import get_registry, reload_registry
 from .wol import wake_gaming_pc
 from .chat_history import get_history, add_message, clear_history
@@ -303,8 +304,11 @@ async def handle_callback_update(callback_query: Dict[str, Any], settings: Setti
     action, request_id = data.split(":", 1)
     approved = action == "approve"
 
-    # Handle the approval
-    result = await handle_approval(request_id, approved, settings)
+    # Route to appropriate handler based on request type
+    if is_error_request(request_id):
+        result = await handle_error_fix_approval(request_id, approved, settings)
+    else:
+        result = await handle_approval(request_id, approved, settings)
 
     # Send feedback
     feedback = "✅ Genehmigt" if approved else "❌ Abgelehnt"

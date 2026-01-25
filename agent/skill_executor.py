@@ -10,7 +10,7 @@ from .config import Settings
 from .models import IntentResult, SkillExecutionResult
 from .skill_loader import SkillDefinition
 from .tool_registry import get_registry
-from . import self_annealing
+from .error_approval import request_error_fix_approval
 
 logger = logging.getLogger(__name__)
 
@@ -146,12 +146,15 @@ async def execute_skill(intent: IntentResult, settings: Settings) -> SkillExecut
                 action=intent.action,
             )
         else:
-            # Log script error for self-annealing
+            # Request admin approval for error fix
             error_msg = result.stderr or f"Exit code {result.returncode}"
             asyncio.create_task(
-                self_annealing.log_error(
-                    error="ScriptError",
-                    context=f"Skill {skill_name}:{intent.action} failed: {error_msg[:200]}",
+                request_error_fix_approval(
+                    error_type="ScriptError",
+                    error_message=error_msg[:500],
+                    skill=skill_name,
+                    action=intent.action,
+                    context=f"Command: {' '.join(cmd)}",
                     settings=settings,
                 )
             )
@@ -164,11 +167,14 @@ async def execute_skill(intent: IntentResult, settings: Settings) -> SkillExecut
             )
 
     except subprocess.TimeoutExpired:
-        # Log timeout error for self-annealing
+        # Request admin approval for timeout error fix
         asyncio.create_task(
-            self_annealing.log_error(
-                error="TimeoutExpired",
-                context=f"Skill {skill_name}:{intent.action} timeout after 30s",
+            request_error_fix_approval(
+                error_type="TimeoutExpired",
+                error_message="Script timeout after 30s",
+                skill=skill_name,
+                action=intent.action,
+                context=f"Command: {' '.join(cmd)}",
                 settings=settings,
             )
         )
@@ -180,11 +186,14 @@ async def execute_skill(intent: IntentResult, settings: Settings) -> SkillExecut
             action=intent.action,
         )
     except Exception as e:
-        # Log execution error for self-annealing
+        # Request admin approval for execution error fix
         asyncio.create_task(
-            self_annealing.log_error(
-                error=type(e).__name__,
-                context=f"Skill {skill_name}:{intent.action} failed: {str(e)}",
+            request_error_fix_approval(
+                error_type=type(e).__name__,
+                error_message=str(e),
+                skill=skill_name,
+                action=intent.action,
+                context=f"Command: {' '.join(cmd)}",
                 settings=settings,
             )
         )
