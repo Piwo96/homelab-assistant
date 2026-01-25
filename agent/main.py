@@ -137,9 +137,9 @@ async def lifespan(app: FastAPI):
         background_tasks.append(pull_task)
 
     # Start nightly review task
-    review_task = asyncio.create_task(periodic_nightly_review(settings))
-    background_tasks.append(review_task)
-    logger.info("Nightly review task started")
+    # review_task = asyncio.create_task(periodic_nightly_review(settings))
+    # background_tasks.append(review_task)
+    # logger.info("Nightly review task started")
 
     yield
 
