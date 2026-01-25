@@ -18,7 +18,8 @@ class Settings(BaseSettings):
 
     # LM Studio (local LLM) - must be set in .env
     lm_studio_url: str
-    lm_studio_timeout: int = 30
+    lm_studio_model: str = ""  # Model ID (optional - LM Studio uses loaded model if empty)
+    lm_studio_timeout: int = 300  # 5 Min - großzügig für Thinking-Modelle
 
     # Gaming PC (for Wake-on-LAN) - must be set in .env
     gaming_pc_ip: str
@@ -29,6 +30,17 @@ class Settings(BaseSettings):
 
     # Approval settings
     approval_timeout_minutes: int = 5
+
+    # Wake-on-LAN timeout (seconds) - time to wait for PC to boot
+    wol_timeout: int = 120  # 2 Min - covers cold boot, sleep, and hibernate
+
+    @field_validator("wol_timeout")
+    @classmethod
+    def validate_wol_timeout(cls, v):
+        """Validate Wake-on-LAN timeout is positive."""
+        if v <= 0:
+            raise ValueError("wol_timeout must be positive")
+        return v
 
     # Chat history
     chat_history_limit: int = 50

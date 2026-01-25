@@ -14,7 +14,7 @@ import httpx
 from .config import Settings
 from .models import IntentResult
 from .tool_registry import get_registry
-from .wol import ensure_lm_studio_available
+from .wol import ensure_lm_studio_available, get_loaded_model
 
 logger = logging.getLogger(__name__)
 
@@ -159,15 +159,20 @@ async def _call_with_tools(
     Returns:
         Raw API response from LM Studio
     """
-    # For thinking models like Qwen3, append /no_think for faster, direct responses
-    # This skips the extended reasoning which isn't needed for tool classification
-    user_message = f"{message} /no_think"
+    # Note: /no_think flag only works for certain Qwen3 variants, not the thinking
+    # model which has separate reasoning_content. Just use message directly.
+    user_message = message
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         *history,
         {"role": "user", "content": user_message},
     ]
+
+    # Determine model to use: configured model or auto-detect from LM Studio
+    model = settings.lm_studio_model
+    if not model:
+        model = await get_loaded_model(settings)
 
     payload = {
         "messages": messages,
@@ -176,6 +181,9 @@ async def _call_with_tools(
         "temperature": 0.1,  # Low temperature for consistent results
         "max_tokens": 1500,  # Thinking models need more tokens for reasoning + output
     }
+
+    if model:
+        payload["model"] = model
 
     async with httpx.AsyncClient(timeout=settings.lm_studio_timeout) as client:
         response = await client.post(

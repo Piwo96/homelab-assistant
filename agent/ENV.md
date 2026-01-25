@@ -35,10 +35,16 @@ LM_STUDIO_URL=http://192.168.178.50:1234
 # === Optional ===
 
 # Timeout für LM Studio Anfragen (Sekunden)
-LM_STUDIO_TIMEOUT=30
+# Großzügig für komplexe Tasks und Thinking-Modelle
+LM_STUDIO_TIMEOUT=300
 
 # Timeout für Skill-Genehmigungen (Minuten)
 APPROVAL_TIMEOUT_MINUTES=5
+
+# Wake-on-LAN Timeout (Sekunden) - Wartezeit bis PC hochgefahren ist
+# 120s deckt normalerweise Cold Boot, Ruhezustand und Energiesparmodus ab
+# Erhöhe diesen Wert bei langsameren PCs oder HDDs
+WOL_TIMEOUT=120
 ```
 
 ## Webhook einrichten

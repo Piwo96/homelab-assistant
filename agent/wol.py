@@ -43,8 +43,32 @@ async def is_lm_studio_available(settings: Settings, timeout: float = 5.0) -> bo
         return False
 
 
+async def get_loaded_model(settings: Settings, timeout: float = 5.0) -> str | None:
+    """Get the first loaded chat model from LM Studio.
+
+    Args:
+        settings: Application settings containing LM Studio URL
+        timeout: Request timeout in seconds
+
+    Returns:
+        Model ID string or None if no models loaded
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{settings.lm_studio_url}/v1/models")
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                # Filter out embedding models (they contain "embed" in name)
+                chat_models = [m["id"] for m in models if "embed" not in m["id"].lower()]
+                return chat_models[0] if chat_models else None
+    except (httpx.RequestError, httpx.TimeoutException):
+        return None
+    return None
+
+
 async def ensure_lm_studio_available(
-    settings: Settings, max_wait: int = 120, poll_interval: int = 5
+    settings: Settings, max_wait: int | None = None, poll_interval: int = 5
 ) -> bool:
     """Ensure LM Studio is available, waking Gaming PC if needed.
 
@@ -55,7 +79,7 @@ async def ensure_lm_studio_available(
 
     Args:
         settings: Application settings
-        max_wait: Maximum seconds to wait for LM Studio
+        max_wait: Maximum seconds to wait. If None, uses settings.wol_timeout (default: 120s)
         poll_interval: Seconds between availability checks
 
     Returns:
@@ -65,18 +89,21 @@ async def ensure_lm_studio_available(
     if await is_lm_studio_available(settings):
         return True
 
+    # Use configured timeout if not specified
+    timeout: int = max_wait if max_wait is not None else settings.wol_timeout
+
     # Send Wake-on-LAN packet
     if not await wake_gaming_pc(settings):
         # No MAC configured, can't wake PC
         return False
 
-    # Poll for availability
+    # Poll for availability - check immediately, then sleep between checks
     elapsed = 0
-    while elapsed < max_wait:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
-
+    while elapsed < timeout:
         if await is_lm_studio_available(settings):
             return True
+
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
 
     return False
