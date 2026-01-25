@@ -1,21 +1,24 @@
-"""In-memory chat history storage for conversation context.
+"""Chat history storage with in-memory cache and SQLite persistence.
 
-Stores message history per chat_id to provide context for LLM calls.
-History is stored in memory and will be lost on restart.
+Combines fast in-memory access for LLM context with persistent
+SQLite storage for analysis and self-improvement.
 """
 
-from typing import Dict, List
+import logging
 from collections import deque
+from typing import Dict, List, Optional
 
 from .config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # Type alias for message format (OpenAI compatible)
 Message = Dict[str, str]  # {"role": "user"|"assistant", "content": str}
 
-# Storage: chat_id -> deque of messages (deque for efficient FIFO)
+# In-memory cache: chat_id -> deque of messages (fast access for LLM)
 _histories: Dict[int, deque] = {}
 
-# Keywords that indicate bad responses that should be filtered from history
+# Keywords that indicate bad responses that should be filtered from LLM context
 BAD_RESPONSE_KEYWORDS = [
     "self-annealing", "self_annealing", "selbstverbesserung",
     "skill updates", "skill-updates", "neue features einbauen",
@@ -39,7 +42,10 @@ def _is_bad_response(content: str) -> bool:
 
 
 def get_history(chat_id: int) -> List[Message]:
-    """Get conversation history for a chat, filtered of bad responses.
+    """Get conversation history for LLM context, filtered of bad responses.
+
+    Uses in-memory cache for fast access. Bad responses are filtered
+    to prevent the LLM from learning bad patterns.
 
     Args:
         chat_id: Telegram chat ID
@@ -54,12 +60,11 @@ def get_history(chat_id: int) -> List[Message]:
     messages = list(_histories[chat_id])
     filtered = []
 
-    # Process messages and remove bad responses along with their preceding user message
     for msg in messages:
         if msg["role"] == "assistant" and _is_bad_response(msg["content"]):
-            # Skip this bad response and mark to skip preceding user message
+            # Skip bad response and remove preceding user message
             if filtered and filtered[-1]["role"] == "user":
-                filtered.pop()  # Remove the user message that led to bad response
+                filtered.pop()
             continue
         filtered.append(msg)
 
@@ -67,9 +72,11 @@ def get_history(chat_id: int) -> List[Message]:
 
 
 def add_message(chat_id: int, role: str, content: str) -> None:
-    """Add a message to the conversation history.
+    """Add a message to the in-memory conversation history.
 
-    Automatically trims history to configured limit.
+    Note: This only updates the in-memory cache for LLM context.
+    Full conversation data with intent info is saved separately
+    via save_conversation_to_db().
 
     Args:
         chat_id: Telegram chat ID
@@ -85,8 +92,62 @@ def add_message(chat_id: int, role: str, content: str) -> None:
     _histories[chat_id].append({"role": role, "content": content})
 
 
+def save_conversation_to_db(
+    chat_id: int,
+    user_message: str,
+    assistant_response: str,
+    user_id: Optional[int] = None,
+    intent_skill: Optional[str] = None,
+    intent_action: Optional[str] = None,
+    intent_target: Optional[str] = None,
+    intent_confidence: Optional[float] = None,
+    success: bool = True,
+    error_message: Optional[str] = None,
+) -> Optional[int]:
+    """Save full conversation data to SQLite database.
+
+    Args:
+        chat_id: Telegram chat ID
+        user_message: User's message
+        assistant_response: Bot's response
+        user_id: Telegram user ID
+        intent_skill: Detected skill name
+        intent_action: Detected action
+        intent_target: Detected target
+        intent_confidence: Classification confidence
+        success: Whether the response was successful
+        error_message: Error message if failed
+
+    Returns:
+        Conversation ID if saved, None if database not initialized
+    """
+    try:
+        from .database import save_conversation
+        return save_conversation(
+            chat_id=chat_id,
+            user_message=user_message,
+            assistant_response=assistant_response,
+            user_id=user_id,
+            intent_skill=intent_skill,
+            intent_action=intent_action,
+            intent_target=intent_target,
+            intent_confidence=intent_confidence,
+            success=success,
+            error_message=error_message,
+        )
+    except RuntimeError:
+        # Database not initialized yet
+        logger.debug("Database not initialized, skipping conversation save")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to save conversation to database: {e}")
+        return None
+
+
 def clear_history(chat_id: int) -> bool:
-    """Clear conversation history for a chat.
+    """Clear in-memory conversation history for a chat.
+
+    Note: Database records are preserved for analysis.
 
     Args:
         chat_id: Telegram chat ID
@@ -101,7 +162,7 @@ def clear_history(chat_id: int) -> bool:
 
 
 def get_history_stats() -> Dict[str, int]:
-    """Get statistics about stored histories.
+    """Get statistics about in-memory histories.
 
     Returns:
         Dict with chat_count and total_messages

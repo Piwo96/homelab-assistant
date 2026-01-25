@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, HTTPException
 
 from .config import get_settings, Settings
 from . import self_annealing
+from . import database
 from .telegram_handler import (
     verify_webhook_signature,
     send_message,
@@ -23,7 +24,7 @@ from .skill_creator import request_skill_creation, handle_approval
 from .error_approval import handle_error_fix_approval, is_error_request
 from .tool_registry import get_registry, reload_registry
 from .wol import wake_gaming_pc
-from .chat_history import get_history, add_message, clear_history
+from .chat_history import get_history, add_message, clear_history, save_conversation_to_db
 
 # Configure logging
 logging.basicConfig(
@@ -62,6 +63,12 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Telegram Homelab Agent...")
     logger.info(f"Allowed users: {settings.telegram_allowed_users}")
     logger.info(f"Admin ID: {settings.admin_telegram_id}")
+
+    # Initialize database
+    logger.info("Initializing database...")
+    database.init_database(settings.project_root)
+    stats = database.get_database_stats()
+    logger.info(f"Database: {stats['total_conversations']} conversations, {stats['flagged_conversations']} flagged")
 
     # Initialize tool registry
     logger.info("Loading skill registry...")
@@ -265,6 +272,14 @@ async def process_natural_language(
                 await send_message(chat_id, intent.description, settings)
                 add_message(chat_id, "user", text)
                 add_message(chat_id, "assistant", intent.description)
+                save_conversation_to_db(
+                    chat_id=chat_id,
+                    user_message=text,
+                    assistant_response=intent.description,
+                    user_id=user.id,
+                    intent_skill="unknown",
+                    intent_confidence=intent.confidence,
+                )
                 return
 
             # Bad response detected - give a helpful fallback
@@ -281,6 +296,17 @@ async def process_natural_language(
             await send_message(chat_id, fallback_response, settings)
             add_message(chat_id, "user", text)
             add_message(chat_id, "assistant", fallback_response)
+            # Save bad response for analysis (original response, not fallback)
+            save_conversation_to_db(
+                chat_id=chat_id,
+                user_message=text,
+                assistant_response=intent.description,  # Original bad response
+                user_id=user.id,
+                intent_skill="unknown",
+                intent_confidence=intent.confidence,
+                success=False,
+                error_message="Bad response filtered",
+            )
             return
 
         # Otherwise, request skill creation for missing capability
@@ -308,6 +334,20 @@ async def process_natural_language(
     # Store conversation in history
     add_message(chat_id, "user", text)
     add_message(chat_id, "assistant", response_msg)
+
+    # Save to database for analysis
+    save_conversation_to_db(
+        chat_id=chat_id,
+        user_message=text,
+        assistant_response=response_msg,
+        user_id=user.id,
+        intent_skill=intent.skill,
+        intent_action=intent.action,
+        intent_target=intent.target,
+        intent_confidence=intent.confidence,
+        success=result.success,
+        error_message=result.error if not result.success else None,
+    )
 
 
 async def handle_callback_update(callback_query: Dict[str, Any], settings: Settings):
