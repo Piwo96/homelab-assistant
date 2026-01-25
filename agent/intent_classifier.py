@@ -42,6 +42,11 @@ Beispiele für Tool-Nutzung:
 - "Wie läuft der Server?" → proxmox, action: nodes
 - "Pi-hole Status" → pihole, action: status
 - "Wie viel wurde geblockt?" → pihole, action: summary
+- "Git Status" → git, action: status
+- "Committe die Änderungen" → git, action: commit
+- "Pushe den Code" → git, action: push
+- "Committe und pushe" → git, action: commit-and-push
+- "Zeige letzte Commits" → git, action: log
 
 Beispiele OHNE Tool:
 - "Hallo!" → "Hallo! Wie kann ich helfen?"
