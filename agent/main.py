@@ -186,9 +186,6 @@ async def process_natural_language(
     text: str, chat_id: int, user, settings: Settings
 ):
     """Process natural language input through intent classification."""
-    # Send "thinking" indicator
-    await send_message(chat_id, "🤔 Verstehe...", settings)
-
     # Get conversation history for context
     history = get_history(chat_id)
 

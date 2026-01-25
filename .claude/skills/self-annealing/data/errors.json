@@ -1,0 +1,15 @@
+{
+  "errors": [
+    {
+      "id": "err_20260125_001",
+      "timestamp": "2026-01-25T07:45:48.671688",
+      "error": "TestError",
+      "context": "Testing the self-annealing system",
+      "metadata": {},
+      "resolved": true,
+      "resolution": "System works correctly",
+      "resolved_at": "2026-01-25T07:45:54.797719"
+    }
+  ],
+  "patterns": []
+}
