@@ -32,6 +32,15 @@ GAMING_PC_MAC=AA:BB:CC:DD:EE:FF
 # LM Studio API URL
 LM_STUDIO_URL=http://192.168.178.50:1234
 
+# === Self-Annealing / Git ===
+
+# Commit-Author für automatische Commits (optional)
+GIT_AUTHOR_NAME=Homelab Agent
+GIT_AUTHOR_EMAIL=agent@homelab
+
+# Automatisch pushen nach Skill-Erstellung (default: true)
+AUTO_PUSH_ENABLED=true
+
 # === Optional ===
 
 # Timeout für LM Studio Anfragen (Sekunden)
