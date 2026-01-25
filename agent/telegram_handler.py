@@ -77,6 +77,18 @@ async def send_message(
             if result.get("ok"):
                 return result.get("result", {}).get("message_id")
             else:
+                # If Markdown parsing failed, retry without parse_mode
+                error_desc = result.get("description", "")
+                if "can't parse entities" in error_desc and parse_mode:
+                    logger.warning(f"Markdown parsing failed, retrying without formatting")
+                    payload.pop("parse_mode", None)
+                    response = await client.post(
+                        f"{TELEGRAM_API_BASE}{settings.telegram_bot_token}/sendMessage",
+                        json=payload,
+                    )
+                    result = response.json()
+                    if result.get("ok"):
+                        return result.get("result", {}).get("message_id")
                 logger.error(f"Telegram API error: {result}")
     except httpx.RequestError as e:
         logger.error(f"Failed to send message to {chat_id}: {e}")
