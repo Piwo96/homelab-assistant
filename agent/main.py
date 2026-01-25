@@ -10,6 +10,7 @@ from .config import get_settings, Settings
 from .telegram_handler import (
     verify_webhook_signature,
     send_message,
+    delete_message,
     answer_callback_query,
     parse_telegram_user,
     HELP_TEXT,
@@ -186,11 +187,18 @@ async def process_natural_language(
     text: str, chat_id: int, user, settings: Settings
 ):
     """Process natural language input through intent classification."""
+    # Send typing indicator
+    status_msg_id = await send_message(chat_id, "⏳", settings)
+
     # Get conversation history for context
     history = get_history(chat_id)
 
     # Classify intent with history context
     intent = await classify_intent(text, settings, history)
+
+    # Remove typing indicator
+    if status_msg_id:
+        await delete_message(chat_id, status_msg_id, settings)
     logger.info(f"Classified intent: skill={intent.skill}, action={intent.action}")
 
     # Handle errors
