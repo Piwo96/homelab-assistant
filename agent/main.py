@@ -188,7 +188,7 @@ async def process_natural_language(
 ):
     """Process natural language input through intent classification."""
     # Send typing indicator
-    status_msg_id = await send_message(chat_id, "⏳", settings)
+    status_msg_id = await send_message(chat_id, "⏳ Bin dran...", settings)
 
     # Get conversation history for context
     history = get_history(chat_id)
