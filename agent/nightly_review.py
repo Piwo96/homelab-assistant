@@ -34,6 +34,7 @@ from agent.database import (
     get_database_stats,
 )
 from agent import self_annealing
+from agent.skill_config import get_skill_path, verify_skill_paths
 
 logging.basicConfig(
     level=logging.INFO,
@@ -120,6 +121,7 @@ def generate_improvements(analysis: dict, unknown_patterns: list) -> dict:
                     "user_message": msg,
                     "suggested_skill": likely_skill["skill"],
                     "suggested_action": likely_skill["action"],
+                    "script_path": likely_skill.get("script_path"),
                     "occurrences": count,
                 })
 
@@ -139,29 +141,49 @@ def _infer_skill(message: str) -> dict | None:
         message: User message
 
     Returns:
-        Dict with skill and action, or None
+        Dict with skill, action, and script_path, or None
     """
     msg_lower = message.lower()
 
     # Server/VM related
     if any(kw in msg_lower for kw in ["server", "vm", "container", "läuft", "status", "homelab"]):
-        return {"skill": "proxmox", "action": "overview"}
+        return {
+            "skill": "proxmox",
+            "action": "overview",
+            "script_path": get_skill_path("proxmox"),
+        }
 
     # Camera related
     if any(kw in msg_lower for kw in ["kamera", "camera", "bewegung", "aufnahme"]):
-        return {"skill": "unifi-protect", "action": "cameras"}
+        return {
+            "skill": "unifi-protect",
+            "action": "cameras",
+            "script_path": get_skill_path("unifi-protect"),
+        }
 
     # Smart home related
     if any(kw in msg_lower for kw in ["licht", "light", "lampe", "schalter"]):
-        return {"skill": "homeassistant", "action": "states"}
+        return {
+            "skill": "homeassistant",
+            "action": "entities",
+            "script_path": get_skill_path("homeassistant"),
+        }
 
     # DNS related
     if any(kw in msg_lower for kw in ["dns", "pihole", "block", "werbung"]):
-        return {"skill": "pihole", "action": "status"}
+        return {
+            "skill": "pihole",
+            "action": "status",
+            "script_path": get_skill_path("pihole"),
+        }
 
     # Network related
     if any(kw in msg_lower for kw in ["netzwerk", "network", "wlan", "wifi", "client"]):
-        return {"skill": "unifi-network", "action": "clients"}
+        return {
+            "skill": "unifi-network",
+            "action": "clients",
+            "script_path": get_skill_path("unifi-network"),
+        }
 
     return None
 
@@ -228,6 +250,13 @@ async def run_review(dry_run: bool = False) -> dict:
     # Initialize database
     init_database(settings.project_root)
 
+    # Verify skill paths
+    skill_check = verify_skill_paths(settings.project_root)
+    if skill_check["missing"]:
+        logger.warning(f"Missing skill scripts: {skill_check['missing']}")
+    else:
+        logger.info(f"All {len(skill_check['valid'])} skill scripts verified")
+
     # Get statistics
     stats = get_database_stats()
     logger.info(f"Database stats: {stats}")
@@ -280,6 +309,8 @@ async def run_review(dry_run: bool = False) -> dict:
         "issues_found": len(analysis["unknown_intents"]) + len(analysis["errors"]),
         "improvements_suggested": len(improvements["new_examples"]),
         "examples_added": results["examples_added"],
+        "skills_verified": len(skill_check["valid"]),
+        "skills_missing": skill_check["missing"],
         "dry_run": dry_run,
     }
 

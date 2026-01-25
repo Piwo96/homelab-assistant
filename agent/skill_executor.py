@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import subprocess
-from pathlib import Path
 from typing import List
 
 from .config import Settings
@@ -13,11 +12,6 @@ from .tool_registry import get_registry
 from .error_approval import request_error_fix_approval
 
 logger = logging.getLogger(__name__)
-
-
-def get_skills_base_path(settings: Settings) -> Path:
-    """Get the base path for skills."""
-    return settings.project_root / ".claude" / "skills"
 
 
 def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:

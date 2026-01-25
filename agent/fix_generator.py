@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import Settings
+from .skill_config import get_skill_dir, get_skill_path, validate_file_path, SKILLS_BASE_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,9 @@ async def generate_fix(
 
     client = Anthropic(api_key=settings.anthropic_api_key)
 
-    # Determine expected path prefix for this skill
-    skill_base_path = f".claude/skills/{skill}/"
+    # Use centralized skill paths
+    skill_base_path = get_skill_dir(skill)
+    skill_script_path = get_skill_path(skill)
 
     prompt = f"""Analysiere diesen Fehler und schlage einen Fix vor:
 
@@ -67,9 +69,9 @@ async def generate_fix(
 
 ## WICHTIG: Projektstruktur
 
-Skills befinden sich IMMER in `.claude/skills/<skill-name>/`:
-- Scripts: `.claude/skills/{skill}/scripts/`
-- Dokumentation: `.claude/skills/{skill}/SKILL.md`
+Skills befinden sich IMMER in `{SKILLS_BASE_PATH}/<skill-name>/`:
+- Scripts: `{skill_base_path}scripts/`
+- Dokumentation: `{skill_base_path}SKILL.md`
 
 Der zu ändernde Skill befindet sich in: `{skill_base_path}`
 
@@ -93,7 +95,7 @@ Antworte NUR mit diesem JSON-Format:
   "commit_message": "fix(scope): beschreibung",
   "files": [
     {{
-      "path": "{skill_base_path}scripts/{skill.replace('-', '_')}_api.py",
+      "path": "{skill_script_path}",
       "content": "Vollständiger neuer Dateiinhalt..."
     }}
   ],
@@ -148,9 +150,9 @@ def _load_error_context(skill: str, action: str, settings: Settings) -> str:
     """
     context_parts = []
 
-    # Load skill script - IMPORTANT: use full relative path in context
-    skill_script = settings.project_root / ".claude" / "skills" / skill / "scripts" / f"{skill.replace('-', '_')}_api.py"
-    skill_script_rel = f".claude/skills/{skill}/scripts/{skill.replace('-', '_')}_api.py"
+    # Load skill script using centralized path
+    skill_script_rel = get_skill_path(skill)
+    skill_script = settings.project_root / skill_script_rel
 
     if skill_script.exists():
         try:
@@ -164,7 +166,8 @@ def _load_error_context(skill: str, action: str, settings: Settings) -> str:
             logger.warning(f"Failed to read skill script: {e}")
 
     # Load skill SKILL.md for understanding
-    skill_md = settings.project_root / ".claude" / "skills" / skill / "SKILL.md"
+    skill_dir = get_skill_dir(skill)
+    skill_md = settings.project_root / skill_dir / "SKILL.md"
     if skill_md.exists():
         try:
             content = skill_md.read_text()
@@ -252,11 +255,11 @@ async def apply_fix(fix_data: dict[str, Any], settings: Settings) -> dict[str, A
         if not rel_path or not content:
             continue
 
-        # VALIDATION 1: Skill files must be in .claude/skills/ or agent/
-        valid_prefixes = [".claude/skills/", "agent/"]
-        if not any(rel_path.startswith(prefix) for prefix in valid_prefixes):
-            logger.error(f"Invalid path (must be in .claude/skills/ or agent/): {rel_path}")
-            return {"success": False, "error": f"Ungültiger Pfad: {rel_path} - Muss in .claude/skills/ oder agent/ sein"}
+        # VALIDATION 1: Use centralized path validation
+        is_valid, error_msg = validate_file_path(rel_path)
+        if not is_valid:
+            logger.error(f"Invalid path: {rel_path} - {error_msg}")
+            return {"success": False, "error": error_msg}
 
         # Resolve full path
         full_path = (settings.project_root / rel_path).resolve()
