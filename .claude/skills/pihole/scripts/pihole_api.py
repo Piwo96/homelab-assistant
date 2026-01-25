@@ -405,6 +405,21 @@ def main():
             print(f"   Aktive Clients: {clients}")
             return
 
+    elif args.command == "status":
+        status = api.get_status()
+        if args.json:
+            result = status
+        else:
+            data = status.get("data", status)
+            blocking = data.get("blocking", data.get("status", "unknown"))
+            if blocking in [True, "enabled"]:
+                print("🟢 **Pi-hole Status**: Blocking aktiv")
+            elif blocking in [False, "disabled"]:
+                print("🔴 **Pi-hole Status**: Blocking deaktiviert")
+            else:
+                print(f"⚪ **Pi-hole Status**: {blocking}")
+            return
+
     elif args.command == "enable":
         api.enable_blocking()
         print("🟢 Blocking aktiviert")
