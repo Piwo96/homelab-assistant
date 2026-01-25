@@ -15,19 +15,55 @@ Message = Dict[str, str]  # {"role": "user"|"assistant", "content": str}
 # Storage: chat_id -> deque of messages (deque for efficient FIFO)
 _histories: Dict[int, deque] = {}
 
+# Keywords that indicate bad responses that should be filtered from history
+BAD_RESPONSE_KEYWORDS = [
+    "self-annealing", "self_annealing", "selbstverbesserung",
+    "skill updates", "skill-updates", "neue features einbauen",
+    "fehlerbehebung", "github sync", "error tracking",
+    "können wir automatisch", "durch die selbstverbesserung",
+    "automatisch neue skills", "selbstverbesserungsfunktion",
+]
+
+
+def _is_bad_response(content: str) -> bool:
+    """Check if a message contains bad response patterns.
+
+    Args:
+        content: Message content to check
+
+    Returns:
+        True if the message contains problematic patterns
+    """
+    content_lower = content.lower()
+    return any(kw in content_lower for kw in BAD_RESPONSE_KEYWORDS)
+
 
 def get_history(chat_id: int) -> List[Message]:
-    """Get conversation history for a chat.
+    """Get conversation history for a chat, filtered of bad responses.
 
     Args:
         chat_id: Telegram chat ID
 
     Returns:
-        List of messages in chronological order
+        List of messages in chronological order, with bad responses removed
     """
     if chat_id not in _histories:
         return []
-    return list(_histories[chat_id])
+
+    # Filter out bad assistant responses and their preceding user messages
+    messages = list(_histories[chat_id])
+    filtered = []
+
+    # Process messages and remove bad responses along with their preceding user message
+    for msg in messages:
+        if msg["role"] == "assistant" and _is_bad_response(msg["content"]):
+            # Skip this bad response and mark to skip preceding user message
+            if filtered and filtered[-1]["role"] == "user":
+                filtered.pop()  # Remove the user message that led to bad response
+            continue
+        filtered.append(msg)
+
+    return filtered
 
 
 def add_message(chat_id: int, role: str, content: str) -> None:

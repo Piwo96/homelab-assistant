@@ -249,11 +249,38 @@ async def process_natural_language(
 
     # Handle unknown intents - either conversational or skill creation request
     if intent.skill == "unknown":
-        # If model gave a text response, use it (conversational)
+        # If model gave a text response, check if it's a good response
         if intent.description and len(intent.description) > 10:
-            await send_message(chat_id, intent.description, settings)
+            # Filter out bad responses that mention internal concepts
+            bad_keywords = [
+                "self-annealing", "self_annealing", "selbstverbesserung",
+                "skill updates", "skill-updates", "neue features",
+                "fehlerbehebung", "github sync", "error tracking",
+                "können wir automatisch", "durch die selbstverbesserung",
+            ]
+            response_lower = intent.description.lower()
+            is_bad_response = any(kw in response_lower for kw in bad_keywords)
+
+            if not is_bad_response:
+                await send_message(chat_id, intent.description, settings)
+                add_message(chat_id, "user", text)
+                add_message(chat_id, "assistant", intent.description)
+                return
+
+            # Bad response detected - give a helpful fallback
+            logger.warning(f"Filtered bad LLM response: {intent.description[:100]}...")
+            fallback_response = (
+                "🤔 Das habe ich nicht ganz verstanden.\n\n"
+                "Ich kann dir helfen bei:\n"
+                "• **Server/VMs**: \"Welche Server laufen?\"\n"
+                "• **Kameras**: \"Zeige Kameras\"\n"
+                "• **Smart Home**: \"Mach Licht an\"\n"
+                "• **Pi-hole**: \"DNS Status\"\n\n"
+                "Was möchtest du wissen?"
+            )
+            await send_message(chat_id, fallback_response, settings)
             add_message(chat_id, "user", text)
-            add_message(chat_id, "assistant", intent.description)
+            add_message(chat_id, "assistant", fallback_response)
             return
 
         # Otherwise, request skill creation for missing capability
