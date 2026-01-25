@@ -1,5 +1,6 @@
 """FastAPI application for Telegram webhook."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Dict, Any
@@ -7,6 +8,7 @@ from typing import Dict, Any
 from fastapi import FastAPI, Request, HTTPException
 
 from .config import get_settings, Settings
+from . import self_annealing
 from .telegram_handler import (
     verify_webhook_signature,
     send_message,
@@ -30,6 +32,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def periodic_git_pull(settings: Settings):
+    """Background task that periodically pulls updates from git."""
+    interval = settings.git_pull_interval_minutes * 60
+    logger.info(f"Starting periodic git pull (every {settings.git_pull_interval_minutes} min)")
+
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            result = await self_annealing.git_pull(settings)
+            if result.get("success"):
+                output = result.get("output", "")
+                if "Already up to date" not in output:
+                    logger.info(f"Git pull: {output}")
+                    # Reload skills if new code was pulled
+                    reload_registry(settings)
+                    logger.info("Skills reloaded after git pull")
+            else:
+                logger.warning(f"Git pull failed: {result.get('output')}")
+        except Exception as e:
+            logger.error(f"Error during periodic git pull: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -45,7 +69,22 @@ async def lifespan(app: FastAPI):
         f"Loaded {len(registry.skills)} skills: {', '.join(registry.get_skill_names())}"
     )
 
+    # Start background tasks
+    background_tasks = []
+    if settings.git_pull_interval_minutes > 0:
+        pull_task = asyncio.create_task(periodic_git_pull(settings))
+        background_tasks.append(pull_task)
+
     yield
+
+    # Cancel background tasks
+    for task in background_tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     logger.info("Shutting down...")
 
 

@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Approval settings
     approval_timeout_minutes: int = 5
 
+    # Self-annealing settings
+    git_pull_interval_minutes: int = 5  # Auto-pull interval (0 to disable)
+
     # Wake-on-LAN timeout (seconds) - time to wait for PC to boot
     wol_timeout: int = 120  # 2 Min - covers cold boot, sleep, and hibernate
 

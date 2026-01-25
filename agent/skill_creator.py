@@ -1,10 +1,13 @@
 """Skill creation via Claude API with admin approval workflow."""
 
 import asyncio
+import json
+import re
 import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from .config import Settings
 from .models import ApprovalRequest, ApprovalStatus
@@ -228,7 +231,7 @@ async def create_skill(user_request: str, settings: Settings) -> str:
         settings: Application settings
 
     Returns:
-        Claude's response describing what was created
+        Summary of what was created/modified
     """
     if not settings.anthropic_api_key:
         raise ValueError("ANTHROPIC_API_KEY nicht konfiguriert")
@@ -246,7 +249,7 @@ async def create_skill(user_request: str, settings: Settings) -> str:
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[
             {
                 "role": "user",
@@ -266,18 +269,111 @@ async def create_skill(user_request: str, settings: Settings) -> str:
 - load_env() für .env Unterstützung
 - Fehler auf stderr
 
-## Aufgabe:
-1. Analysiere welchen Skill erstellen/erweitern
-2. Beschreibe die nötigen Änderungen an SKILL.md
-3. Beschreibe die nötigen Änderungen/Ergänzungen am Script
-4. Gib konkreten Code wenn möglich
+## WICHTIG: Ausgabeformat
 
-Bitte antworte auf Deutsch.""",
+Du MUSST deine Antwort als JSON zurückgeben mit folgendem Format:
+
+```json
+{{
+  "skill_name": "name-des-skills",
+  "action": "create" oder "extend",
+  "summary": "Kurze Beschreibung was erstellt/geändert wurde",
+  "files": [
+    {{
+      "path": "relativer/pfad/zur/datei.md",
+      "content": "Vollständiger Dateiinhalt hier..."
+    }}
+  ]
+}}
+```
+
+- skill_name: Name des Skills (lowercase, mit Bindestrichen)
+- action: "create" für neuen Skill, "extend" für Erweiterung
+- summary: 1-2 Sätze was gemacht wurde
+- files: Array mit allen Dateien die erstellt/überschrieben werden sollen
+  - path: Relativer Pfad ab .claude/skills/ (z.B. "pihole/SKILL.md" oder "pihole/scripts/pihole_api.py")
+  - content: Vollständiger Inhalt der Datei
+
+Gib NUR das JSON zurück, keine weiteren Erklärungen.""",
             }
         ],
     )
 
-    return message.content[0].text
+    response_text = message.content[0].text
+
+    # Parse JSON from response
+    files_written = await _parse_and_write_skill_files(response_text, settings)
+
+    if not files_written:
+        logger.warning("No files were written from Claude response")
+        return f"Keine Dateien erstellt. Claude Antwort: {response_text[:500]}..."
+
+    return f"Skill '{files_written['skill_name']}' ({files_written['action']}): {files_written['summary']} - {len(files_written['files'])} Datei(en) geschrieben"
+
+
+async def _parse_and_write_skill_files(response_text: str, settings: Settings) -> dict[str, Any] | None:
+    """Parse Claude's JSON response and write skill files to disk.
+
+    Args:
+        response_text: Claude's response containing JSON
+        settings: Application settings
+
+    Returns:
+        Parsed data with written files info, or None if parsing failed
+    """
+    # Try to extract JSON from response (might be wrapped in markdown code block)
+    json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(1)
+    else:
+        # Try to parse the whole response as JSON
+        json_str = response_text.strip()
+
+    try:
+        data = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON from Claude response: {e}")
+        logger.debug(f"Response was: {response_text[:1000]}")
+        return None
+
+    skill_name = data.get("skill_name")
+    files = data.get("files", [])
+
+    if not skill_name or not files:
+        logger.error(f"Missing skill_name or files in response: {data}")
+        return None
+
+    skills_base = settings.project_root / ".claude" / "skills"
+    files_written = []
+
+    for file_info in files:
+        rel_path = file_info.get("path", "")
+        content = file_info.get("content", "")
+
+        if not rel_path or not content:
+            logger.warning(f"Skipping file with missing path or content: {file_info}")
+            continue
+
+        # Security: ensure path stays within skills directory
+        full_path = (skills_base / rel_path).resolve()
+        if not str(full_path).startswith(str(skills_base.resolve())):
+            logger.error(f"Path traversal attempt blocked: {rel_path}")
+            continue
+
+        # Create parent directories
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write file
+        full_path.write_text(content, encoding="utf-8")
+        logger.info(f"Wrote skill file: {full_path}")
+        files_written.append(str(rel_path))
+
+    return {
+        "skill_name": skill_name,
+        "action": data.get("action", "create"),
+        "summary": data.get("summary", "Skill erstellt"),
+        "files": files_written,
+    }
 
 
 def load_skill_context(settings: Settings) -> str:

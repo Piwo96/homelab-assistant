@@ -41,6 +41,9 @@ GIT_AUTHOR_EMAIL=agent@homelab
 # Automatisch pushen nach Skill-Erstellung (default: true)
 AUTO_PUSH_ENABLED=true
 
+# Intervall für automatischen Git Pull (Minuten, 0 = deaktiviert)
+GIT_PULL_INTERVAL_MINUTES=5
+
 # === Optional ===
 
 # Timeout für LM Studio Anfragen (Sekunden)

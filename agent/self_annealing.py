@@ -90,6 +90,22 @@ async def git_status(settings: Settings = None) -> dict:
     return {"success": success, "output": output}
 
 
+async def git_pull(settings: Settings = None) -> dict:
+    """Pull latest changes from remote.
+
+    Returns:
+        Dict with success status and output
+    """
+    success, output = await _run_script_async("git_api.py", "pull", settings=settings)
+
+    if success:
+        logger.info(f"Git pull: {output}")
+    else:
+        logger.warning(f"Git pull failed: {output}")
+
+    return {"success": success, "output": output}
+
+
 async def commit_and_push(message: str, settings: Settings = None) -> dict:
     """Commit all changes and push to remote.
 
