@@ -43,12 +43,23 @@ def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:
 
     # Determine positional argument order based on skill and action
     # Proxmox action commands: vmid first, then optional node
-    # Other commands: standard order (node, vmid, ...)
+    # Other commands: standard order
     proxmox_action_commands = ["start", "stop", "shutdown", "reboot"]
     if skill.name == "proxmox" and intent.action in proxmox_action_commands:
-        positional_args = ["vmid", "node", "storage", "domain", "entity_id"]
+        positional_args = ["vmid", "node"]
     else:
-        positional_args = ["node", "vmid", "storage", "domain", "entity_id"]
+        # Generic positional args for all skills
+        # Order: most specific first (IDs), then general (node, domain)
+        positional_args = [
+            "entity_id",  # homeassistant
+            "id",         # unifi-protect (camera, light)
+            "mac",        # unifi-network (clients, devices)
+            "vmid",       # proxmox
+            "node",       # proxmox
+            "domain",     # pihole, homeassistant
+            "storage",    # proxmox
+            "rule_id",    # unifi-network port forwards
+        ]
 
     # First pass: add positional args in order
     for pos_arg in positional_args:
