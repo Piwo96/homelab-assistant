@@ -355,8 +355,18 @@ def main():
 
     # Auto-detect node for commands that support it
     commands_with_optional_node = ["node-status", "vms", "containers", "overview"]
-    if args.command in commands_with_optional_node and not getattr(args, "node", None):
-        args.node = api.get_default_node()
+    if args.command in commands_with_optional_node:
+        provided_node = getattr(args, "node", None)
+        if not provided_node:
+            # No node provided - auto-detect
+            args.node = api.get_default_node()
+        else:
+            # Node provided - validate it exists
+            valid_nodes = [n.get("node") for n in api.get_nodes()]
+            if provided_node not in valid_nodes:
+                # Invalid node name (e.g., "pve" when actual is "pve-rollmann")
+                # Fall back to auto-detection
+                args.node = api.get_default_node()
 
     # Execute command
     if args.command == "nodes":

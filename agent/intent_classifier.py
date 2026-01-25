@@ -35,13 +35,15 @@ WICHTIG - Wann KEIN Tool benutzen:
 - Smalltalk: "Danke" → Kurz antworten
 
 Beispiele für Tool-Nutzung (WICHTIG - lerne diese Zuordnungen):
-# Proxmox/Server-Anfragen (Node wird automatisch erkannt, target NICHT nötig):
-- "Welche Server laufen?" → proxmox, action: overview
-- "Welche Services sind aktiv?" → proxmox, action: overview
-- "Homelab Status" → proxmox, action: overview
-- "Was läuft im Homelab?" → proxmox, action: overview
-- "Zeige alle VMs" → proxmox, action: vms
-- "Zeige Container" → proxmox, action: containers
+# Proxmox/Server-Anfragen
+# WICHTIG: Bei overview, vms, containers, node-status NIEMALS ein target angeben!
+# Der Node wird automatisch erkannt. Nur action setzen, KEIN target!
+- "Welche Server laufen?" → proxmox, action: overview (KEIN target!)
+- "Welche Services sind aktiv?" → proxmox, action: overview (KEIN target!)
+- "Homelab Status" → proxmox, action: overview (KEIN target!)
+- "Was läuft im Homelab?" → proxmox, action: overview (KEIN target!)
+- "Zeige alle VMs" → proxmox, action: vms (KEIN target!)
+- "Zeige Container" → proxmox, action: containers (KEIN target!)
 - "Server Status" → proxmox, action: nodes
 - "Wie läuft der Server?" → proxmox, action: nodes
 
