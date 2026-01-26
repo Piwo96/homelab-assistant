@@ -226,9 +226,34 @@ def apply_improvements(
         except Exception as e:
             logger.warning(f"Failed to add example: {e}")
 
-    # TODO: Auto-update system prompt with new examples
-    # This would require reading intent_classifier.py, modifying SYSTEM_PROMPT,
-    # and writing it back. For now, we just log suggestions.
+    # Write learned examples directly to examples.json files
+    from .example_generator import load_examples, save_examples, merge_examples
+
+    skills_base = settings.project_root / ".claude" / "skills"
+    results["examples_written"] = 0
+
+    # Group new examples by skill
+    examples_by_skill: dict[str, list[dict]] = {}
+    for example in improvements.get("new_examples", []):
+        skill_name = example["suggested_skill"]
+        if skill_name not in examples_by_skill:
+            examples_by_skill[skill_name] = []
+        examples_by_skill[skill_name].append({
+            "phrase": example["user_message"],
+            "action": example["suggested_action"],
+        })
+
+    # Append to each skill's examples.json
+    for skill_name, new_examples in examples_by_skill.items():
+        skill_path = skills_base / skill_name
+        if skill_path.exists():
+            existing = load_examples(skill_path)
+            merged = merge_examples(existing, new_examples)
+            if len(merged) > len(existing):
+                save_examples(skill_path, merged)
+                added_count = len(merged) - len(existing)
+                results["examples_written"] += added_count
+                logger.info(f"Added {added_count} examples to {skill_name}/examples.json")
 
     if improvements.get("prompt_additions"):
         logger.info(f"Suggested prompt additions: {improvements['prompt_additions']}")

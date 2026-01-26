@@ -544,19 +544,62 @@ Nur für komplett neue Skills die es noch nicht gibt.
 
 ## WICHTIG: Ausgabeformat
 
-Du MUSST deine Antwort als JSON zurückgeben:
+Du MUSST deine Antwort als JSON zurückgeben. Das Format hängt von der Aktion ab:
 
+### Bei "create" (neuer Skill):
 ```json
 {{
   "skill_name": "name-des-skills",
-  "action": "create" oder "extend",
-  "summary": "Kurze Beschreibung was hinzugefügt wurde (nicht ersetzt!)",
-  "files": [
+  "action": "create",
+  "summary": "Kurze Beschreibung des neuen Skills",
+  "new_files": [
     {{
       "path": "name-des-skills/scripts/name_des_skills_api.py",
       "content": "Vollständiger Dateiinhalt"
+    }},
+    {{
+      "path": "name-des-skills/SKILL.md",
+      "content": "Vollständiger Dateiinhalt"
     }}
   ]
+}}
+```
+
+### Bei "extend" (bestehenden Skill erweitern):
+```json
+{{
+  "skill_name": "name-des-skills",
+  "action": "extend",
+  "summary": "Kurze Beschreibung was hinzugefügt wurde",
+  "edits": [
+    {{
+      "path": "name-des-skills/scripts/name_des_skills_api.py",
+      "old_string": "EXAKTER bestehender Code der erweitert wird",
+      "new_string": "Bestehender Code PLUS neue Methoden/Features"
+    }}
+  ]
+}}
+```
+
+## EDIT-REGELN FÜR "extend":
+
+1. **old_string**: EXAKT kopieren - jedes Zeichen, jede Einrückung
+2. **new_string**: old_string + deine Erweiterungen
+3. **Typisches Muster**: Finde das Ende einer Klasse/Funktion und füge dort hinzu
+
+### Beispiel: Neue Methode zur Klasse hinzufügen
+```json
+{{
+  "old_string": "    def existing_method(self):\\n        return result\\n\\n\\nclass AnotherClass:",
+  "new_string": "    def existing_method(self):\\n        return result\\n\\n    def new_method(self):\\n        # Neue Funktionalität\\n        pass\\n\\n\\nclass AnotherClass:"
+}}
+```
+
+### Beispiel: Neuen argparse Command hinzufügen
+```json
+{{
+  "old_string": "    args = parser.parse_args()\\n\\n    if args.command == 'status':",
+  "new_string": "    # Neuer Subparser\\n    new_parser = subparsers.add_parser('newcmd', help='New command')\\n    new_parser.add_argument('--flag', help='Flag')\\n\\n    args = parser.parse_args()\\n\\n    if args.command == 'newcmd':\\n        handle_newcmd(args)\\n    elif args.command == 'status':"
 }}
 ```
 
@@ -565,26 +608,11 @@ Du MUSST deine Antwort als JSON zurückgeben:
 Die Pfade sind RELATIV zu `.claude/skills/`.
 - ✅ RICHTIG: `"path": "proxmox/scripts/proxmox_api.py"`
 - ❌ FALSCH: `"path": ".claude/skills/proxmox/scripts/proxmox_api.py"`
-- ❌ FALSCH: `"path": "/proxmox/scripts/proxmox_api.py"`
-
-Die Dateien werden automatisch nach `.claude/skills/<dein-pfad>` geschrieben.
-
-## WARNUNG FÜR "extend":
-
-Der content MUSS die KOMPLETTE Datei enthalten:
-1. Kopiere den bestehenden Code ZEICHENGENAU (inkl. Kommentare, Leerzeilen)
-2. Füge neue Methoden AM ENDE der Klasse hinzu
-3. Füge neue argparse commands AM ENDE hinzu
-4. Füge neue Handler AM ENDE von main() hinzu
 
 VERBOTEN bei extend:
 - Bestehende Methoden ändern (auch nicht "verbessern")
 - Session/Auth-Code ändern
-- API-URL-Patterns ändern
 - Bestehenden Code umstrukturieren
-- "Aufräumen" oder "Refactoring"
-
-Wenn du auch nur EINE bestehende Zeile änderst (außer Imports hinzufügen), wird der PR abgelehnt!
 
 Gib NUR das JSON zurück, keine weiteren Erklärungen.""",
             }
@@ -598,7 +626,11 @@ Gib NUR das JSON zurück, keine weiteren Erklärungen.""",
 
 
 async def _parse_and_write_skill_files(response_text: str, settings: Settings) -> dict[str, Any]:
-    """Parse Claude's JSON response and write skill files to disk.
+    """Parse Claude's JSON response and write/edit skill files.
+
+    Handles two formats:
+    - "create": new_files with full content
+    - "extend": edits with old_string/new_string
 
     Args:
         response_text: Claude's response containing JSON
@@ -607,6 +639,8 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
     Returns:
         Dict with skill_name, action, summary, files, success
     """
+    from .edit_utils import apply_changes
+
     logger.debug(f"Raw Claude response length: {len(response_text)}")
 
     json_str = None
@@ -665,39 +699,116 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
         return {"success": False, "error": f"JSON parse error: {e}"}
 
     skill_name = data.get("skill_name")
-    files = data.get("files", [])
+    action = data.get("action", "create")
 
-    if not skill_name or not files:
-        logger.error(f"Missing skill_name or files in response: {data}")
-        return {"success": False, "error": "Missing skill_name or files in response"}
+    if not skill_name:
+        logger.error(f"Missing skill_name in response: {data}")
+        return {"success": False, "error": "Missing skill_name in response"}
 
     skills_base = settings.project_root / ".claude" / "skills"
     files_written = []
 
-    for file_info in files:
-        rel_path = file_info.get("path", "")
-        content = file_info.get("content", "")
+    # Handle based on action type
+    if action == "extend":
+        # Use edits for extending existing skills
+        edits = data.get("edits", [])
+        if not edits:
+            # Fallback: check for old "files" format (backwards compatibility)
+            files = data.get("files", [])
+            if files:
+                logger.warning("Received 'files' instead of 'edits' for extend action - using legacy mode")
+                # Fall through to legacy handling below
+            else:
+                logger.error("Missing edits for extend action")
+                return {"success": False, "error": "Missing edits for extend action"}
+        else:
+            # Apply edits using the new system
+            result = apply_changes({"edits": edits}, skills_base)
 
-        if not rel_path or not content:
-            logger.warning(f"Skipping file with missing path or content: {file_info}")
-            continue
+            if not result["success"]:
+                errors = result.get("errors", [])
+                error_msgs = [e.get("error", "Unknown") for e in errors]
+                return {"success": False, "error": f"Edit failed: {'; '.join(error_msgs)}"}
 
-        # Security: ensure path stays within skills directory
-        full_path = (skills_base / rel_path).resolve()
-        if not str(full_path).startswith(str(skills_base.resolve())):
-            logger.error(f"Path traversal attempt blocked: {rel_path}")
-            continue
+            files_written = result.get("files_edited", [])
 
-        # Create parent directories
-        full_path.parent.mkdir(parents=True, exist_ok=True)
+    # Handle "create" action or legacy "files" format
+    if action == "create" or (action == "extend" and not files_written):
+        new_files = data.get("new_files", []) or data.get("files", [])
 
-        # Write file
-        full_path.write_text(content, encoding="utf-8")
-        logger.info(f"Wrote skill file: {full_path}")
-        files_written.append(str(rel_path))
+        if not new_files and action == "create":
+            logger.error("Missing new_files for create action")
+            return {"success": False, "error": "Missing new_files for create action"}
+
+        for file_info in new_files:
+            rel_path = file_info.get("path", "")
+            content = file_info.get("content", "")
+
+            if not rel_path or not content:
+                logger.warning(f"Skipping file with missing path or content: {file_info}")
+                continue
+
+            # Security: ensure path stays within skills directory
+            full_path = (skills_base / rel_path).resolve()
+            if not str(full_path).startswith(str(skills_base.resolve())):
+                logger.error(f"Path traversal attempt blocked: {rel_path}")
+                continue
+
+            # Create parent directories
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write file
+            full_path.write_text(content, encoding="utf-8")
+            logger.info(f"Wrote skill file: {full_path}")
+            files_written.append(str(rel_path))
 
     if not files_written:
-        return {"success": False, "error": "No files were written"}
+        return {"success": False, "error": "No files were written or edited"}
+
+    # Auto-generate keywords and examples for the new skill
+    skill_path = skills_base / skill_name
+    try:
+        from .keyword_extractor import ensure_keywords
+        from .example_generator import ensure_examples
+        from .skill_loader import extract_commands_from_script
+
+        # Extract commands from newly created script
+        script_path = skill_path / "scripts" / f"{skill_name.replace('-', '_')}_api.py"
+        commands = []
+        if script_path.exists():
+            cmd_list = extract_commands_from_script(script_path)
+            commands = [{"name": c.name, "description": c.description} for c in cmd_list]
+
+        # Generate keywords (async, need to run in event loop)
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        keywords = loop.run_until_complete(
+            ensure_keywords(
+                skill_path,
+                settings.lm_studio_url,
+                settings.lm_studio_model,
+            )
+        )
+        if keywords:
+            files_written.append(f"{skill_name}/keywords.json")
+            logger.info(f"Generated {len(keywords)} keywords for {skill_name}")
+
+        # Generate examples
+        examples = loop.run_until_complete(
+            ensure_examples(
+                skill_path,
+                settings.lm_studio_url,
+                settings.lm_studio_model,
+                commands,
+            )
+        )
+        if examples:
+            files_written.append(f"{skill_name}/examples.json")
+            logger.info(f"Generated {len(examples)} examples for {skill_name}")
+
+    except Exception as e:
+        logger.warning(f"Could not auto-generate metadata for {skill_name}: {e}")
 
     return {
         "success": True,

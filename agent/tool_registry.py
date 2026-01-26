@@ -132,6 +132,52 @@ class ToolRegistry:
         """
         return list(self.skills.keys())
 
+    async def ensure_skill_metadata_all(
+        self,
+        skills_path: Path,
+        lm_studio_url: str,
+        lm_studio_model: str,
+    ) -> None:
+        """Ensure all skills have keywords and examples.
+
+        Called during startup or reload to auto-generate missing metadata.
+        Skills without keywords/examples will have them generated via LM Studio.
+
+        Args:
+            skills_path: Skills directory
+            lm_studio_url: LM Studio API URL
+            lm_studio_model: Model name to use
+        """
+        from .skill_loader import ensure_skill_metadata, get_skill_path
+
+        generated_count = 0
+        for skill_name, skill in self.skills.items():
+            # Check if skill needs metadata generation
+            needs_keywords = not skill.keywords
+            needs_examples = not skill.examples
+
+            if needs_keywords or needs_examples:
+                skill_path = get_skill_path(skill_name, skills_path)
+                if skill_path:
+                    try:
+                        updated = await ensure_skill_metadata(
+                            skill, skill_path, lm_studio_url, lm_studio_model
+                        )
+                        self.skills[skill_name] = updated
+                        # Update homelab keywords set
+                        self.homelab_keywords.update(updated.keywords)
+                        generated_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to generate metadata for {skill_name}: {e}")
+
+        if generated_count > 0:
+            # Regenerate tool definitions with new examples
+            self.tools = [skill_to_tool(s) for s in self.skills.values()]
+            logger.info(
+                f"Metadata generation complete: {generated_count} skills updated, "
+                f"{len(self.homelab_keywords)} total keywords"
+            )
+
 
 # Singleton instance
 _registry: Optional[ToolRegistry] = None
@@ -175,5 +221,37 @@ def reload_registry(settings) -> ToolRegistry:
     _registry = ToolRegistry()
     skills_path = settings.project_root / ".claude" / "skills"
     _registry.load_skills(skills_path)
+
+    return _registry
+
+
+async def reload_registry_async(settings) -> ToolRegistry:
+    """Force reload of registry with async metadata generation.
+
+    This version also generates missing keywords and examples for skills
+    that don't have them yet.
+
+    Args:
+        settings: Settings object with project_root, lm_studio_url, lm_studio_model
+
+    Returns:
+        Fresh ToolRegistry instance with generated metadata
+    """
+    global _registry
+
+    # Clear the system prompt cache since examples may have changed
+    from .intent_classifier import clear_prompt_cache
+    clear_prompt_cache()
+
+    _registry = ToolRegistry()
+    skills_path = settings.project_root / ".claude" / "skills"
+    _registry.load_skills(skills_path)
+
+    # Auto-generate missing keywords/examples
+    await _registry.ensure_skill_metadata_all(
+        skills_path,
+        settings.lm_studio_url,
+        settings.lm_studio_model,
+    )
 
     return _registry

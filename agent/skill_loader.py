@@ -222,6 +222,54 @@ def extract_commands_from_script(script_path: Path) -> List[SkillCommand]:
     return commands
 
 
+async def ensure_skill_metadata(
+    skill: "SkillDefinition",
+    skill_path: Path,
+    lm_studio_url: str,
+    lm_studio_model: str,
+) -> "SkillDefinition":
+    """Ensure skill has keywords and examples, generating if missing.
+
+    This function checks if a skill has keywords and examples loaded.
+    If either is missing, it will generate them using LM Studio.
+
+    Args:
+        skill: The skill definition to check/update
+        skill_path: Path to skill directory
+        lm_studio_url: LM Studio API URL
+        lm_studio_model: Model name to use
+
+    Returns:
+        Updated SkillDefinition with keywords/examples
+    """
+    from .keyword_extractor import ensure_keywords
+    from .example_generator import ensure_examples
+
+    # Ensure keywords exist
+    if not skill.keywords:
+        logger.info(f"Generating keywords for {skill.name}...")
+        keywords = await ensure_keywords(skill_path, lm_studio_url, lm_studio_model)
+        skill.keywords = list(set(keywords))
+
+    # Ensure examples exist
+    if not skill.examples:
+        logger.info(f"Generating examples for {skill.name}...")
+        commands = [{"name": c.name, "description": c.description} for c in skill.commands]
+        examples_data = await ensure_examples(
+            skill_path, lm_studio_url, lm_studio_model, commands
+        )
+        skill.examples = [
+            SkillExample(
+                phrase=ex["phrase"],
+                action=ex["action"],
+                args=ex.get("args"),
+            )
+            for ex in examples_data
+        ]
+
+    return skill
+
+
 def load_all_skills(skills_path: Path) -> List[SkillDefinition]:
     """Load all skills from a directory.
 
@@ -255,3 +303,19 @@ def load_all_skills(skills_path: Path) -> List[SkillDefinition]:
                 )
 
     return skills
+
+
+def get_skill_path(skill_name: str, skills_path: Path) -> Optional[Path]:
+    """Get the path to a skill directory.
+
+    Args:
+        skill_name: Name of the skill
+        skills_path: Base skills directory
+
+    Returns:
+        Path to skill directory or None if not found
+    """
+    skill_dir = skills_path / skill_name
+    if skill_dir.exists() and skill_dir.is_dir():
+        return skill_dir
+    return None

@@ -21,7 +21,7 @@ from .telegram_handler import (
 from .intent_classifier import classify_intent
 from .skill_executor import execute_skill
 from .error_approval import handle_error_fix_approval, is_error_request
-from .tool_registry import get_registry, reload_registry
+from .tool_registry import get_registry, reload_registry_async
 from .wol import wake_gaming_pc
 from .chat_history import get_history, add_message, clear_history, save_conversation_to_db
 from .response_formatter import format_response, should_format_response
@@ -67,9 +67,9 @@ async def periodic_git_pull(settings: Settings):
                         await asyncio.sleep(1)  # Brief delay for cleanup
                         os.execv(sys.executable, [sys.executable] + sys.argv)
                     else:
-                        # Only non-Python files changed - just reload skills
-                        reload_registry(settings)
-                        logger.info("Skills reloaded after git pull")
+                        # Only non-Python files changed - reload skills with metadata generation
+                        await reload_registry_async(settings)
+                        logger.info("Skills reloaded after git pull (with metadata generation)")
             else:
                 logger.warning(f"Git pull failed: {result.get('output')}")
         except Exception as e:
@@ -139,6 +139,31 @@ async def lifespan(app: FastAPI):
 
     # Start background tasks
     background_tasks = []
+
+    # Background task for metadata generation (keywords/examples)
+    async def generate_missing_metadata():
+        """Generate missing keywords and examples for skills."""
+        await asyncio.sleep(5)  # Wait for app to fully start
+        try:
+            skills_path = settings.project_root / ".claude" / "skills"
+            await registry.ensure_skill_metadata_all(
+                skills_path,
+                settings.lm_studio_url,
+                settings.lm_studio_model,
+            )
+        except Exception as e:
+            logger.warning(f"Background metadata generation failed: {e}")
+
+    # Check if any skills need metadata generation
+    needs_generation = any(
+        not skill.keywords or not skill.examples
+        for skill in registry.skills.values()
+    )
+    if needs_generation:
+        logger.info("Starting background metadata generation...")
+        metadata_task = asyncio.create_task(generate_missing_metadata())
+        background_tasks.append(metadata_task)
+
     if settings.git_pull_interval_minutes > 0:
         pull_task = asyncio.create_task(periodic_git_pull(settings))
         background_tasks.append(pull_task)
@@ -177,13 +202,46 @@ async def health():
 
 @app.post("/reload-skills")
 async def reload_skills():
-    """Reload all skills from disk (for development/hot-reload)."""
+    """Reload all skills from disk (for development/hot-reload).
+
+    Also generates missing keywords and examples for any new skills.
+    """
     settings = get_settings()
-    registry = reload_registry(settings)
+    registry = await reload_registry_async(settings)
+
+    # Count skills with examples/keywords
+    skills_with_examples = sum(1 for s in registry.skills.values() if s.examples)
+    skills_with_keywords = sum(1 for s in registry.skills.values() if s.keywords)
+
     return {
         "status": "reloaded",
         "skills": registry.get_skill_names(),
         "tool_count": len(registry.tools),
+        "skills_with_examples": skills_with_examples,
+        "skills_with_keywords": skills_with_keywords,
+    }
+
+
+@app.post("/generate-metadata")
+async def generate_metadata():
+    """Generate missing keywords and examples for all skills.
+
+    This endpoint triggers async generation of keywords.json and examples.json
+    for any skills that are missing them. Uses LM Studio for generation.
+    """
+    settings = get_settings()
+    registry = await reload_registry_async(settings)
+
+    # Count skills with examples/keywords
+    skills_with_examples = sum(1 for s in registry.skills.values() if s.examples)
+    skills_with_keywords = sum(1 for s in registry.skills.values() if s.keywords)
+
+    return {
+        "status": "generated",
+        "skills": registry.get_skill_names(),
+        "skills_with_examples": skills_with_examples,
+        "skills_with_keywords": skills_with_keywords,
+        "total_keywords": len(registry.homelab_keywords),
     }
 
 

@@ -86,27 +86,44 @@ Analysiere den Fehler und erstelle einen Fix. Der Fix sollte:
 
 ## WICHTIG: Ausgabeformat
 
-Antworte NUR mit diesem JSON-Format:
+Antworte NUR mit diesem JSON-Format. Verwende GEZIELTE EDITS statt kompletter Dateien:
 
 ```json
 {{
   "analysis": "Kurze Analyse was das Problem ist",
   "fix_description": "Beschreibung was der Fix macht",
   "commit_message": "fix(scope): beschreibung",
-  "files": [
+  "edits": [
     {{
       "path": "{skill_script_path}",
-      "content": "Vollständiger neuer Dateiinhalt..."
+      "old_string": "Der EXAKTE bestehende Code der ersetzt werden soll",
+      "new_string": "Der neue Code der stattdessen eingefügt wird"
     }}
   ],
   "confidence": 0.8
 }}
 ```
 
+## EDIT-REGELN:
+
+1. **old_string**: EXAKT kopieren - jedes Zeichen, jede Einrückung, jede Leerzeile
+2. **new_string**: Der korrigierte Code - nur das Nötige ändern
+3. **Kontext**: Füge genug Zeilen vor/nach der Änderung ein, damit old_string EINDEUTIG ist
+4. **Minimal**: Ändere NUR was für den Fix nötig ist, nichts anderes
+
+## Beispiel für einen guten Edit:
+
+```json
+{{
+  "old_string": "    def get_status(self):\\n        return self._request('GET', '/status')",
+  "new_string": "    def get_status(self):\\n        try:\\n            return self._request('GET', '/status')\\n        except Exception as e:\\n            logger.error(f'Status request failed: {{e}}')\\n            return None"
+}}
+```
+
 - analysis: 1-2 Sätze zur Fehlerursache
 - fix_description: Was der Fix ändert
 - commit_message: Conventional Commits Format
-- files: Array mit geänderten Dateien (MUSS mit `{skill_base_path}` beginnen!)
+- edits: Array mit gezielten Ersetzungen (Pfade MÜSSEN mit `{skill_base_path}` beginnen!)
 - confidence: 0.0-1.0 wie sicher du dir beim Fix bist
 
 Bei niedriger Confidence (< 0.5) oder wenn der Fehler extern ist (API down, Netzwerk):
@@ -115,7 +132,7 @@ Bei niedriger Confidence (< 0.5) oder wenn der Fehler extern ist (API down, Netz
   "analysis": "Erklärung warum kein Code-Fix möglich",
   "fix_description": null,
   "commit_message": null,
-  "files": [],
+  "edits": [],
   "confidence": 0.0
 }}
 ```
@@ -222,7 +239,7 @@ def _parse_fix_response(response_text: str) -> dict[str, Any] | None:
             "analysis": data.get("analysis", ""),
             "fix_description": data.get("fix_description"),
             "commit_message": data.get("commit_message"),
-            "files": data.get("files", []),
+            "edits": data.get("edits", []),
             "confidence": data.get("confidence", 0.0),
         }
 
@@ -233,57 +250,42 @@ def _parse_fix_response(response_text: str) -> dict[str, Any] | None:
 
 
 async def apply_fix(fix_data: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    """Apply a generated fix to the codebase.
+    """Apply a generated fix to the codebase using targeted edits.
 
     Args:
-        fix_data: Fix data from generate_fix()
+        fix_data: Fix data from generate_fix() containing edits
         settings: Application settings
 
     Returns:
         Dict with applied files info
     """
-    files = fix_data.get("files", [])
-    if not files:
-        return {"success": False, "error": "Keine Dateien zum Ändern"}
+    from .edit_utils import apply_edits
 
-    applied = []
+    edits = fix_data.get("edits", [])
+    if not edits:
+        return {"success": False, "error": "Keine Edits zum Anwenden"}
 
-    for file_info in files:
-        rel_path = file_info.get("path", "")
-        content = file_info.get("content", "")
-
-        if not rel_path or not content:
+    # Validate all paths before applying
+    for edit in edits:
+        rel_path = edit.get("path", "")
+        if not rel_path:
             continue
 
-        # VALIDATION 1: Use centralized path validation
         is_valid, error_msg = validate_file_path(rel_path)
         if not is_valid:
             logger.error(f"Invalid path: {rel_path} - {error_msg}")
             return {"success": False, "error": error_msg}
 
-        # Resolve full path
-        full_path = (settings.project_root / rel_path).resolve()
+    # Apply edits using the shared utility
+    result = apply_edits(edits, settings.project_root)
 
-        # VALIDATION 2: Security - ensure path stays within project (no path traversal)
-        if not str(full_path).startswith(str(settings.project_root.resolve())):
-            logger.error(f"Path traversal attempt blocked: {rel_path}")
-            continue
-
-        try:
-            # Create parent directories if needed
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write the file
-            full_path.write_text(content, encoding="utf-8")
-            applied.append(rel_path)
-            logger.info(f"Applied fix to: {rel_path}")
-
-        except Exception as e:
-            logger.error(f"Failed to write {rel_path}: {e}")
-            return {"success": False, "error": f"Fehler beim Schreiben von {rel_path}: {e}"}
+    if not result["success"]:
+        errors = result.get("errors", [])
+        error_msg = "; ".join(e.get("error", "Unknown error") for e in errors)
+        return {"success": False, "error": error_msg}
 
     return {
         "success": True,
-        "files": applied,
+        "files": result.get("applied", []),
         "commit_message": fix_data.get("commit_message", "fix: auto-generated fix"),
     }
