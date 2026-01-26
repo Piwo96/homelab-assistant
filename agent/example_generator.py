@@ -101,9 +101,13 @@ async def extract_examples_from_skill(
 
             if response.status_code == 200:
                 data = response.json()
-                result = data["choices"][0]["message"]["content"].strip()
+                raw_result = data["choices"][0]["message"]["content"].strip()
+                # Log raw response for debugging
+                logger.debug(f"Raw LM response for {skill_path.name}: {raw_result[:500]}")
                 # Strip thinking tags from thinking models
-                result = _strip_thinking_tags(result)
+                result = _strip_thinking_tags(raw_result)
+                if not result:
+                    logger.warning(f"Response empty after stripping think tags. Raw: {raw_result[:300]}")
                 examples = _parse_examples(result)
                 logger.info(f"Generated {len(examples)} examples for {skill_path.name}")
                 return examples
