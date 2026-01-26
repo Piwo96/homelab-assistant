@@ -336,6 +336,15 @@ class UniFiAPI:
         """Delete a port forwarding rule."""
         return self._request("DELETE", f"/api/s/{self.site}/rest/portforward/{rule_id}")
 
+    # Firewall Rules
+    def get_firewall_rules(self) -> list:
+        """Get all firewall rules."""
+        return self.get(f"/api/s/{self.site}/rest/firewallrule")
+
+    def get_firewall_groups(self) -> list:
+        """Get firewall groups (IP groups, port groups)."""
+        return self.get(f"/api/s/{self.site}/rest/firewallgroup")
+
 
 def format_output(data: Any, format_type: str = "table") -> str:
     """Format output for display."""
@@ -416,6 +425,10 @@ def main():
 
     pf_delete = subparsers.add_parser("delete-port-forward", help="Delete port forwarding rule")
     pf_delete.add_argument("rule_id", help="Rule ID")
+
+    # Firewall
+    subparsers.add_parser("firewall-rules", help="List firewall rules")
+    subparsers.add_parser("firewall-groups", help="List firewall groups")
 
     args = parser.parse_args()
 
@@ -624,6 +637,64 @@ def main():
         api.delete_port_forward(args.rule_id)
         print(f"Deleted port forward rule {args.rule_id}")
         return
+
+    elif args.command == "firewall-rules":
+        rules = api.get_firewall_rules()
+        if args.json:
+            result = rules
+        else:
+            if not rules:
+                print("Keine Firewall-Regeln gefunden.")
+                return
+
+            print(f"🔥 **Firewall-Regeln** ({len(rules)} Regeln)\n")
+            for rule in rules:
+                name = rule.get("name", "Unnamed")
+                enabled = rule.get("enabled", False)
+                action = rule.get("action", "?")
+                ruleset = rule.get("ruleset", "?")
+                icon = "🟢" if enabled else "⚫"
+                action_icon = "✅" if action == "accept" else "🚫" if action in ["drop", "reject"] else "❓"
+
+                print(f"{icon} {action_icon} **{name}**")
+                print(f"   Aktion: {action} | Ruleset: {ruleset}")
+
+                # Source/Destination
+                src = rule.get("src_address", rule.get("src_networkconf_id", "any"))
+                dst = rule.get("dst_address", rule.get("dst_networkconf_id", "any"))
+                print(f"   Von: {src} → Nach: {dst}")
+
+                # Protocol/Port
+                proto = rule.get("protocol", "all")
+                dst_port = rule.get("dst_port", "")
+                if dst_port:
+                    print(f"   Protokoll: {proto} Port: {dst_port}")
+                print()
+            return
+
+    elif args.command == "firewall-groups":
+        groups = api.get_firewall_groups()
+        if args.json:
+            result = groups
+        else:
+            if not groups:
+                print("Keine Firewall-Gruppen gefunden.")
+                return
+
+            print(f"📋 **Firewall-Gruppen** ({len(groups)} Gruppen)\n")
+            for group in groups:
+                name = group.get("name", "?")
+                group_type = group.get("group_type", "?")
+                members = group.get("group_members", [])
+
+                type_icon = "🌐" if group_type == "address-group" else "🔌" if group_type == "port-group" else "📦"
+                print(f"{type_icon} **{name}** ({group_type})")
+                if members:
+                    print(f"   Mitglieder: {', '.join(members[:5])}")
+                    if len(members) > 5:
+                        print(f"   ... und {len(members) - 5} weitere")
+                print()
+            return
 
     if result is not None:
         print(format_output(result, output_format))
