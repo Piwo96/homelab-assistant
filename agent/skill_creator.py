@@ -519,13 +519,15 @@ async def create_skill(
 "{user_request}"
 
 WICHTIG: Du sollst den bestehenden Skill "{skill_to_extend}" erweitern, NICHT einen neuen Skill erstellen!
-Verwende action: "extend" in deiner Antwort."""
+Verwende action: "extend" und "edits" (mit old_string/new_string) in deiner Antwort.
+Der Skill-Ordner existiert bereits unter: {skill_to_extend}/"""
     else:
         instruction = f"""Erstelle einen neuen Skill für folgende Anfrage:
 "{user_request}"
 
-WICHTIG: Du sollst einen NEUEN Skill erstellen.
-Verwende action: "create" in deiner Antwort."""
+WICHTIG: Du sollst einen KOMPLETT NEUEN Skill erstellen.
+Verwende action: "create" und "new_files" (mit path/content) in deiner Antwort.
+NIEMALS "edits" oder "extend" verwenden - die Dateien existieren noch nicht!"""
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
