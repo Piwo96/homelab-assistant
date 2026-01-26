@@ -18,8 +18,8 @@ from .wol import ensure_lm_studio_available, get_loaded_model
 
 logger = logging.getLogger(__name__)
 
-# System prompt for tool-calling mode
-SYSTEM_PROMPT = """Du bist ein freundlicher Smart Home und Homelab Assistant.
+# Base system prompt - examples are added dynamically from skills
+SYSTEM_PROMPT_BASE = """Du bist ein freundlicher Smart Home und Homelab Assistant.
 Antworte auf Deutsch. Sei kurz und verständlich - keine technischen Begriffe.
 
 ## REGEL 1: Wann Tools benutzen
@@ -47,42 +47,7 @@ NIEMALS ein Tool ohne action aufrufen!
 
 ## Beispiele mit action (PFLICHT!)
 
-### proxmox
-- "Welche Server laufen?" → action: overview
-- "Homelab Status" → action: overview
-- "Zeige VMs" → action: vms
-- "Container Status" → action: containers
-- "Wie geht es den Servern?" → action: nodes
-- "Starte VM 100" → action: start, args: {vmid: 100}
-- "Stoppe Container 101" → action: stop, args: {vmid: 101}
-
-### unifi-protect
-- "Zeige Kameras" → action: cameras
-- "Kamera Status" → action: cameras
-- "Gab es Bewegung?" → action: events
-- "Was war los heute?" → action: events
-
-### pihole
-- "Pi-hole Status" → action: status
-- "Ist Pi-hole aktiv?" → action: status
-- "Wie viel geblockt?" → action: summary
-- "DNS Statistiken" → action: summary
-- "Blockiere example.com" → action: block, args: {domain: "example.com"}
-
-### homeassistant
-- "Mach Licht an" → action: turn-on, args: {entity_id: light.wohnzimmer}
-- "Lichter aus" → action: turn-off
-- "Welche Geräte gibt es?" → action: entities
-
-### unifi-network
-- "Welche Geräte sind online?" → action: clients
-- "Netzwerk Status" → action: health
-- "WLAN Geräte" → action: clients
-- "Welche Netzwerke haben wir?" → action: networks
-- "Zeige Netzwerke" → action: networks
-- "Welche WLANs gibt es?" → action: wifis
-- "Firewall Regeln" → action: firewall-rules
-- "Port Forwarding" → action: port-forwards
+{skill_examples}
 
 ## Beispiele OHNE Tool
 - "Hallo!" → "Hallo! Wie kann ich dir helfen?"
@@ -93,6 +58,55 @@ NIEMALS ein Tool ohne action aufrufen!
 - Erwähne NIEMALS: 'self-annealing', 'Skills', 'Features', 'Tool'
 - Bei unklaren Anfragen: freundlich nachfragen
 - args NUR wenn User explizit IDs/Namen nennt (z.B. "VM 100", "Licht Wohnzimmer")"""
+
+
+# Cache for built system prompt
+_cached_system_prompt: str | None = None
+
+
+def build_system_prompt(registry) -> str:
+    """Build system prompt with dynamic examples from loaded skills.
+
+    Args:
+        registry: The tool registry with loaded skills
+
+    Returns:
+        Complete system prompt with skill examples
+    """
+    global _cached_system_prompt
+
+    # Return cached prompt if available
+    if _cached_system_prompt is not None:
+        return _cached_system_prompt
+
+    example_sections = []
+
+    for skill_name, skill in registry.skills.items():
+        if not skill.examples:
+            continue
+
+        lines = [f"### {skill_name}"]
+        for ex in skill.examples:
+            if ex.args:
+                # Format args as JSON-like string
+                args_str = ", ".join(f"{k}: {v}" for k, v in ex.args.items())
+                lines.append(f'- "{ex.phrase}" → action: {ex.action}, args: {{{args_str}}}')
+            else:
+                lines.append(f'- "{ex.phrase}" → action: {ex.action}')
+        example_sections.append("\n".join(lines))
+
+    skill_examples = "\n\n".join(example_sections) if example_sections else "# Keine Beispiele geladen"
+
+    _cached_system_prompt = SYSTEM_PROMPT_BASE.format(skill_examples=skill_examples)
+    logger.info(f"Built system prompt with {len(example_sections)} skill example sections")
+
+    return _cached_system_prompt
+
+
+def clear_prompt_cache():
+    """Clear the cached system prompt (call after skill reload)."""
+    global _cached_system_prompt
+    _cached_system_prompt = None
 
 
 async def classify_intent(
@@ -143,7 +157,7 @@ async def classify_intent(
 
     try:
         response = await _call_with_tools(
-            message, settings, registry.get_tools_json(), history or []
+            message, settings, registry.get_tools_json(), history or [], registry
         )
         result = _parse_tool_call_response(response)
 
@@ -189,6 +203,7 @@ async def _call_with_tools(
     settings: Settings,
     tools: List[Dict[str, Any]],
     history: List[Dict[str, str]],
+    registry,
 ) -> Dict[str, Any]:
     """Call LM Studio with tool definitions.
 
@@ -197,6 +212,7 @@ async def _call_with_tools(
         settings: Application settings
         tools: Tool definitions in OpenAI format
         history: Conversation history for context
+        registry: Tool registry for building system prompt
 
     Returns:
         Raw API response from LM Studio
@@ -205,8 +221,11 @@ async def _call_with_tools(
     # model which has separate reasoning_content. Just use message directly.
     user_message = message
 
+    # Build system prompt with dynamic examples from registry
+    system_prompt = build_system_prompt(registry)
+
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         *history,
         {"role": "user", "content": user_message},
     ]

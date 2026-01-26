@@ -1,0 +1,21 @@
+{
+  "examples": [
+    {"phrase": "Welche Server laufen?", "action": "overview"},
+    {"phrase": "Homelab Status", "action": "overview"},
+    {"phrase": "Server Übersicht", "action": "overview"},
+    {"phrase": "Zeige VMs", "action": "vms"},
+    {"phrase": "Virtuelle Maschinen", "action": "vms"},
+    {"phrase": "Container Status", "action": "containers"},
+    {"phrase": "LXC Container", "action": "containers"},
+    {"phrase": "Wie geht es den Servern?", "action": "nodes"},
+    {"phrase": "Node Status", "action": "nodes"},
+    {"phrase": "Starte VM 100", "action": "start", "args": {"vmid": 100}},
+    {"phrase": "Stoppe Container 101", "action": "stop", "args": {"vmid": 101}},
+    {"phrase": "Fahre VM runter", "action": "shutdown"},
+    {"phrase": "Speicher Status", "action": "storage"},
+    {"phrase": "Storage Übersicht", "action": "storage"},
+    {"phrase": "Zeige Snapshots", "action": "snapshots"},
+    {"phrase": "Erstelle Snapshot", "action": "snapshot"}
+  ],
+  "auto_generated": false
+}

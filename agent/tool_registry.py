@@ -168,6 +168,10 @@ def reload_registry(settings) -> ToolRegistry:
     """
     global _registry
 
+    # Clear the system prompt cache since examples may have changed
+    from .intent_classifier import clear_prompt_cache
+    clear_prompt_cache()
+
     _registry = ToolRegistry()
     skills_path = settings.project_root / ".claude" / "skills"
     _registry.load_skills(skills_path)

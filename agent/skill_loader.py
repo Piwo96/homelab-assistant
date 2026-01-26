@@ -21,6 +21,15 @@ class SkillCommand:
 
 
 @dataclass
+class SkillExample:
+    """An example phrase that maps to a skill action."""
+
+    phrase: str  # e.g., "Mach Licht an"
+    action: str  # e.g., "turn-on"
+    args: Optional[dict] = None  # e.g., {"entity_id": "light.wohnzimmer"}
+
+
+@dataclass
 class SkillDefinition:
     """Complete skill definition from SKILL.md + script."""
 
@@ -31,6 +40,7 @@ class SkillDefinition:
     script_path: Optional[Path]
     commands: List[SkillCommand] = field(default_factory=list)
     keywords: List[str] = field(default_factory=list)  # Auto-extracted keywords
+    examples: List[SkillExample] = field(default_factory=list)  # Example phrases
     is_documentation_only: bool = False
 
 
@@ -93,6 +103,9 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
     if tags:
         keywords.extend([t.lower() for t in tags])
 
+    # Load examples from examples.json if exists
+    examples = _load_examples_from_file(skill_path)
+
     skill = SkillDefinition(
         name=frontmatter.get("name", skill_path.name),
         description=frontmatter.get("description", ""),
@@ -100,6 +113,7 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
         triggers=frontmatter.get("triggers", []),
         script_path=script,
         keywords=list(set(keywords)),  # Deduplicate
+        examples=examples,
         is_documentation_only=(script is None),
     )
 
@@ -132,6 +146,38 @@ def _load_keywords_from_file(skill_path: Path) -> List[str]:
                     return [k.lower() for k in data["keywords"]]
         except Exception as e:
             logger.warning(f"Failed to load keywords from {keywords_file}: {e}")
+
+    return []
+
+
+def _load_examples_from_file(skill_path: Path) -> List["SkillExample"]:
+    """Load examples from examples.json if it exists.
+
+    Args:
+        skill_path: Path to skill directory
+
+    Returns:
+        List of SkillExample objects or empty list
+    """
+    import json
+
+    examples_file = skill_path / "examples.json"
+    if examples_file.exists():
+        try:
+            with open(examples_file) as f:
+                data = json.load(f)
+                examples_data = data.get("examples", []) if isinstance(data, dict) else data
+                return [
+                    SkillExample(
+                        phrase=ex.get("phrase", ""),
+                        action=ex.get("action", ""),
+                        args=ex.get("args"),
+                    )
+                    for ex in examples_data
+                    if ex.get("phrase") and ex.get("action")
+                ]
+        except Exception as e:
+            logger.warning(f"Failed to load examples from {examples_file}: {e}")
 
     return []
 

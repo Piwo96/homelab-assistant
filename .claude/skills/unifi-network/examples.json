@@ -1,0 +1,31 @@
+{
+  "examples": [
+    {"phrase": "Welche Geräte sind online?", "action": "clients"},
+    {"phrase": "Netzwerk Status", "action": "health"},
+    {"phrase": "WLAN Geräte", "action": "clients"},
+    {"phrase": "Verbundene Clients", "action": "clients"},
+    {"phrase": "Welche Netzwerke haben wir?", "action": "networks"},
+    {"phrase": "Zeige Netzwerke", "action": "networks"},
+    {"phrase": "VLANs anzeigen", "action": "networks"},
+    {"phrase": "Welche WLANs gibt es?", "action": "wifis"},
+    {"phrase": "SSID Liste", "action": "wifis"},
+    {"phrase": "WiFi Netzwerke", "action": "wifis"},
+    {"phrase": "Firewall Regeln", "action": "firewall-rules"},
+    {"phrase": "Port Forwarding", "action": "port-forwards"},
+    {"phrase": "Portfreigaben", "action": "port-forwards"},
+    {"phrase": "Zeige Access Points", "action": "devices"},
+    {"phrase": "UniFi Geräte", "action": "devices"},
+    {"phrase": "Switches und APs", "action": "devices"},
+    {"phrase": "System Info", "action": "sysinfo"},
+    {"phrase": "UniFi Controller Info", "action": "sysinfo"},
+    {"phrase": "Traffic Statistiken", "action": "dpi-stats"},
+    {"phrase": "Bandbreite pro App", "action": "dpi-stats"},
+    {"phrase": "Kick Gerät", "action": "kick"},
+    {"phrase": "Gerät trennen", "action": "kick"},
+    {"phrase": "Blockiere MAC", "action": "block"},
+    {"phrase": "Gerät sperren", "action": "block"},
+    {"phrase": "Entsperre Gerät", "action": "unblock"},
+    {"phrase": "Starte AP neu", "action": "restart-device"}
+  ],
+  "auto_generated": false
+}
