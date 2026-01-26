@@ -1,0 +1,20 @@
+{
+  "examples": [
+    {
+      "phrase": "Zeig mir alle VMs",
+      "action": "overview"
+    },
+    {
+      "phrase": "Starte VM 100",
+      "action": "start",
+      "args": {
+        "vmid": 100
+      }
+    },
+    {
+      "phrase": "Wie viel RAM hat der Server?",
+      "action": "status"
+    }
+  ],
+  "auto_generated": true
+}

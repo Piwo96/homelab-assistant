@@ -206,6 +206,7 @@ def main():
     events.add_argument("--last", help="Last N hours (e.g., 24h, 1h)", default="24h")
     events.add_argument("--types", help="Event types (comma-separated: motion,ring)")
     events.add_argument("--camera", help="Filter by camera name or ID")
+    events.add_argument("--limit", type=int, help="Limit number of events returned")")
 
     # Smart Detections
     detections = subparsers.add_parser("detections", help="List smart detections (plates, faces, vehicles)")

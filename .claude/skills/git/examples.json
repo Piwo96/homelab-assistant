@@ -1,0 +1,74 @@
+{
+  "examples": [
+    {
+      "phrase": "Zeig mir den Status",
+      "action": "status"
+    },
+    {
+      "phrase": "Was ist der aktuelle Status?",
+      "action": "status"
+    },
+    {
+      "phrase": "Status ansehen",
+      "action": "status"
+    },
+    {
+      "phrase": "Mach einen Commit",
+      "action": "commit"
+    },
+    {
+      "phrase": "Committe die Änderungen",
+      "action": "commit"
+    },
+    {
+      "phrase": "Mach einen Commit mit der Nachricht 'fix(agent): timeout erhöht'",
+      "action": "commit",
+      "args": {
+        "message": "fix(agent): timeout erhöht"
+      }
+    },
+    {
+      "phrase": "Pushe den Code",
+      "action": "push"
+    },
+    {
+      "phrase": "Pushen auf GitHub",
+      "action": "push"
+    },
+    {
+      "phrase": "Pushe die Änderungen",
+      "action": "push"
+    },
+    {
+      "phrase": "Mach Commit und Push",
+      "action": "commit-and-push"
+    },
+    {
+      "phrase": "Committe und pushe alles",
+      "action": "commit-and-push"
+    },
+    {
+      "phrase": "Mach Commit und Push mit der Nachricht 'feat(skill): neue Funktion'",
+      "action": "commit-and-push",
+      "args": {
+        "message": "feat(skill): neue Funktion"
+      }
+    },
+    {
+      "phrase": "Zeig mir die letzten Commits",
+      "action": "log"
+    },
+    {
+      "phrase": "Welche Commits sind neueste?",
+      "action": "log"
+    },
+    {
+      "phrase": "Zeig mir die letzten 5 Commits",
+      "action": "log",
+      "args": {
+        "count": 5
+      }
+    }
+  ],
+  "auto_generated": true
+}
