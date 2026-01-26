@@ -247,6 +247,8 @@ async def _call_with_tools(
     if model:
         payload["model"] = model
 
+    logger.debug(f"LM Studio request - model: {model}, tools count: {len(tools)}")
+
     async with httpx.AsyncClient(timeout=settings.lm_studio_timeout) as client:
         response = await client.post(
             f"{settings.lm_studio_url}/v1/chat/completions",
