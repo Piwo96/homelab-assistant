@@ -18,35 +18,6 @@ from .wol import ensure_lm_studio_available, get_loaded_model
 
 logger = logging.getLogger(__name__)
 
-# Keywords that indicate homelab/smart home intent - triggers tool_choice: "required"
-HOMELAB_KEYWORDS = [
-    # UniFi Protect / Cameras
-    "kamera", "kameras", "aufnahme", "aufnahmen", "bewegung", "motion",
-    "garten", "einfahrt", "haustür", "türklingel", "doorbell",
-    "person", "personen", "auto", "autos", "fahrzeug", "kennzeichen",
-    "nummernschild", "plate", "gesicht", "face", "tier", "paket",
-    "snapshot", "ereignis", "ereignisse", "event", "events",
-    "flutlicht", "licht an", "licht aus",
-    # Proxmox / Server
-    "server", "vm", "vms", "container", "lxc", "proxmox",
-    "nas", "plex", "homeassistant", "docker",
-    "cpu", "ram", "speicher", "storage", "backup",
-    # Pi-hole / DNS
-    "pihole", "pi-hole", "dns", "werbung", "blockiert", "blocked",
-    "domain", "allowlist", "blocklist", "queries",
-    # Home Assistant
-    "licht", "lichter", "lampe", "lampen", "schalter", "switch",
-    "szene", "scene", "automation", "heizung", "thermostat",
-    "temperatur", "sensor", "sensoren", "steckdose", "plug",
-    # UniFi Network
-    "wlan", "wifi", "netzwerk", "network", "router", "switch",
-    "client", "clients", "gerät", "geräte", "device", "devices",
-    "internet", "verbindung", "connection", "bandbreite", "bandwidth",
-    # General homelab
-    "homelab", "smart home", "smarthome", "läuft", "running",
-    "aktivität", "activity", "letzte", "recent",
-]
-
 # Context markers that indicate reference to previous conversation
 # These suggest the user is following up on a previous homelab topic
 CONTEXT_MARKERS = [
@@ -60,7 +31,11 @@ CONTEXT_MARKERS = [
 ]
 
 
-def _is_homelab_query(message: str, history: list[dict] | None = None) -> bool:
+def _is_homelab_query(
+    message: str,
+    homelab_keywords: set[str],
+    history: list[dict] | None = None,
+) -> bool:
     """Check if message is a homelab/smart home query.
 
     Uses a simple, robust approach:
@@ -70,6 +45,7 @@ def _is_homelab_query(message: str, history: list[dict] | None = None) -> bool:
 
     Args:
         message: User message
+        homelab_keywords: Set of keywords from registry (dynamically loaded from skills)
         history: Optional conversation history
 
     Returns:
@@ -78,7 +54,7 @@ def _is_homelab_query(message: str, history: list[dict] | None = None) -> bool:
     message_lower = message.lower().strip()
 
     # Direct homelab keyword match - always homelab
-    if any(kw in message_lower for kw in HOMELAB_KEYWORDS):
+    if any(kw in message_lower for kw in homelab_keywords):
         return True
 
     # Check for context-dependent reference to previous homelab topic
@@ -91,7 +67,7 @@ def _is_homelab_query(message: str, history: list[dict] | None = None) -> bool:
             recent = history[-4:] if len(history) >= 4 else history
             for msg in recent:
                 content = msg.get("content", "").lower()
-                if any(kw in content for kw in HOMELAB_KEYWORDS):
+                if any(kw in content for kw in homelab_keywords):
                     logger.debug(f"Context reference detected: '{message}' refers to homelab history")
                     return True
 
@@ -348,10 +324,11 @@ async def _call_with_tools(
         logger.info(f"Auto-detected model from LM Studio: '{model}'")
 
     # Determine tool_choice based on whether this looks like a homelab query
-    # If no homelab keywords (direct or via context), don't offer tools at all
-    is_homelab = _is_homelab_query(message, history)
+    # Keywords are dynamically loaded from skills (no hardcoded list)
+    homelab_keywords = registry.homelab_keywords
+    is_homelab = _is_homelab_query(message, homelab_keywords, history)
     tool_choice = "auto" if is_homelab else "none"
-    logger.info(f"Using tool_choice: {tool_choice} (is_homelab={is_homelab})")
+    logger.info(f"Using tool_choice: {tool_choice} (is_homelab={is_homelab}, keywords={len(homelab_keywords)})")
 
     # Token limits for retry: start low, increase on context errors
     token_limits = [2048, 4096, 8192]
