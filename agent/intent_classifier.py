@@ -18,6 +18,52 @@ from .wol import ensure_lm_studio_available, get_loaded_model
 
 logger = logging.getLogger(__name__)
 
+# Keywords that indicate homelab/smart home intent - triggers tool_choice: "required"
+HOMELAB_KEYWORDS = [
+    # UniFi Protect / Cameras
+    "kamera", "kameras", "aufnahme", "aufnahmen", "bewegung", "motion",
+    "garten", "einfahrt", "haustür", "türklingel", "doorbell",
+    "person", "personen", "auto", "autos", "fahrzeug", "kennzeichen",
+    "nummernschild", "plate", "gesicht", "face", "tier", "paket",
+    "snapshot", "ereignis", "ereignisse", "event", "events",
+    "flutlicht", "licht an", "licht aus",
+    # Proxmox / Server
+    "server", "vm", "vms", "container", "lxc", "proxmox",
+    "nas", "plex", "homeassistant", "docker",
+    "cpu", "ram", "speicher", "storage", "backup",
+    # Pi-hole / DNS
+    "pihole", "pi-hole", "dns", "werbung", "blockiert", "blocked",
+    "domain", "allowlist", "blocklist", "queries",
+    # Home Assistant
+    "licht", "lichter", "lampe", "lampen", "schalter", "switch",
+    "szene", "scene", "automation", "heizung", "thermostat",
+    "temperatur", "sensor", "sensoren", "steckdose", "plug",
+    # UniFi Network
+    "wlan", "wifi", "netzwerk", "network", "router", "switch",
+    "client", "clients", "gerät", "geräte", "device", "devices",
+    "internet", "verbindung", "connection", "bandbreite", "bandwidth",
+    # General homelab
+    "homelab", "smart home", "smarthome", "status", "läuft", "running",
+    "aktivität", "activity", "letzte", "recent", "heute", "gestern",
+]
+
+
+def _is_homelab_query(message: str) -> bool:
+    """Check if message is likely a homelab/smart home query.
+
+    Args:
+        message: User message
+
+    Returns:
+        True if message contains homelab keywords
+    """
+    message_lower = message.lower()
+    for keyword in HOMELAB_KEYWORDS:
+        if keyword in message_lower:
+            return True
+    return False
+
+
 # Base system prompt - examples are added dynamically from skills
 SYSTEM_PROMPT_BASE = """Du bist ein freundlicher Smart Home und Homelab Assistant.
 Antworte auf Deutsch. Sei kurz und verständlich - keine technischen Begriffe.
@@ -238,6 +284,12 @@ async def _call_with_tools(
         model = await get_loaded_model(settings)
         logger.info(f"Auto-detected model from LM Studio: '{model}'")
 
+    # Determine tool_choice based on message content
+    # For homelab queries, force tool usage; for general chat, let model decide
+    is_homelab = _is_homelab_query(message)
+    tool_choice = "required" if is_homelab else "auto"
+    logger.info(f"Query type: {'homelab' if is_homelab else 'general'} -> tool_choice: {tool_choice}")
+
     # Token limits for retry: start low, increase on context errors
     token_limits = [2048, 4096, 8192]
 
@@ -245,7 +297,7 @@ async def _call_with_tools(
         payload = {
             "messages": messages,
             "tools": tools,
-            "tool_choice": "auto",
+            "tool_choice": tool_choice,
             "temperature": 0.1,
             "max_tokens": max_tokens,
         }
@@ -253,7 +305,7 @@ async def _call_with_tools(
         if model:
             payload["model"] = model
 
-        logger.info(f"LM Studio request - model: {model}, tools: {len(tools)}, max_tokens: {max_tokens}")
+        logger.info(f"LM Studio request - model: {model}, tools: {len(tools)}, tool_choice: {tool_choice}, max_tokens: {max_tokens}")
 
         async with httpx.AsyncClient(timeout=settings.lm_studio_timeout) as client:
             response = await client.post(
