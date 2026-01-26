@@ -445,20 +445,11 @@ async def process_natural_language(
             # Check if there's a matching skill we could extend
             matching_skill = registry.find_matching_skill(text)
 
-            if matching_skill:
-                # Offer to extend existing skill
-                fallback_response = (
-                    f"🤔 Das kann ich leider noch nicht.\n\n"
-                    f"Soll ich den **{matching_skill}** Skill erweitern? "
-                    f"Antworte mit **Ja** wenn du möchtest."
-                )
-            else:
-                # Offer to create a new skill
-                fallback_response = (
-                    "🤔 Das kann ich leider noch nicht.\n\n"
-                    "Soll ich diese Funktion als neuen Skill anlegen? "
-                    "Antworte mit **Ja** wenn du möchtest."
-                )
+            # Offer to learn this capability
+            fallback_response = (
+                "🤔 Das kann ich leider noch nicht.\n\n"
+                "Soll ich das lernen? Antworte mit **Ja** wenn du möchtest."
+            )
             # Store the pending request in chat history for context
             add_message(chat_id, "user", text)
             add_message(chat_id, "assistant", fallback_response)
