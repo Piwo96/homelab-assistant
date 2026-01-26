@@ -952,7 +952,7 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
     skill_path = skills_base / skill_name
     try:
         from .keyword_extractor import ensure_keywords
-        from .example_generator import ensure_examples
+        from .example_generator import ensure_examples, load_examples, save_examples
         from .skill_loader import extract_commands_from_script
 
         # Extract commands from ALL scripts in the skill (not just the main one)
@@ -966,6 +966,12 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
                     for c in cmd_list
                 ])
             logger.info(f"Extracted {len(commands)} commands from {skill_name} scripts")
+
+        # DIRECT INJECTION: Add explicit examples for new commands
+        # This ensures commands work immediately without relying on LM Studio
+        if commands:
+            _inject_command_examples(skill_path, commands)
+            logger.info(f"Injected direct examples for commands in {skill_name}")
 
         # Generate keywords (async)
         # For extend actions, force regeneration to include new commands
@@ -1032,6 +1038,121 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
         "summary": data.get("summary", "Skill erstellt"),
         "files": files_written,
     }
+
+
+def _inject_command_examples(skill_path: Path, commands: list[dict]) -> None:
+    """Directly inject examples for commands that don't have any.
+
+    This ensures new commands work immediately without relying on LM Studio.
+    Creates simple German example phrases based on command names and descriptions.
+
+    Args:
+        skill_path: Path to the skill directory
+        commands: List of command dicts with 'name' and 'description'
+    """
+    from .example_generator import load_examples, save_examples
+
+    if not commands:
+        return
+
+    # Load existing examples
+    existing = load_examples(skill_path)
+    covered_actions = {ex.get("action", "").lower() for ex in existing}
+
+    # German phrase templates for common command patterns
+    templates = {
+        "list": ["Zeig mir alle {obj}", "Liste {obj} auf", "Was gibt es für {obj}?"],
+        "get": ["Zeig mir {obj}", "Was ist {obj}?", "Gib mir {obj}"],
+        "status": ["Wie ist der Status von {obj}?", "Status von {obj}", "Zeig {obj} Status"],
+        "start": ["Starte {obj}", "Mach {obj} an", "{obj} starten"],
+        "stop": ["Stoppe {obj}", "Mach {obj} aus", "{obj} stoppen"],
+        "restart": ["Starte {obj} neu", "Restart {obj}", "{obj} neustarten"],
+        "create": ["Erstelle {obj}", "Neue {obj} anlegen", "Mach eine neue {obj}"],
+        "delete": ["Lösche {obj}", "{obj} löschen", "Entferne {obj}"],
+        "update": ["Aktualisiere {obj}", "Update {obj}", "{obj} updaten"],
+        "backup": ["Backup von {obj}", "{obj} sichern", "Sichere {obj}"],
+        "optimize": ["Optimiere {obj}", "{obj} optimieren", "Verbessere {obj}"],
+        "enable": ["Aktiviere {obj}", "{obj} aktivieren", "Schalte {obj} ein"],
+        "disable": ["Deaktiviere {obj}", "{obj} deaktivieren", "Schalte {obj} aus"],
+        "set": ["Setze {obj}", "Stelle {obj} ein", "Konfiguriere {obj}"],
+        "turn-on": ["Mach {obj} an", "{obj} einschalten", "Schalte {obj} ein"],
+        "turn-off": ["Mach {obj} aus", "{obj} ausschalten", "Schalte {obj} aus"],
+        "toggle": ["Toggle {obj}", "{obj} umschalten", "Schalte {obj} um"],
+    }
+
+    # Default templates for unknown commands
+    default_templates = [
+        "{cmd} {obj}",
+        "Führe {cmd} aus für {obj}",
+        "{cmd} machen",
+    ]
+
+    new_examples = []
+    for cmd in commands:
+        cmd_name = cmd.get("name", "").lower()
+        description = cmd.get("description", cmd_name)
+
+        # Skip if already covered
+        if cmd_name in covered_actions:
+            continue
+
+        # Extract object from description (usually the main noun)
+        # E.g., "List all dashboards" -> "dashboards"
+        obj = _extract_object_from_description(description)
+
+        # Get templates for this command type
+        cmd_templates = templates.get(cmd_name, default_templates)
+
+        # Generate 2 examples per command
+        for i, template in enumerate(cmd_templates[:2]):
+            phrase = template.format(obj=obj, cmd=cmd_name)
+            new_examples.append({
+                "phrase": phrase,
+                "action": cmd_name,
+            })
+            logger.debug(f"Injected example for {cmd_name}: {phrase}")
+
+        covered_actions.add(cmd_name)
+
+    if new_examples:
+        # Merge with existing and save
+        merged = existing + new_examples
+        save_examples(skill_path, merged)
+        logger.info(f"Injected {len(new_examples)} examples for {len(new_examples)//2} commands")
+
+
+def _extract_object_from_description(description: str) -> str:
+    """Extract the main object/noun from a command description.
+
+    Args:
+        description: Command description like "List all dashboards"
+
+    Returns:
+        Extracted object like "dashboards" or fallback to description
+    """
+    # Common patterns to remove
+    remove_patterns = [
+        "list all", "list", "get all", "get", "show all", "show",
+        "create new", "create", "delete", "update", "start", "stop",
+        "restart", "enable", "disable", "toggle", "optimize", "backup",
+        "the", "a", "an",
+    ]
+
+    text = description.lower()
+
+    # Remove command patterns
+    for pattern in remove_patterns:
+        text = text.replace(pattern, "")
+
+    # Clean up
+    text = text.strip()
+
+    # If we got something useful, return it
+    if text and len(text) > 2:
+        return text.capitalize()
+
+    # Fallback: use a generic object based on command name context
+    return "das"
 
 
 def load_skill_context(settings: Settings) -> str:
