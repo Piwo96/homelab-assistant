@@ -506,21 +506,30 @@ async def create_skill(user_request: str, settings: Settings) -> dict[str, Any]:
 ## Bestehende Skill-Struktur:
 {skill_context}
 
-## WICHTIGE REGELN - UNBEDINGT BEACHTEN:
+## KRITISCHE REGELN - VERSTÖSSE WERDEN ABGELEHNT:
 
-1. **NIEMALS bestehenden Code komplett ersetzen!**
-   - Wenn ein Skill erweitert wird: NUR neue Funktionen/Commands HINZUFÜGEN
-   - Bestehende Funktionen, Klassen, Imports BEIBEHALTEN
-   - Bei Erweiterung: Nur die DIFF-Änderungen, nicht die komplette Datei
+### REGEL 1: BESTEHENDEN CODE NIEMALS ÄNDERN!
+Bei "extend" darfst du AUSSCHLIESSLICH:
+- Neue Methoden zur Klasse HINZUFÜGEN (am Ende)
+- Neue argparse Subcommands HINZUFÜGEN (am Ende)
+- Neue Handler im main() HINZUFÜGEN (am Ende)
+- Neue Imports HINZUFÜGEN (am Anfang)
 
-2. **Bei "extend":**
-   - Lies den bestehenden Code und FÜGE NUR NEUES hinzu
-   - Keine Rewrites, keine Refactorings, keine "Verbesserungen"
-   - Behalte die bestehende Architektur (z.B. Token-Auth vs Passwort-Auth)
+Du darfst NIEMALS:
+- Bestehende Methoden ändern, umbenennen oder "verbessern"
+- Session-Management, Auth-Logik oder API-Requests ändern
+- Bestehende Imports entfernen oder ändern
+- Code "refactoren" oder "aufräumen"
+- Reihenfolge von bestehendem Code ändern
 
-3. **Bei "create":**
-   - Nur für komplett neue Skills
-   - Folge dem bestehenden Muster anderer Skills
+### REGEL 2: ZEILE FÜR ZEILE PRÜFEN
+Bevor du antwortest:
+1. Kopiere den KOMPLETTEN bestehenden Code 1:1
+2. Füge NUR am Ende neue Methoden/Commands hinzu
+3. Prüfe: Ist JEDE bestehende Zeile IDENTISCH? Wenn nicht → FEHLER!
+
+### REGEL 3: BEI "create"
+Nur für komplett neue Skills die es noch nicht gibt.
 
 ## Skill-Format (SKILL.md):
 - Frontmatter mit name, description, version, triggers
@@ -560,9 +569,22 @@ Die Pfade sind RELATIV zu `.claude/skills/`.
 
 Die Dateien werden automatisch nach `.claude/skills/<dein-pfad>` geschrieben.
 
-WARNUNG: Bei "extend" muss der content die KOMPLETTE Datei enthalten,
-aber mit dem BESTEHENDEN Code PLUS den neuen Änderungen.
-Nicht nur die neuen Teile, sondern alles - aber ohne bestehende Funktionen zu ändern oder zu entfernen!
+## WARNUNG FÜR "extend":
+
+Der content MUSS die KOMPLETTE Datei enthalten:
+1. Kopiere den bestehenden Code ZEICHENGENAU (inkl. Kommentare, Leerzeilen)
+2. Füge neue Methoden AM ENDE der Klasse hinzu
+3. Füge neue argparse commands AM ENDE hinzu
+4. Füge neue Handler AM ENDE von main() hinzu
+
+VERBOTEN bei extend:
+- Bestehende Methoden ändern (auch nicht "verbessern")
+- Session/Auth-Code ändern
+- API-URL-Patterns ändern
+- Bestehenden Code umstrukturieren
+- "Aufräumen" oder "Refactoring"
+
+Wenn du auch nur EINE bestehende Zeile änderst (außer Imports hinzufügen), wird der PR abgelehnt!
 
 Gib NUR das JSON zurück, keine weiteren Erklärungen.""",
             }

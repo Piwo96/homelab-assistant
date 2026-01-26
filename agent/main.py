@@ -301,23 +301,27 @@ async def process_natural_language(
     text: str, chat_id: int, user, settings: Settings
 ):
     """Process natural language input through intent classification."""
-    # Send typing indicator
+    # Send typing indicator - will be removed when final response is ready
     status_msg_id = await send_message(chat_id, "⏳ Bin dran...", settings)
+
+    async def remove_status():
+        """Remove status message before sending response."""
+        nonlocal status_msg_id
+        if status_msg_id:
+            await delete_message(chat_id, status_msg_id, settings)
+            status_msg_id = None
 
     # Get conversation history for context
     history = get_history(chat_id)
 
     # Classify intent with history context
     intent = await classify_intent(text, settings, history)
-
-    # Remove typing indicator
-    if status_msg_id:
-        await delete_message(chat_id, status_msg_id, settings)
     logger.info(f"Classified intent: skill={intent.skill}, action={intent.action}")
 
     # Handle errors
     if intent.skill == "error":
         error_msg = intent.description or intent.action or "Unbekannter Fehler"
+        await remove_status()
         await send_message(chat_id, f"❌ {error_msg}", settings)
         return
 
@@ -336,6 +340,7 @@ async def process_natural_language(
             is_bad_response = any(kw in response_lower for kw in bad_keywords)
 
             if not is_bad_response:
+                await remove_status()
                 await send_message(chat_id, intent.description, settings)
                 add_message(chat_id, "user", text)
                 add_message(chat_id, "assistant", intent.description)
@@ -360,6 +365,7 @@ async def process_natural_language(
                 "• **Pi-hole**: \"DNS Status\"\n\n"
                 "Was möchtest du wissen?"
             )
+            await remove_status()
             await send_message(chat_id, fallback_response, settings)
             add_message(chat_id, "user", text)
             add_message(chat_id, "assistant", fallback_response)
@@ -384,6 +390,7 @@ async def process_natural_language(
             chat_id=chat_id,
             settings=settings,
         )
+        await remove_status()
         await send_message(chat_id, response, settings)
         return
 
@@ -399,9 +406,11 @@ async def process_natural_language(
             )
         else:
             response_msg = result.output
+        await remove_status()
         await send_message(chat_id, response_msg, settings)
     else:
         response_msg = f"❌ {result.error}"
+        await remove_status()
         await send_message(chat_id, response_msg, settings)
 
     # Store conversation in history
