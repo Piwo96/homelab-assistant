@@ -51,6 +51,16 @@ FOLLOWUP_PATTERNS = [
     r"^ja,?\s+aber",
     r"^nein,?\s+ich",
     r"^ok(ay)?,?\s+aber",
+    # Action requests after acknowledgment - these need previous context!
+    # "Okay schieß mal los", "Okay mach mal", "Ja zeig mal", etc.
+    r"^ok(ay)?,?\s*(schieß|mach|leg|fang|zeig|erklär|sag)",
+    r"^ja,?\s*(schieß|mach|leg|fang|zeig|erklär|sag)",
+    r"^klar,?\s*(schieß|mach|leg|fang|zeig|erklär|sag)",
+    r"schieß\s*(mal\s*)?los",
+    r"leg\s*(mal\s*)?los",
+    r"fang\s*(mal\s*)?an",
+    r"mach\s*(mal\s*)?weiter",
+    r"zeig\s*(mal\s*)?her",
     # Refinements/corrections - user wants to narrow down previous response
     r"^ich wollte nur",  # "Ich wollte nur den Garten"
     r"^ich meinte nur",  # "Ich meinte nur die Einfahrt"

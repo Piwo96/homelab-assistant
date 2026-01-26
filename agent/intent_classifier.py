@@ -65,6 +65,14 @@ CONVERSATIONAL_PATTERNS = [
     "tschüss", "bye", "ciao", "bis dann", "bis später",
 ]
 
+# Action verbs that indicate a request, not just acknowledgment
+# If a message contains these after an acknowledgment, it's a context-dependent request
+ACTION_VERBS = [
+    "schieß", "mach", "leg", "fang", "zeig", "erklär", "sag", "hilf",
+    "starte", "stopp", "installier", "erstell", "lösch", "öffne",
+    "los", "weiter", "her", "bitte",
+]
+
 
 def _is_conversational_message(message: str) -> bool:
     """Check if message is a short conversational phrase.
@@ -79,6 +87,12 @@ def _is_conversational_message(message: str) -> bool:
         True if message is conversational/small talk
     """
     message_lower = message.lower().strip()
+
+    # Check if message contains action verbs - if so, it's NOT purely conversational
+    # This catches "Okay schieß mal los", "Ja mach mal", etc.
+    has_action_verb = any(verb in message_lower for verb in ACTION_VERBS)
+    if has_action_verb:
+        return False
 
     # Very short messages (1-2 words) are usually conversational
     word_count = len(message_lower.split())
