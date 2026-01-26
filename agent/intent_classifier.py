@@ -344,6 +344,7 @@ def _parse_tool_call_response(response: Dict[str, Any]) -> IntentResult:
         content = message.get("content", "")
         # Strip thinking tags from thinking models (e.g., Qwen3)
         content = _strip_thinking_tags(content)
+        logger.info(f"Model did not use tool. Response preview: {content[:200]}...")
         return IntentResult(
             skill="unknown",
             action="",
