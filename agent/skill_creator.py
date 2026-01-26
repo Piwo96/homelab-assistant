@@ -689,6 +689,18 @@ Finde eine Marker-Zeile und füge Code DANACH ein. Gut für argparse Commands.
 - Kann Teil einer Zeile sein (z.B. "def my_function(")
 - Whitespace wird ignoriert beim Matching
 
+### ⚠️ KRITISCH: Einrückung und Syntax
+
+**Python-Einrückung MUSS exakt stimmen!**
+- Funktionen auf Top-Level: KEINE führenden Spaces
+- Code in main(): 8 Spaces (2x4)
+- if/elif Blöcke: Gleiche Einrückung wie der Marker
+
+**Bei if/elif/else Ketten:**
+- Neues `elif` muss VOR einem bestehenden `elif` eingefügt werden
+- Einrückung muss EXAKT mit dem bestehenden elif übereinstimmen
+- Prüfe den Code auf gleiche Einrückungstiefe!
+
 ### Komplettes Beispiel: Dashboard-Optimierung hinzufügen
 ```json
 {{
@@ -698,18 +710,18 @@ Finde eine Marker-Zeile und füge Code DANACH ein. Gut für argparse Commands.
   "edits": [
     {{
       "path": "homeassistant/scripts/dashboard_api.py",
-      "marker": "subparsers.add_parser(\"list\"",
-      "insert": "\\n\\n    # Optimize dashboard\\n    optimize_cmd = subparsers.add_parser(\"optimize\", help=\"Optimize dashboard\")\\n    optimize_cmd.add_argument(\"--dashboard\", \"-d\", help=\"Dashboard URL path\")\\n"
+      "marker": "subparsers.add_parser(\\"list\\"",
+      "insert": "\\n\\n    # Optimize dashboard\\n    optimize_cmd = subparsers.add_parser(\\"optimize\\", help=\\"Optimize dashboard\\")\\n    optimize_cmd.add_argument(\\"--dashboard\\", \\"-d\\", help=\\"Dashboard URL path\\")\\n"
     }},
     {{
       "path": "homeassistant/scripts/dashboard_api.py",
       "marker": "async def main():",
-      "insert_before": "async def optimize_dashboard(api, args):\\n    \\\"\\\"\\\"Optimize dashboard configuration.\\\"\\\"\\\"\\n    config = await api.get_config(args.dashboard)\\n    # Add optimization logic here\\n    print(\\\"Dashboard optimized\\\")\\n\\n\\n"
+      "insert_before": "async def optimize_dashboard(api, args):\\n    \\"\\"\\"Optimize dashboard configuration.\\"\\"\\"\\n    config = await api.get_config(args.dashboard)\\n    print(\\"Dashboard optimized\\")\\n\\n\\n"
     }},
     {{
       "path": "homeassistant/scripts/dashboard_api.py",
-      "marker": "elif args.command == \\\"list\\\":",
-      "insert_before": "    elif args.command == \\\"optimize\\\":\\n        await optimize_dashboard(api, args)\\n\\n"
+      "marker": "elif args.command == \\"list\\":",
+      "insert_before": "    elif args.command == \\"optimize\\":\\n        await optimize_dashboard(api, args)\\n\\n"
     }}
   ]
 }}

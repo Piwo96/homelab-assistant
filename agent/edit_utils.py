@@ -327,37 +327,28 @@ def apply_insert_before(
     marker_stripped = marker.strip()
     insert_pos = None
 
-    # Try exact match first
-    if marker in content:
-        # Check uniqueness
-        count = content.count(marker)
-        if count > 1:
-            return {
-                "success": False,
-                "error": f"Marker found {count} times in {file_path.name}. Must be unique.",
-                "hint": "Provide more context in marker to make it unique.",
-            }
-        insert_pos = content.find(marker)
-    else:
-        # Try line-by-line fuzzy match
-        lines = content.split('\n')
-        cumulative = 0
-        match_count = 0
+    # Find the line containing the marker and insert at LINE START
+    # This is critical: we must insert at the beginning of the line,
+    # not directly before the marker string (which could be mid-line)
+    lines = content.split('\n')
+    cumulative = 0
+    match_count = 0
 
-        for i, line in enumerate(lines):
-            if line.strip() == marker_stripped or marker_stripped in line:
-                if insert_pos is None:
-                    insert_pos = cumulative
-                match_count += 1
-            cumulative += len(line) + 1
+    for i, line in enumerate(lines):
+        # Check if marker matches this line (exact or substring)
+        if marker in line or line.strip() == marker_stripped or marker_stripped in line:
+            if insert_pos is None:
+                insert_pos = cumulative  # Start of the LINE, not start of marker
+            match_count += 1
+        cumulative += len(line) + 1
 
-        # Check uniqueness
-        if match_count > 1:
-            return {
-                "success": False,
-                "error": f"Marker found {match_count} times in {file_path.name}. Must be unique.",
-                "hint": "Provide more context in marker to make it unique.",
-            }
+    # Check uniqueness
+    if match_count > 1:
+        return {
+            "success": False,
+            "error": f"Marker found {match_count} times in {file_path.name}. Must be unique.",
+            "hint": "Provide more context in marker to make it unique.",
+        }
 
     if insert_pos is None:
         return {
