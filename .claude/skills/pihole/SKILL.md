@@ -90,6 +90,11 @@ pihole_api.py unallow example.com         # Remove from allowlist
 pihole_api.py recent-queries              # Recent DNS queries
 pihole_api.py recent-blocked              # Recently blocked queries
 pihole_api.py query example.com           # Check if domain is blocked
+
+# System & Listen (v6 only)
+pihole_api.py info                        # Pi-hole Version und System-Info
+pihole_api.py lists                       # Alle Block-/Allow-Listen anzeigen
+pihole_api.py gravity-update              # Gravity-Datenbank aktualisieren
 ```
 
 ## Workflows

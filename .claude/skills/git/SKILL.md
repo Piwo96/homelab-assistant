@@ -62,9 +62,59 @@ git_api.py commit --message "fix(agent): handle timeout"
 # Pushen
 git_api.py push
 
+# Pullen
+git_api.py pull
+
 # Alles in einem Schritt
 git_api.py commit-and-push
 git_api.py commit-and-push --message "feat(skill): add new feature"
+
+# Commit-Verlauf
+git_api.py log
+git_api.py log --count 10
+```
+
+## Branch Management
+
+```bash
+# Aktuellen Branch anzeigen
+git_api.py branch
+
+# Neuen Branch erstellen und wechseln
+git_api.py create-branch feature/new-feature
+
+# Zu Branch wechseln
+git_api.py checkout main
+
+# Branch mergen
+git_api.py merge feature/new-feature
+
+# Lokalen Branch löschen
+git_api.py delete-branch feature/old-feature
+
+# Remote Branch löschen
+git_api.py delete-remote-branch feature/old-feature
+```
+
+## GitHub Pull Request Operations
+
+Erfordert GitHub CLI (`gh`) Installation und Authentifizierung.
+
+```bash
+# Pull Request erstellen
+git_api.py create-pr --title "Add new feature" --body "Description" --base main
+
+# PR-Informationen abrufen
+git_api.py pr-info 123
+
+# PR mergen
+git_api.py merge-pr 123
+
+# PR schließen (ohne merge)
+git_api.py close-pr 123
+
+# Vergleichs-URL generieren
+git_api.py compare-url main feature/new-feature
 ```
 
 ## Conventional Commits Format
@@ -85,6 +135,10 @@ Types:
 
 Scope: Betroffene Komponente (z.B. agent, homeassistant, pihole)
 ```
+
+## Commit Author
+
+Commits werden unter dem Hauptaccount erstellt (konfiguriert via `GIT_AUTHOR_NAME` und `GIT_AUTHOR_EMAIL` in `.env`). Es wird **kein Co-Authored-By Header** verwendet - alle Commits erscheinen direkt unter dem konfigurierten Author.
 
 ## Auto-Message Generation
 

@@ -92,8 +92,16 @@ network_api.py provision <mac>            # Force re-provision
 
 # Configuration
 network_api.py networks                   # List networks/VLANs
+network_api.py wifis                      # List WiFi networks/SSIDs
 network_api.py port-forwards              # List port forwarding rules
 network_api.py firewall-rules             # List firewall rules
+
+# Statistics & System
+network_api.py sysinfo                    # System-Informationen abrufen
+network_api.py dpi-stats                  # Deep Packet Inspection Statistiken
+
+# Device Adoption
+network_api.py adopt <mac>                # Gerät adoptieren
 ```
 
 ## Workflows

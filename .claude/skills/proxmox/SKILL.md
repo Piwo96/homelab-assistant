@@ -99,6 +99,9 @@ proxmox_api.py storage <node>             # List storage
 proxmox_api.py add-mount <node> <vmid> --mp 0 --source /mnt/pve/nas --target /data
 proxmox_api.py remove-mount <node> <vmid> --mp 0
 
+# Container-Konfiguration ändern
+proxmox_api.py update-lxc-config <node> <vmid> --config '{"memory": 2048}'
+
 # Snapshots
 proxmox_api.py snapshots <node> <vmid>    # List snapshots
 proxmox_api.py snapshot <node> <vmid> --name backup-$(date +%Y%m%d)

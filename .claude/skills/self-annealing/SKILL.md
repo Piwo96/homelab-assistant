@@ -126,6 +126,18 @@ annealing_api.py anneal "fix(homeassistant): add retry logic for timeouts"
 # View error history
 annealing_api.py list-errors
 annealing_api.py list-errors --unresolved
+
+# Gelernte Patterns anzeigen
+annealing_api.py list-patterns
+
+# Pattern aus gelöstem Error extrahieren
+annealing_api.py learn <error_id> --skill homeassistant
+
+# Troubleshooting-Datei eines Skills aktualisieren
+annealing_api.py add-troubleshooting <skill-name> "Problem" "Solution"
+
+# Vollständiger Self-Annealing Zyklus (Error → Resolution → Skill Update → Commit)
+annealing_api.py full-cycle "Timeout" "API failed" "Added retry" --skill homeassistant
 ```
 
 ## Workflows

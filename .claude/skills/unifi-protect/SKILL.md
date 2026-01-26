@@ -97,6 +97,9 @@ protect_api.py detections --camera Einfahrt --type plate  # Combined filters
 protect_api.py lights                     # List smart lights
 protect_api.py light-on <id>              # Turn light on
 protect_api.py light-off <id>             # Turn light off
+
+# Kamera-Einstellungen ändern
+protect_api.py update-camera <id> --settings '{"recordingSettings": {"mode": "always"}}'
 ```
 
 ## Workflows

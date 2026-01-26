@@ -109,6 +109,46 @@ homeassistant_api.py run-script script.morning_routine
 homeassistant_api.py run-script script.lock_all_doors
 ```
 
+## Advanced API Operations
+
+```bash
+# System & Diagnose
+homeassistant_api.py components              # Geladene Komponenten auflisten
+
+# Alle verfügbaren Services auflisten
+homeassistant_api.py services
+
+# Entity-Status direkt setzen (für virtuelle Sensoren)
+homeassistant_api.py set-state <entity_id> <state> --attributes '{"key": "value"}'
+
+# Events auslösen
+homeassistant_api.py fire-event <event_type> --data '{"key": "value"}'
+
+# Templates rendern (Jinja2)
+homeassistant_api.py render-template "{{ states('sensor.temperature') }}"
+
+# Entity umschalten (toggle)
+homeassistant_api.py toggle switch.desk_lamp
+homeassistant_api.py toggle light.living_room
+```
+
+## Dashboard API (Lovelace)
+
+Separate API für Dashboard-Verwaltung via WebSocket (`scripts/dashboard_api.py`).
+
+```bash
+# Dashboard auflisten
+dashboard_api.py list
+
+# Dashboard-Konfiguration abrufen
+dashboard_api.py get
+dashboard_api.py get --dashboard my-dashboard -o dashboard.json
+
+# Dashboard-Konfiguration speichern
+dashboard_api.py set dashboard.yaml
+dashboard_api.py set dashboard.json --dashboard my-dashboard
+```
+
 ## Workflows
 
 ### Morning Routine
