@@ -20,7 +20,7 @@ from .telegram_handler import (
 )
 from .intent_classifier import classify_intent
 from .skill_executor import execute_skill
-from .skill_creator import request_skill_creation, handle_approval
+from .skill_creator import handle_approval  # request_skill_creation available if needed
 from .error_approval import handle_error_fix_approval, is_error_request
 from .tool_registry import get_registry, reload_registry
 from .wol import wake_gaming_pc
@@ -345,9 +345,9 @@ async def process_natural_language(
         await send_message(chat_id, f"❌ {error_msg}", settings)
         return
 
-    # Handle unknown intents - either conversational or skill creation request
+    # Handle unknown intents - general conversation
     if intent.skill == "unknown":
-        # If model gave a text response, check if it's a good response
+        # If model gave a text response, use it (general chat)
         if intent.description and len(intent.description) > 10:
             # Filter out bad responses that mention internal concepts
             bad_keywords = [
@@ -359,59 +359,44 @@ async def process_natural_language(
             response_lower = intent.description.lower()
             is_bad_response = any(kw in response_lower for kw in bad_keywords)
 
-            if not is_bad_response:
-                await remove_status()
-                await send_message(chat_id, intent.description, settings)
-                add_message(chat_id, "user", text)
-                add_message(chat_id, "assistant", intent.description)
-                save_conversation_to_db(
-                    chat_id=chat_id,
-                    user_message=text,
-                    assistant_response=intent.description,
-                    user_id=user.id,
-                    intent_skill="unknown",
-                    intent_confidence=intent.confidence,
-                )
-                return
+            response_text = intent.description
+            if is_bad_response:
+                logger.warning(f"Filtered bad LLM response: {intent.description[:100]}...")
+                response_text = "Das kann ich leider nicht beantworten. Kann ich dir bei etwas anderem helfen?"
 
-            # Bad response detected - give a helpful fallback
-            logger.warning(f"Filtered bad LLM response: {intent.description[:100]}...")
-            fallback_response = (
-                "🤔 Das habe ich nicht ganz verstanden.\n\n"
-                "Ich kann dir helfen bei:\n"
-                "• **Server/VMs**: \"Welche Server laufen?\"\n"
-                "• **Kameras**: \"Zeige Kameras\"\n"
-                "• **Smart Home**: \"Mach Licht an\"\n"
-                "• **Pi-hole**: \"DNS Status\"\n\n"
-                "Was möchtest du wissen?"
-            )
             await remove_status()
-            await send_message(chat_id, fallback_response, settings)
+            await send_message(chat_id, response_text, settings)
             add_message(chat_id, "user", text)
-            add_message(chat_id, "assistant", fallback_response)
-            # Save bad response for analysis (original response, not fallback)
+            add_message(chat_id, "assistant", response_text)
             save_conversation_to_db(
                 chat_id=chat_id,
                 user_message=text,
-                assistant_response=intent.description,  # Original bad response
+                assistant_response=response_text,
                 user_id=user.id,
-                intent_skill="unknown",
+                intent_skill="conversational",
                 intent_confidence=intent.confidence,
-                success=False,
-                error_message="Bad response filtered",
+                success=not is_bad_response,
+                error_message="Bad response filtered" if is_bad_response else None,
             )
             return
 
-        # Otherwise, request skill creation for missing capability
-        response = await request_skill_creation(
-            user_request=text,
-            requester_name=user.display_name,
-            requester_id=user.id,
-            chat_id=chat_id,
-            settings=settings,
-        )
+        # No response from LLM - give a simple fallback (NOT skill creation!)
+        # Skill creation only happens via explicit admin request
+        fallback_response = "Hmm, da bin ich mir nicht sicher. Kannst du das anders formulieren?"
         await remove_status()
-        await send_message(chat_id, response, settings)
+        await send_message(chat_id, fallback_response, settings)
+        add_message(chat_id, "user", text)
+        add_message(chat_id, "assistant", fallback_response)
+        save_conversation_to_db(
+            chat_id=chat_id,
+            user_message=text,
+            assistant_response=fallback_response,
+            user_id=user.id,
+            intent_skill="unknown",
+            intent_confidence=0.0,
+            success=False,
+            error_message="No LLM response",
+        )
         return
 
     # Execute known skill (with user_id for permission checks)
