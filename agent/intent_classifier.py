@@ -176,7 +176,8 @@ async def classify_intent(
             description="LM Studio Timeout - Anfrage dauerte zu lange",
         )
     except httpx.HTTPStatusError as e:
-        logger.error(f"LM Studio HTTP error: {e.response.status_code}")
+        error_body = e.response.text[:500] if e.response.text else "no body"
+        logger.error(f"LM Studio HTTP error: {e.response.status_code} - {error_body}")
         return IntentResult(
             skill="error",
             action="http_error",
