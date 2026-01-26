@@ -279,7 +279,7 @@ async def main():
         current_config = await api.get_config(args.dashboard)
         
         # Optimize configuration
-        optimized_config, changes = optimize_dashboard_config(current_config)
+        optimized_config, changes = await optimize_dashboard_config(current_config)
         
         if not changes:
             print("Dashboard is already optimized!")
