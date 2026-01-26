@@ -188,7 +188,7 @@ def _parse_examples(response: str) -> list[dict]:
         except json.JSONDecodeError:
             pass
 
-    logger.warning("Failed to parse examples as JSON")
+    logger.warning(f"Failed to parse examples as JSON. Response (first 500 chars): {response[:500]}")
     return []
 
 
