@@ -208,7 +208,7 @@ async def handle_conversational_followup(
                     "model": settings.lm_studio_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,
-                    "max_tokens": 1000,
+                    "max_tokens": 2000,  # Thinking models need more tokens
                 },
             )
 

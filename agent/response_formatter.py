@@ -74,7 +74,7 @@ async def format_response(
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.5,  # Slightly higher for local LLMs
-                    "max_tokens": 500,  # Shorter responses expected
+                    "max_tokens": 2000,  # Thinking models need more tokens for reasoning + response
                 },
             )
 
