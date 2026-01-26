@@ -137,6 +137,7 @@ class ToolRegistry:
         skills_path: Path,
         lm_studio_url: str,
         lm_studio_model: str,
+        settings=None,
     ) -> None:
         """Ensure all skills have keywords and examples.
 
@@ -147,28 +148,41 @@ class ToolRegistry:
             skills_path: Skills directory
             lm_studio_url: LM Studio API URL
             lm_studio_model: Model name to use
+            settings: Optional Settings for Wake-on-LAN support
         """
         from .skill_loader import ensure_skill_metadata, get_skill_path
 
-        generated_count = 0
-        for skill_name, skill in self.skills.items():
-            # Check if skill needs metadata generation
-            needs_keywords = not skill.keywords
-            needs_examples = not skill.examples
+        # Check which skills need generation
+        skills_needing_metadata = [
+            (name, skill) for name, skill in self.skills.items()
+            if not skill.keywords or not skill.examples
+        ]
 
-            if needs_keywords or needs_examples:
-                skill_path = get_skill_path(skill_name, skills_path)
-                if skill_path:
-                    try:
-                        updated = await ensure_skill_metadata(
-                            skill, skill_path, lm_studio_url, lm_studio_model
-                        )
-                        self.skills[skill_name] = updated
-                        # Update homelab keywords set
-                        self.homelab_keywords.update(updated.keywords)
-                        generated_count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to generate metadata for {skill_name}: {e}")
+        if not skills_needing_metadata:
+            logger.debug("All skills already have metadata")
+            return
+
+        # Ensure LM Studio is available (wake Gaming PC if needed)
+        if settings:
+            from .wol import ensure_lm_studio_available
+            if not await ensure_lm_studio_available(settings):
+                logger.warning("LM Studio not available, skipping metadata generation")
+                return
+
+        generated_count = 0
+        for skill_name, skill in skills_needing_metadata:
+            skill_path = get_skill_path(skill_name, skills_path)
+            if skill_path:
+                try:
+                    updated = await ensure_skill_metadata(
+                        skill, skill_path, lm_studio_url, lm_studio_model
+                    )
+                    self.skills[skill_name] = updated
+                    # Update homelab keywords set
+                    self.homelab_keywords.update(updated.keywords)
+                    generated_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to generate metadata for {skill_name}: {e}")
 
         if generated_count > 0:
             # Regenerate tool definitions with new examples
@@ -247,11 +261,12 @@ async def reload_registry_async(settings) -> ToolRegistry:
     skills_path = settings.project_root / ".claude" / "skills"
     _registry.load_skills(skills_path)
 
-    # Auto-generate missing keywords/examples
+    # Auto-generate missing keywords/examples (with WoL support)
     await _registry.ensure_skill_metadata_all(
         skills_path,
         settings.lm_studio_url,
         settings.lm_studio_model,
+        settings=settings,
     )
 
     return _registry

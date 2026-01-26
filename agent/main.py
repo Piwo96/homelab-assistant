@@ -150,6 +150,7 @@ async def lifespan(app: FastAPI):
                 skills_path,
                 settings.lm_studio_url,
                 settings.lm_studio_model,
+                settings=settings,
             )
         except Exception as e:
             logger.warning(f"Background metadata generation failed: {e}")

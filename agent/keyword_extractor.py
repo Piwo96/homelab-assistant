@@ -90,8 +90,14 @@ async def extract_keywords_from_skill(
                 logger.warning(f"LM Studio error: {response.status_code}")
                 return []
 
+    except httpx.TimeoutException:
+        logger.warning(f"Timeout extracting keywords for {skill_path.name} (LM Studio not responding)")
+        return []
+    except httpx.ConnectError:
+        logger.warning(f"Connection error extracting keywords for {skill_path.name} (LM Studio not reachable)")
+        return []
     except Exception as e:
-        logger.warning(f"Error extracting keywords: {e}")
+        logger.warning(f"Error extracting keywords for {skill_path.name}: {type(e).__name__}: {e}")
         return []
 
 

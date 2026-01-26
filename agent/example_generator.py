@@ -111,8 +111,14 @@ async def extract_examples_from_skill(
                 logger.warning(f"LM Studio error: {response.status_code}")
                 return []
 
+    except httpx.TimeoutException:
+        logger.warning(f"Timeout generating examples for {skill_path.name} (LM Studio not responding)")
+        return []
+    except httpx.ConnectError:
+        logger.warning(f"Connection error generating examples for {skill_path.name} (LM Studio not reachable)")
+        return []
     except Exception as e:
-        logger.warning(f"Error generating examples: {e}")
+        logger.warning(f"Error generating examples for {skill_path.name}: {type(e).__name__}: {e}")
         return []
 
 
