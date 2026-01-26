@@ -518,7 +518,11 @@ async def process_natural_language(
         await remove_status()
         await send_message(chat_id, response_msg, settings)
     else:
-        response_msg = f"❌ {result.error}"
+        # Show technical details to admin, friendly message to regular users
+        if user.id == settings.admin_telegram_id:
+            response_msg = f"❌ {result.error}"
+        else:
+            response_msg = f"Ups, da ist etwas schief gelaufen. 🙈 {settings.admin_name} wird informiert!"
         await remove_status()
         await send_message(chat_id, response_msg, settings)
 

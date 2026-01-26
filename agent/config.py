@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Use str type to prevent automatic JSON parsing, validator converts to list
     telegram_allowed_users: Union[str, List[int]] = []
     admin_telegram_id: int
+    admin_name: str = "der Admin"  # Friendly name shown to users in error messages
 
     # LM Studio (local LLM) - must be set in .env
     lm_studio_url: str
