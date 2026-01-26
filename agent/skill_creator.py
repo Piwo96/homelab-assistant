@@ -650,7 +650,9 @@ Du MUSST deine Antwort als JSON zurückgeben. Das Format hängt von der Aktion a
 
 ## EDIT-REGELN FÜR "extend":
 
-Es gibt DREI Edit-Modi. Bevorzuge **insert_before** für neue Funktionen!
+⚠️ **WICHTIG: old_string/new_string ist bei extend VERBOTEN!**
+Verwende IMMER marker + insert_before ODER marker + insert.
+Das System wird old_string automatisch ablehnen!
 
 ### MODUS 1: insert_before (BEVORZUGT für neue Funktionen/Methoden)
 Finde eine Marker-Zeile und füge Code DAVOR ein. Ideal für neue Methoden vor main().
@@ -677,21 +679,6 @@ Finde eine Marker-Zeile und füge Code DANACH ein. Gut für argparse Commands.
       "path": "skill-name/scripts/skill_api.py",
       "marker": "subparsers.add_parser(\"list\"",
       "insert": "\\n\\n    # New command\\n    new_cmd = subparsers.add_parser(\"newcmd\", help=\"New command\")\\n"
-    }}
-  ]
-}}
-```
-
-### MODUS 3: old_string/new_string (nur für kleine Änderungen)
-Nur verwenden wenn du bestehenden Code ÄNDERN musst (z.B. einen String ändern).
-
-```json
-{{
-  "edits": [
-    {{
-      "path": "skill-name/scripts/skill_api.py",
-      "old_string": "help=\"List all items\"",
-      "new_string": "help=\"List all items with details\""
     }}
   ]
 }}
@@ -864,6 +851,39 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
                 logger.error("Missing edits for extend action")
                 return {"success": False, "error": "Missing edits for extend action"}
         else:
+            # Validate edit format - reject old_string for extend (Claude often gets it wrong)
+            for i, edit in enumerate(edits):
+                if "old_string" in edit and "marker" not in edit:
+                    # Log what Claude generated for debugging
+                    logger.warning(f"Edit {i} uses old_string instead of marker/insert_before")
+                    logger.warning(f"Edit content: {json.dumps(edit, indent=2)[:500]}")
+
+                    # Try to auto-convert: use first line of old_string as marker
+                    old_str = edit.get("old_string", "")
+                    new_str = edit.get("new_string", "")
+                    first_line = old_str.split('\n')[0].strip() if old_str else ""
+
+                    if first_line and new_str.startswith(old_str):
+                        # This looks like an append - convert to insert_after
+                        added_content = new_str[len(old_str):]
+                        edit.pop("old_string", None)
+                        edit.pop("new_string", None)
+                        edit["marker"] = first_line
+                        edit["insert"] = added_content
+                        logger.info(f"Auto-converted edit {i} to insert_after with marker: {first_line[:50]}")
+                    else:
+                        # Can't auto-convert - log detailed error
+                        logger.error(
+                            f"Edit {i} uses old_string but couldn't auto-convert. "
+                            f"old_string first line: '{first_line[:100]}'"
+                        )
+                        return {
+                            "success": False,
+                            "error": f"Claude used old_string instead of marker/insert_before. "
+                                     f"First line: '{first_line[:50]}...'. "
+                                     f"Please try again with a more specific request."
+                        }
+
             # Apply edits using the new system
             result = apply_changes({"edits": edits}, skills_base)
 
