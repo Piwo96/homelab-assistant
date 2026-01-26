@@ -14,7 +14,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-EXTRACT_PROMPT = """Analysiere diese Skill-Dokumentation und extrahiere relevante Keywords.
+EXTRACT_PROMPT = """/no_think
+Analysiere diese Skill-Dokumentation und extrahiere relevante Keywords.
 
 ## Skill-Dokumentation
 {skill_content}

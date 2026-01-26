@@ -14,7 +14,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-GENERATE_PROMPT = """Analysiere diese Skill-Dokumentation und generiere Beispielphrasen.
+GENERATE_PROMPT = """/no_think
+Analysiere diese Skill-Dokumentation und generiere Beispielphrasen.
 
 ## Skill-Dokumentation
 {skill_content}
