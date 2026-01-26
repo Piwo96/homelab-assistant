@@ -6,6 +6,7 @@ for homelab-related message detection.
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -80,7 +81,36 @@ async def extract_keywords_from_skill(
 
             if response.status_code == 200:
                 data = response.json()
-                result = data["choices"][0]["message"]["content"].strip()
+                message = data["choices"][0]["message"]
+
+                # Get content field (standard response)
+                raw_content = (message.get("content") or "").strip()
+
+                # For thinking models: also check reasoning_content
+                reasoning_content = (message.get("reasoning_content") or "").strip()
+
+                # Log what we received
+                logger.debug(
+                    f"LM response for {skill_path.name}: "
+                    f"content={len(raw_content)} chars, "
+                    f"reasoning={len(reasoning_content)} chars"
+                )
+
+                # Strip thinking tags from content if present
+                result = _strip_thinking_tags(raw_content) if raw_content else ""
+
+                # If content empty, try to extract JSON array from reasoning_content
+                if not result and reasoning_content:
+                    logger.debug(f"Content empty, checking reasoning_content for JSON array")
+                    result = _extract_array_from_reasoning(reasoning_content)
+
+                if not result:
+                    logger.warning(
+                        f"No usable response for {skill_path.name}. "
+                        f"Content: '{raw_content[:200]}', "
+                        f"Reasoning tail: '{reasoning_content[-300:] if reasoning_content else 'N/A'}'"
+                    )
+                    return []
 
                 # Parse JSON array from response
                 keywords = _parse_keywords(result)
@@ -110,9 +140,6 @@ def _parse_keywords(response: str) -> list[str]:
     Returns:
         List of keywords
     """
-    # Try to find JSON array in response
-    import re
-
     # Look for array pattern
     match = re.search(r'\[.*?\]', response, re.DOTALL)
     if match:
@@ -126,6 +153,39 @@ def _parse_keywords(response: str) -> list[str]:
     # Fallback: split by comma if no valid JSON
     logger.warning("Failed to parse keywords as JSON, using fallback")
     return []
+
+
+def _strip_thinking_tags(text: str) -> str:
+    """Remove <think>...</think> tags from thinking model output.
+
+    Args:
+        text: Raw model output that may contain thinking tags
+
+    Returns:
+        Text with thinking sections removed
+    """
+    # Remove <think>...</think> blocks (including multiline)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Also handle unclosed think tags (model cut off mid-thinking)
+    text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
+def _extract_array_from_reasoning(reasoning: str) -> str:
+    """Extract JSON array from reasoning_content of thinking models.
+
+    Args:
+        reasoning: The reasoning_content from the model
+
+    Returns:
+        Extracted JSON array string or empty string
+    """
+    # Look for JSON array in the last part of reasoning (final answer)
+    tail = reasoning[-1500:] if len(reasoning) > 1500 else reasoning
+    match = re.search(r'\[[^\[\]]*\]', tail, re.DOTALL)
+    if match:
+        return match.group()
+    return ""
 
 
 def load_keywords(skill_path: Path) -> list[str]:

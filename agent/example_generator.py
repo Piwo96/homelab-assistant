@@ -101,13 +101,38 @@ async def extract_examples_from_skill(
 
             if response.status_code == 200:
                 data = response.json()
-                raw_result = data["choices"][0]["message"]["content"].strip()
-                # Log raw response for debugging
-                logger.debug(f"Raw LM response for {skill_path.name}: {raw_result[:500]}")
-                # Strip thinking tags from thinking models
-                result = _strip_thinking_tags(raw_result)
+                message = data["choices"][0]["message"]
+
+                # Get content field (standard response)
+                raw_content = (message.get("content") or "").strip()
+
+                # For thinking models: also check reasoning_content
+                reasoning_content = (message.get("reasoning_content") or "").strip()
+
+                # Log what we received
+                logger.debug(
+                    f"LM response for {skill_path.name}: "
+                    f"content={len(raw_content)} chars, "
+                    f"reasoning={len(reasoning_content)} chars"
+                )
+
+                # Try content first (strip thinking tags if present)
+                result = _strip_thinking_tags(raw_content) if raw_content else ""
+
+                # If content empty, try to extract JSON from reasoning_content
+                if not result and reasoning_content:
+                    logger.debug(f"Content empty, checking reasoning_content for JSON")
+                    # Look for JSON object at the end of reasoning
+                    result = _extract_json_from_reasoning(reasoning_content)
+
                 if not result:
-                    logger.warning(f"Response empty after stripping think tags. Raw: {raw_result[:300]}")
+                    logger.warning(
+                        f"No usable response for {skill_path.name}. "
+                        f"Content: '{raw_content[:200]}', "
+                        f"Reasoning tail: '{reasoning_content[-300:] if reasoning_content else 'N/A'}'"
+                    )
+                    return []
+
                 examples = _parse_examples(result)
                 logger.info(f"Generated {len(examples)} examples for {skill_path.name}")
                 return examples
@@ -140,6 +165,32 @@ def _strip_thinking_tags(text: str) -> str:
     # Also handle unclosed think tags (model cut off mid-thinking)
     text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
     return text.strip()
+
+
+def _extract_json_from_reasoning(reasoning: str) -> str:
+    """Extract JSON from reasoning_content of thinking models.
+
+    Some thinking models output the final answer within their reasoning
+    process rather than in the content field.
+
+    Args:
+        reasoning: The reasoning_content from the model
+
+    Returns:
+        Extracted JSON string or empty string
+    """
+    # Look for JSON object with "examples" key
+    match = re.search(r'\{[^{}]*"examples"[^{}]*\[[\s\S]*?\]\s*\}', reasoning)
+    if match:
+        return match.group()
+
+    # Look for any JSON object near the end (last 1000 chars)
+    tail = reasoning[-1500:] if len(reasoning) > 1500 else reasoning
+    match = re.search(r'\{[\s\S]*"examples"[\s\S]*\}', tail)
+    if match:
+        return match.group()
+
+    return ""
 
 
 def _parse_examples(response: str) -> list[dict]:
