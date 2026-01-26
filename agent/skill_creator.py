@@ -1048,9 +1048,9 @@ def load_skill_context(settings: Settings) -> str:
         if skill_md.exists():
             try:
                 content = skill_md.read_text()
-                # Truncate if very long, but include more than before
-                if len(content) > 2000:
-                    content = content[:2000] + "\n... (truncated)"
+                # Only truncate extremely long files
+                if len(content) > 15000:
+                    content = content[:15000] + "\n... (truncated)"
                 parts.append(f"SKILL.md:\n```markdown\n{content}\n```")
             except Exception:
                 pass
@@ -1060,9 +1060,10 @@ def load_skill_context(settings: Settings) -> str:
             for script in scripts_dir.glob("*.py"):
                 try:
                     script_content = script.read_text()
-                    # Include full script to prevent Claude from rewriting
-                    if len(script_content) > 5000:
-                        script_content = script_content[:5000] + "\n# ... (truncated, but preserve all existing code!)"
+                    # Only truncate extremely long files (50KB+)
+                    # Claude needs full code to choose correct markers for edits
+                    if len(script_content) > 50000:
+                        script_content = script_content[:50000] + "\n# ... (truncated, but preserve all existing code!)"
                     parts.append(f"\n{script.name}:\n```python\n{script_content}\n```")
                 except Exception:
                     pass
