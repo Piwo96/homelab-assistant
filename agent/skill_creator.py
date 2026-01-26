@@ -967,11 +967,12 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
                 ])
             logger.info(f"Extracted {len(commands)} commands from {skill_name} scripts")
 
-        # DIRECT INJECTION: Add explicit examples for new commands
+        # DIRECT INJECTION: Add keywords and examples for new commands
         # This ensures commands work immediately without relying on LM Studio
         if commands:
+            _inject_command_keywords(skill_path, skill_name, commands)
             _inject_command_examples(skill_path, commands)
-            logger.info(f"Injected direct examples for commands in {skill_name}")
+            logger.info(f"Injected direct keywords and examples for commands in {skill_name}")
 
         # Generate keywords (async)
         # For extend actions, force regeneration to include new commands
@@ -1038,6 +1039,104 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
         "summary": data.get("summary", "Skill erstellt"),
         "files": files_written,
     }
+
+
+def _inject_command_keywords(skill_path: Path, skill_name: str, commands: list[dict]) -> None:
+    """Directly inject keywords for commands that don't have any.
+
+    This ensures new commands are discoverable without relying on LM Studio.
+    Extracts keywords from command names, descriptions, and common patterns.
+
+    Args:
+        skill_path: Path to the skill directory
+        skill_name: Name of the skill
+        commands: List of command dicts with 'name' and 'description'
+    """
+    from .keyword_extractor import load_keywords, save_keywords
+
+    if not commands:
+        return
+
+    # Load existing keywords
+    existing = set(load_keywords(skill_path))
+
+    # Extract keywords from commands
+    new_keywords = set()
+
+    # Add skill name variations
+    new_keywords.add(skill_name.lower())
+    new_keywords.add(skill_name.lower().replace("-", " "))
+    new_keywords.add(skill_name.lower().replace("_", " "))
+
+    for cmd in commands:
+        cmd_name = cmd.get("name", "").lower()
+        description = cmd.get("description", "").lower()
+
+        # Add command name as keyword
+        if cmd_name:
+            new_keywords.add(cmd_name)
+            # Also add variations (e.g., "turn-on" -> "turn on", "einschalten")
+            new_keywords.add(cmd_name.replace("-", " "))
+
+        # Extract words from description
+        if description:
+            # Split into words, filter short/common ones
+            words = description.split()
+            for word in words:
+                word = word.strip(".,!?()[]{}\"'")
+                if len(word) > 3 and word not in COMMON_WORDS:
+                    new_keywords.add(word)
+
+    # German translations for common commands
+    german_keywords = {
+        "list": ["liste", "auflisten", "zeigen", "anzeigen"],
+        "get": ["holen", "zeigen", "anzeigen"],
+        "status": ["status", "zustand"],
+        "start": ["starten", "anmachen", "einschalten"],
+        "stop": ["stoppen", "ausmachen", "ausschalten", "beenden"],
+        "restart": ["neustarten", "restart"],
+        "create": ["erstellen", "anlegen", "neu"],
+        "delete": ["löschen", "entfernen"],
+        "update": ["aktualisieren", "updaten"],
+        "backup": ["backup", "sichern", "sicherung"],
+        "optimize": ["optimieren", "verbessern", "optimierung"],
+        "enable": ["aktivieren", "einschalten"],
+        "disable": ["deaktivieren", "ausschalten"],
+        "turn-on": ["einschalten", "anmachen", "an"],
+        "turn-off": ["ausschalten", "ausmachen", "aus"],
+        "toggle": ["umschalten", "toggle", "wechseln"],
+        "dashboard": ["dashboard", "übersicht", "panel"],
+        "configuration": ["konfiguration", "config", "einstellungen"],
+    }
+
+    # Add German keywords for each command
+    for cmd in commands:
+        cmd_name = cmd.get("name", "").lower()
+        if cmd_name in german_keywords:
+            new_keywords.update(german_keywords[cmd_name])
+
+        # Also check description for known patterns
+        description = cmd.get("description", "").lower()
+        for pattern, keywords in german_keywords.items():
+            if pattern in description:
+                new_keywords.update(keywords)
+
+    # Merge with existing and save
+    if new_keywords - existing:
+        merged = sorted(existing | new_keywords)
+        save_keywords(skill_path, merged)
+        logger.info(f"Injected {len(new_keywords - existing)} new keywords for {skill_name}")
+
+
+# Common words to filter out when extracting keywords
+COMMON_WORDS = {
+    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were",
+    "has", "have", "had", "been", "will", "would", "could", "should",
+    "this", "that", "these", "those", "with", "from", "for", "all",
+    "der", "die", "das", "ein", "eine", "und", "oder", "aber", "ist",
+    "sind", "war", "waren", "hat", "haben", "wird", "werden", "kann",
+    "können", "soll", "sollen", "mit", "von", "für", "alle",
+}
 
 
 def _inject_command_examples(skill_path: Path, commands: list[dict]) -> None:
