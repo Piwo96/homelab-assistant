@@ -32,19 +32,22 @@ Generiere 3-5 Beispielphrasen pro Command/Action die ein deutschsprachiger User 
 - Variationen: Fragen, Imperative, informelle Sprache
 - Fuer actions mit Parametern: mindestens 1 Beispiel MIT args (entity_id, name, vmid, etc.)
 - Keine generischen Phrasen die auf mehrere Skills passen
+- Die Beispiele MUESSEN zum Skill passen (z.B. Kamera-Skill = Kamera-Phrasen, nicht VM-Phrasen)
 
-**Format (NUR JSON, keine Erklaerung):**
+**JSON-Format:**
 ```json
 {{
   "examples": [
-    {{"phrase": "Zeig mir alle VMs", "action": "overview"}},
-    {{"phrase": "Starte VM 100", "action": "start", "args": {{"vmid": 100}}}},
-    {{"phrase": "Wie viel RAM hat der Server?", "action": "status"}}
+    {{"phrase": "<DEINE_PHRASE_HIER>", "action": "<COMMAND_NAME>"}},
+    {{"phrase": "<PHRASE_MIT_PARAMETER>", "action": "<COMMAND>", "args": {{"<PARAM>": "<WERT>"}}}}
   ]
 }}
 ```
 
-WICHTIG: Antworte DIREKT mit dem JSON-Objekt. Keine Erklärungen, keine Bullet Points, kein Markdown - NUR das JSON."""
+KRITISCH:
+- Ersetze die Platzhalter (<DEINE_PHRASE_HIER> etc.) mit ECHTEN Phrasen fuer DIESEN Skill
+- Die Phrasen muessen zu den Commands in der Skill-Dokumentation passen
+- Antworte NUR mit dem JSON-Objekt, keine Erklaerungen"""
 
 
 async def extract_examples_from_skill(
