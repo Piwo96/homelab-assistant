@@ -174,6 +174,55 @@ def load_dashboard_file(filepath: str) -> dict:
         return json.loads(content)
 
 
+async def optimize_dashboard_config(config: dict) -> dict:
+    """Optimize dashboard configuration for better performance and UX."""
+    optimized = config.copy()
+    changes = []
+    
+    # Remove unused views
+    if 'views' in optimized:
+        original_count = len(optimized['views'])
+        optimized['views'] = [v for v in optimized['views'] if v.get('cards')]
+        if len(optimized['views']) < original_count:
+            changes.append(f"Removed {original_count - len(optimized['views'])} empty views")
+    
+    # Optimize card configurations
+    for view in optimized.get('views', []):
+        for card in view.get('cards', []):
+            # Set reasonable update intervals
+            if card.get('type') == 'entities':
+                if 'refresh_interval' not in card:
+                    card['refresh_interval'] = 30
+                    changes.append("Added refresh intervals to entity cards")
+            
+            # Optimize graph cards
+            if card.get('type') == 'history-graph':
+                if 'hours_to_show' not in card:
+                    card['hours_to_show'] = 24
+                    changes.append("Set default hours_to_show for graph cards")
+    
+    # Add mobile-friendly settings
+    if 'title' in optimized and 'mobile_title' not in optimized:
+        optimized['mobile_title'] = optimized['title'][:20]
+        changes.append("Added mobile-friendly title")
+    
+    return optimized, changes
+
+
+async def backup_dashboard(api, dashboard_path: str = None) -> str:
+    """Create a backup of the current dashboard configuration."""
+    config = await api.get_config(dashboard_path)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    dashboard_name = dashboard_path or "main"
+    backup_filename = f"dashboard_backup_{dashboard_name}_{timestamp}.json"
+    
+    with open(backup_filename, 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    return backup_filename
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Home Assistant Dashboard API")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -191,6 +240,12 @@ async def main():
     # List dashboards
     subparsers.add_parser("list", help="List all dashboards")
 
+
+    # Optimize dashboard
+    optimize_cmd = subparsers.add_parser("optimize", help="Optimize dashboard configuration")
+    optimize_cmd.add_argument("--dashboard", "-d", help="Dashboard URL path (default: main dashboard)")
+    optimize_cmd.add_argument("--backup", action="store_true", help="Create backup before optimization")
+    optimize_cmd.add_argument("--dry-run", action="store_true", help="Show what would be optimized without applying changes")
     args = parser.parse_args()
 
     if not args.command:
@@ -213,6 +268,37 @@ async def main():
         config = load_dashboard_file(args.file)
         await api.save_config(config, args.dashboard)
         print(f"Dashboard updated successfully!")
+
+    elif args.command == "optimize":
+        # Create backup if requested
+        if args.backup:
+            backup_file = await backup_dashboard(api, args.dashboard)
+            print(f"Backup created: {backup_file}")
+        
+        # Get current config
+        current_config = await api.get_config(args.dashboard)
+        
+        # Optimize configuration
+        optimized_config, changes = optimize_dashboard_config(current_config)
+        
+        if not changes:
+            print("Dashboard is already optimized!")
+            return
+        
+        print(f"Dashboard optimization - {len(changes)} improvements found:")
+        for change in changes:
+            print(f"  ✓ {change}")
+        
+        if args.dry_run:
+            print("\n(Dry run - no changes applied)")
+            return
+        
+        # Apply optimizations
+        await api.save_config(optimized_config, args.dashboard)
+        print(f"\nDashboard optimized successfully!")
+        
+        if args.backup:
+            print(f"Original configuration backed up to: {backup_file}")
 
     elif args.command == "list":
         dashboards = await api.get_dashboards()

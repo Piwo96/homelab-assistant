@@ -147,7 +147,13 @@ dashboard_api.py get --dashboard my-dashboard -o dashboard.json
 # Dashboard-Konfiguration speichern
 dashboard_api.py set dashboard.yaml
 dashboard_api.py set dashboard.json --dashboard my-dashboard
-```
+
+
+# Dashboard-Optimierung optimieren
+dashboard_api.py optimize                     # Haupt-Dashboard optimieren
+dashboard_api.py optimize --dashboard my-dash # Spezifisches Dashboard optimieren
+dashboard_api.py optimize --backup            # Mit Backup vor Optimierung
+dashboard_api.py optimize --dry-run           # Zeige geplante Änderungen ohne Anwendung```
 
 ## Workflows
 

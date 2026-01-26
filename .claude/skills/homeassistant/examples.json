@@ -1,26 +1,175 @@
 {
   "examples": [
-    {"phrase": "Mach Licht an", "action": "turn-on"},
-    {"phrase": "Licht einschalten", "action": "turn-on"},
-    {"phrase": "Wohnzimmer Licht an", "action": "turn-on", "args": {"entity_id": "light.wohnzimmer"}},
-    {"phrase": "Lichter aus", "action": "turn-off"},
-    {"phrase": "Alles ausschalten", "action": "turn-off"},
-    {"phrase": "Welche Geräte gibt es?", "action": "entities"},
-    {"phrase": "Smart Home Geräte", "action": "entities"},
-    {"phrase": "Zeige alle Lichter", "action": "entities", "args": {"domain": "light"}},
-    {"phrase": "Home Assistant Status", "action": "status"},
-    {"phrase": "Ist HA online?", "action": "status"},
-    {"phrase": "Welche Szenen gibt es?", "action": "list-scenes"},
-    {"phrase": "Zeige Szenen", "action": "list-scenes"},
-    {"phrase": "Aktiviere Filmabend", "action": "activate-scene", "args": {"scene_id": "scene.filmabend"}},
-    {"phrase": "Starte Szene Gute Nacht", "action": "activate-scene", "args": {"scene_id": "scene.gute_nacht"}},
-    {"phrase": "Welche Automatisierungen?", "action": "list-automations"},
-    {"phrase": "Zeige Automationen", "action": "list-automations"},
-    {"phrase": "Schalte Lampe um", "action": "toggle"},
-    {"phrase": "Toggle Schreibtischlampe", "action": "toggle", "args": {"entity_id": "switch.schreibtischlampe"}},
-    {"phrase": "Führe Morgenroutine aus", "action": "run-script", "args": {"script_id": "script.morgenroutine"}},
-    {"phrase": "Zeige Scripts", "action": "list-scripts"},
-    {"phrase": "Welche Services gibt es?", "action": "services"}
+    {
+      "phrase": "Mach Licht an",
+      "action": "turn-on"
+    },
+    {
+      "phrase": "Licht einschalten",
+      "action": "turn-on"
+    },
+    {
+      "phrase": "Wohnzimmer Licht an",
+      "action": "turn-on",
+      "args": {
+        "entity_id": "light.wohnzimmer"
+      }
+    },
+    {
+      "phrase": "Lichter aus",
+      "action": "turn-off"
+    },
+    {
+      "phrase": "Alles ausschalten",
+      "action": "turn-off"
+    },
+    {
+      "phrase": "Welche Geräte gibt es?",
+      "action": "entities"
+    },
+    {
+      "phrase": "Smart Home Geräte",
+      "action": "entities"
+    },
+    {
+      "phrase": "Zeige alle Lichter",
+      "action": "entities",
+      "args": {
+        "domain": "light"
+      }
+    },
+    {
+      "phrase": "Home Assistant Status",
+      "action": "status"
+    },
+    {
+      "phrase": "Ist HA online?",
+      "action": "status"
+    },
+    {
+      "phrase": "Welche Szenen gibt es?",
+      "action": "list-scenes"
+    },
+    {
+      "phrase": "Zeige Szenen",
+      "action": "list-scenes"
+    },
+    {
+      "phrase": "Aktiviere Filmabend",
+      "action": "activate-scene",
+      "args": {
+        "scene_id": "scene.filmabend"
+      }
+    },
+    {
+      "phrase": "Starte Szene Gute Nacht",
+      "action": "activate-scene",
+      "args": {
+        "scene_id": "scene.gute_nacht"
+      }
+    },
+    {
+      "phrase": "Welche Automatisierungen?",
+      "action": "list-automations"
+    },
+    {
+      "phrase": "Zeige Automationen",
+      "action": "list-automations"
+    },
+    {
+      "phrase": "Schalte Lampe um",
+      "action": "toggle"
+    },
+    {
+      "phrase": "Toggle Schreibtischlampe",
+      "action": "toggle",
+      "args": {
+        "entity_id": "switch.schreibtischlampe"
+      }
+    },
+    {
+      "phrase": "Führe Morgenroutine aus",
+      "action": "run-script",
+      "args": {
+        "script_id": "script.morgenroutine"
+      }
+    },
+    {
+      "phrase": "Zeige Scripts",
+      "action": "list-scripts"
+    },
+    {
+      "phrase": "Welche Services gibt es?",
+      "action": "services"
+    },
+    {
+      "phrase": "Zeig mir den Status von Home Assistant",
+      "action": "status"
+    },
+    {
+      "phrase": "Was ist der aktuelle Zustand der Lampe im Wohnzimmer?",
+      "action": "get-state",
+      "args": {
+        "entity_id": "light.living_room"
+      }
+    },
+    {
+      "phrase": "Mach die Lampe im Wohnzimmer an und stelle die Helligkeit auf 150",
+      "action": "turn-on",
+      "args": {
+        "entity_id": "light.living_room",
+        "brightness": 150
+      }
+    },
+    {
+      "phrase": "Schalte den Kaffee-Stecker ein, bitte",
+      "action": "turn-on",
+      "args": {
+        "entity_id": "switch.coffee_maker"
+      }
+    },
+    {
+      "phrase": "Stelle die Lichter im Schlafzimmer aus",
+      "action": "turn-off",
+      "args": {
+        "entity_id": "light.bedroom"
+      }
+    },
+    {
+      "phrase": "Aktiviere die 'Filmabend'-Szene",
+      "action": "activate-scene",
+      "args": {
+        "scene": "scene.movie_time"
+      }
+    },
+    {
+      "phrase": "Mach die Heizung an, damit es nicht kalt wird",
+      "action": "turn-on",
+      "args": {
+        "entity_id": "switch.heater"
+      }
+    },
+    {
+      "phrase": "Lass die Nacht-Regel ausführen",
+      "action": "trigger",
+      "args": {
+        "automation": "automation.night_mode"
+      }
+    },
+    {
+      "phrase": "Was ist mit dem Licht im Büro?",
+      "action": "get-state",
+      "args": {
+        "entity_id": "light.office"
+      }
+    },
+    {
+      "phrase": "Führe die Morgenroutine aus, bitte",
+      "action": "run-script",
+      "args": {
+        "script": "script.morning_routine"
+      }
+    }
   ],
-  "auto_generated": false
+  "auto_generated": true
 }
