@@ -80,9 +80,10 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
         logger.warning(f"Empty or invalid frontmatter in {skill_md}")
         return None
 
-    # Find script in scripts/ directory
+    # Find scripts in scripts/ directory
     scripts_dir = skill_path / "scripts"
-    script = None
+    script = None  # Primary script for backward compatibility
+    all_scripts = []  # All *_api.py scripts for command extraction
     if scripts_dir.exists():
         # Prefer script named after the skill (e.g., homeassistant_api.py for homeassistant)
         skill_name = frontmatter.get("name", skill_path.name)
@@ -95,6 +96,9 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
             scripts = list(scripts_dir.glob("*_api.py"))
             if scripts:
                 script = scripts[0]
+
+        # Collect ALL *_api.py scripts for command extraction
+        all_scripts = list(scripts_dir.glob("*_api.py"))
 
     # Load keywords from keywords.json if exists
     keywords = _load_keywords_from_file(skill_path)
@@ -117,8 +121,17 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
         is_documentation_only=(script is None),
     )
 
-    # Extract commands from script if available
-    if script:
+    # Extract commands from ALL scripts if available
+    if all_scripts:
+        all_commands = []
+        for script_file in all_scripts:
+            commands = extract_commands_from_script(script_file)
+            all_commands.extend(commands)
+        skill.commands = all_commands
+        if len(all_scripts) > 1:
+            logger.info(f"Extracted {len(all_commands)} commands from {len(all_scripts)} scripts in {skill.name}")
+    elif script:
+        # Fallback for backward compatibility
         skill.commands = extract_commands_from_script(script)
 
     return skill
