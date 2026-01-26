@@ -955,12 +955,17 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
         from .example_generator import ensure_examples
         from .skill_loader import extract_commands_from_script
 
-        # Extract commands from newly created script
-        script_path = skill_path / "scripts" / f"{skill_name.replace('-', '_')}_api.py"
+        # Extract commands from ALL scripts in the skill (not just the main one)
+        scripts_dir = skill_path / "scripts"
         commands = []
-        if script_path.exists():
-            cmd_list = extract_commands_from_script(script_path)
-            commands = [{"name": c.name, "description": c.description} for c in cmd_list]
+        if scripts_dir.exists():
+            for script_file in scripts_dir.glob("*_api.py"):
+                cmd_list = extract_commands_from_script(script_file)
+                commands.extend([
+                    {"name": c.name, "description": c.description}
+                    for c in cmd_list
+                ])
+            logger.info(f"Extracted {len(commands)} commands from {skill_name} scripts")
 
         # Generate keywords (async)
         # For extend actions, force regeneration to include new commands
