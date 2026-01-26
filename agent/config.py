@@ -1,9 +1,13 @@
 """Configuration management using Pydantic Settings."""
 
-from pydantic_settings import BaseSettings
-from pydantic import field_validator
-from typing import List, Union
+import logging
 from pathlib import Path
+from typing import List, Union
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -96,4 +100,13 @@ def get_settings() -> Settings:
     global _settings
     if _settings is None:
         _settings = Settings()
+        logger.info(f"Settings loaded - lm_studio_model: '{_settings.lm_studio_model}'")
+        logger.info(f"Settings loaded - lm_studio_url: '{_settings.lm_studio_url}'")
     return _settings
+
+
+def reset_settings() -> None:
+    """Reset settings cache (forces reload from .env on next get_settings() call)."""
+    global _settings
+    _settings = None
+    logger.info("Settings cache cleared")

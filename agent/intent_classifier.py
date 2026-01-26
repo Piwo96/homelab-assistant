@@ -233,8 +233,10 @@ async def _call_with_tools(
 
     # Determine model to use: configured model or auto-detect from LM Studio
     model = settings.lm_studio_model
+    logger.info(f"Configured lm_studio_model: '{model}' (empty={not model})")
     if not model:
         model = await get_loaded_model(settings)
+        logger.info(f"Auto-detected model from LM Studio: '{model}'")
 
     # Token limits for retry: start low, increase on context errors
     token_limits = [2048, 4096, 8192]
@@ -251,7 +253,7 @@ async def _call_with_tools(
         if model:
             payload["model"] = model
 
-        logger.debug(f"LM Studio request - model: {model}, tools: {len(tools)}, max_tokens: {max_tokens}")
+        logger.info(f"LM Studio request - model: {model}, tools: {len(tools)}, max_tokens: {max_tokens}")
 
         async with httpx.AsyncClient(timeout=settings.lm_studio_timeout) as client:
             response = await client.post(
