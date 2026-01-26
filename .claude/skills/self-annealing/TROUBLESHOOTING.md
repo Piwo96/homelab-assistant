@@ -186,3 +186,34 @@ annealing_api.py anneal "message"
 ```bash
 git_api.py push
 ```
+
+---
+
+## Agent Behavior Issues
+
+### Acknowledgment + action verb misclassified as small talk
+
+**Problem:** Short messages like "Okay schieß mal los" or "Ja mach mal" were treated as pure conversational acknowledgments, causing the agent to lose context and respond with generic greetings instead of following up on the previous conversation.
+
+**Root Cause:** The conversational message detector matched "okay"/"ja" at the start and treated the entire message as small talk, ignoring that action verbs ("schieß", "mach") followed.
+
+**Solution:** Check for action verbs BEFORE classifying as conversational. Messages containing action verbs like "schieß", "mach", "zeig", "los", "starte", "stopp" are NOT purely conversational - they're context-dependent requests that need chat history.
+
+**Pattern:** Acknowledgment + Action Verb = Context-dependent request, not small talk
+
+**Code location:** `agent/intent_classifier.py` - `_is_conversational_message()` function
+
+**Implementation:**
+```python
+# Check for action verbs FIRST
+ACTION_VERBS = ["schieß", "mach", "leg", "fang", "zeig", "erklär",
+                "sag", "hilf", "starte", "stopp", "los", "weiter"]
+
+has_action_verb = any(verb in message_lower for verb in ACTION_VERBS)
+if has_action_verb:
+    return False  # Not conversational - it's a request
+```
+
+**Key Learning:** In conversational AI, word order and context matter. A message starting with an acknowledgment doesn't mean it's not an action request. Check for intent signals (action verbs) across the entire message.
+
+---
