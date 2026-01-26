@@ -24,11 +24,15 @@ Analysiere diese Skill-Dokumentation und generiere Beispielphrasen.
 {commands}
 
 ## Aufgabe
-Generiere 3-5 Beispielphrasen pro Command/Action die ein deutschsprachiger User nutzen wuerde.
+Generiere 2-3 Beispielphrasen pro Command/Action die ein deutschsprachiger User nutzen wuerde.
+
+**KRITISCH - PFLICHT:**
+- Du MUSST fuer JEDEN Command in der Liste oben mindestens 2 Beispiele generieren!
+- Ueberspringe KEINEN Command! Jeder einzelne muss abgedeckt sein.
 
 **Wichtig:**
 - Deutsche Alltagssprache, keine technischen Befehle
-- Natuerliche Formulierungen wie "Zeig mir...", "Was ist...", "Mach..."
+- Natuerliche Formulierungen wie "Zeig mir...", "Was ist...", "Mach...", "Optimiere..."
 - Variationen: Fragen, Imperative, informelle Sprache
 - Fuer actions mit Parametern: mindestens 1 Beispiel MIT args (entity_id, name, vmid, etc.)
 - Keine generischen Phrasen die auf mehrere Skills passen
@@ -47,6 +51,7 @@ Generiere 3-5 Beispielphrasen pro Command/Action die ein deutschsprachiger User 
 KRITISCH:
 - Ersetze die Platzhalter (<DEINE_PHRASE_HIER> etc.) mit ECHTEN Phrasen fuer DIESEN Skill
 - Die Phrasen muessen zu den Commands in der Skill-Dokumentation passen
+- JEDER Command aus der Liste muss mindestens 2 Beispiele haben!
 - Antworte NUR mit dem JSON-Objekt, keine Erklaerungen"""
 
 
@@ -321,6 +326,44 @@ def merge_examples(existing: list[dict], new: list[dict]) -> list[dict]:
     return merged
 
 
+def ensure_all_commands_covered(
+    examples: list[dict],
+    commands: list[dict],
+) -> list[dict]:
+    """Ensure every command has at least one example, adding defaults if needed.
+
+    Args:
+        examples: Generated examples
+        commands: List of command dicts with name/description
+
+    Returns:
+        Examples list with all commands covered
+    """
+    if not commands:
+        return examples
+
+    # Find which commands are covered
+    covered_actions = {ex.get("action", "").lower() for ex in examples}
+
+    # Add default examples for missing commands
+    missing = []
+    for cmd in commands:
+        cmd_name = cmd.get("name", "").lower()
+        if cmd_name and cmd_name not in covered_actions:
+            # Generate simple default example
+            description = cmd.get("description", cmd_name)
+            missing.append({
+                "phrase": f"{description}",
+                "action": cmd_name,
+            })
+            logger.info(f"Added default example for uncovered command: {cmd_name}")
+
+    if missing:
+        examples = examples + missing
+
+    return examples
+
+
 async def ensure_examples(
     skill_path: Path,
     lm_studio_url: str,
@@ -343,8 +386,12 @@ async def ensure_examples(
     # Load existing examples
     existing = load_examples(skill_path)
 
-    # If examples exist and we're not forcing regeneration, return them
+    # If examples exist and we're not forcing regeneration, check coverage
     if existing and not force_regenerate:
+        # Still ensure all commands are covered even with existing examples
+        if commands:
+            existing = ensure_all_commands_covered(existing, commands)
+            save_examples(skill_path, existing)
         return existing
 
     # Generate new examples
@@ -357,10 +404,22 @@ async def ensure_examples(
         if existing:
             merged = merge_examples(existing, new_examples)
             logger.info(f"Merged {len(new_examples)} new + {len(existing)} existing = {len(merged)} examples")
-            save_examples(skill_path, merged)
-            return merged
         else:
-            save_examples(skill_path, new_examples)
-            return new_examples
+            merged = new_examples
+
+        # Ensure all commands are covered (add defaults for missing)
+        if commands:
+            merged = ensure_all_commands_covered(merged, commands)
+
+        save_examples(skill_path, merged)
+        return merged
+
+    # Fallback: if generation failed but we have commands, create basic examples
+    if commands and not existing:
+        basic_examples = ensure_all_commands_covered([], commands)
+        if basic_examples:
+            logger.warning(f"LM generation failed, using basic examples for {len(commands)} commands")
+            save_examples(skill_path, basic_examples)
+            return basic_examples
 
     return existing or []
