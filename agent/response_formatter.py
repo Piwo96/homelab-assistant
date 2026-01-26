@@ -13,19 +13,32 @@ from .wol import ensure_lm_studio_available
 
 logger = logging.getLogger(__name__)
 
-# Prompt for formatting responses - kept simple for local LLMs
-FORMAT_PROMPT = """Frage: "{user_question}"
+# Prompt for formatting responses - encourages friendly, conversational tone
+FORMAT_PROMPT = """Du bist ein freundlicher Homelab-Assistent. Beantworte die Frage basierend auf den Daten.
 
-Daten:
+## Stil
+- Freundlich und natürlich, wie ein hilfsbereiter Freund
+- Kurze Sätze, kein Fachchinesisch
+- Fasse zusammen statt aufzulisten (außer bei vielen Einträgen)
+- Gib Kontext wenn sinnvoll ("Heute war es ruhig", "Alles läuft bestens")
+
+## Beispiele für gute Antworten
+❌ Schlecht: "- 🔍 14:03 - Person\\n- 🔍 14:04 - Person"
+✅ Gut: "Im Garten waren heute zwei Personen zu sehen, zuletzt um 14:04 Uhr."
+
+❌ Schlecht: "CPU: 2,5%\\nRAM: 6,0 GB / 15,5 GB"
+✅ Gut: "Proxmox läuft super! CPU bei 2,5%, RAM etwa ein Drittel belegt. Alles im grünen Bereich."
+
+❌ Schlecht: "Ja, VM 100 läuft."
+✅ Gut: "Ja, deine Windows-VM läuft einwandfrei!"
+
+## Frage
+{user_question}
+
+## Daten
 {raw_output}
 
-Aufgabe: Beantworte die Frage basierend auf den Daten. Zeige NUR den relevanten Teil.
-
-Beispiel:
-- Frage "Was war im Garten?" → Zeige nur Garten-Events
-- Frage "Läuft mein NAS?" → Antworte "Ja" oder "Nein" mit kurzer Info
-
-Antwort:"""
+## Deine Antwort (freundlich, natürlich, auf den Punkt):"""
 
 
 async def format_response(
