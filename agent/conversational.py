@@ -97,27 +97,32 @@ def is_conversational_followup(message: str, chat_id: int) -> bool:
     return False
 
 
-def get_pending_skill_request(chat_id: int) -> Optional[str]:
+def get_pending_skill_request(chat_id: int) -> tuple[Optional[str], Optional[str]]:
     """Check if there's a pending skill creation request.
 
     Args:
         chat_id: Chat ID for history lookup
 
     Returns:
-        The original user request if pending, None otherwise
+        Tuple of (user_request, skill_to_extend) - skill_to_extend is None for new skills
     """
     history = get_history(chat_id)
     if not history:
-        return None
+        return None, None
 
     # Look for PENDING_SKILL_REQUEST marker in recent history
     for entry in reversed(history[-5:]):
         if entry.get("role") == "system":
             content = entry.get("content", "")
             if content.startswith("PENDING_SKILL_REQUEST:"):
-                return content.replace("PENDING_SKILL_REQUEST:", "")
+                # Format: PENDING_SKILL_REQUEST:request|EXTEND:skill_name or just PENDING_SKILL_REQUEST:request
+                payload = content.replace("PENDING_SKILL_REQUEST:", "")
+                if "|EXTEND:" in payload:
+                    parts = payload.split("|EXTEND:", 1)
+                    return parts[0], parts[1]
+                return payload, None
 
-    return None
+    return None, None
 
 
 def is_skill_creation_confirmation(message: str) -> bool:

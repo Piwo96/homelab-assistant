@@ -64,6 +64,7 @@ async def request_skill_creation(
     requester_id: int,
     chat_id: int,
     settings: Settings,
+    skill_to_extend: str | None = None,
 ) -> str:
     """Request admin approval for skill creation.
 
@@ -73,6 +74,7 @@ async def request_skill_creation(
         requester_id: Telegram user ID of the requester
         chat_id: Chat ID to respond to
         settings: Application settings
+        skill_to_extend: Name of skill to extend (None for new skill)
 
     Returns:
         Message to send to the user
@@ -86,18 +88,27 @@ async def request_skill_creation(
         requester_id=requester_id,
         chat_id=chat_id,
         created_at=datetime.now(),
+        skill_to_extend=skill_to_extend,
     )
 
     async with _approvals_lock:
         pending_approvals[request_id] = approval
 
     # Send approval request to admin
-    approval_text = (
-        f"🔔 *Neue Skill-Anfrage*\n\n"
-        f"Von: {requester_name}\n"
-        f"Anfrage: \"{user_request}\"\n\n"
-        f"Soll ich einen neuen Skill erstellen/erweitern?"
-    )
+    if skill_to_extend:
+        approval_text = (
+            f"🔔 *Skill-Erweiterung angefragt*\n\n"
+            f"Von: {requester_name}\n"
+            f"Anfrage: \"{user_request}\"\n\n"
+            f"Skill: **{skill_to_extend}** erweitern?"
+        )
+    else:
+        approval_text = (
+            f"🔔 *Neue Skill-Anfrage*\n\n"
+            f"Von: {requester_name}\n"
+            f"Anfrage: \"{user_request}\"\n\n"
+            f"Soll ich einen neuen Skill erstellen?"
+        )
 
     message_id = await send_approval_request(
         admin_id=settings.admin_telegram_id,
@@ -226,6 +237,7 @@ async def handle_approval(request_id: str, approved: bool, settings: Settings) -
             requester_name=approval.requester_name,
             chat_id=approval.chat_id,
             settings=settings,
+            skill_to_extend=approval.skill_to_extend,
         )
         return result
 
@@ -260,6 +272,7 @@ async def create_skill_on_branch(
     requester_name: str,
     chat_id: int,
     settings: Settings,
+    skill_to_extend: str | None = None,
 ) -> str:
     """Create skill on a feature branch and request merge approval.
 
@@ -269,6 +282,7 @@ async def create_skill_on_branch(
         requester_name: Name of the requester
         chat_id: Chat ID to respond to
         settings: Application settings
+        skill_to_extend: Name of skill to extend (None for new skill)
 
     Returns:
         Status message
@@ -286,7 +300,7 @@ async def create_skill_on_branch(
             raise Exception(f"Branch creation failed: {branch_result.get('error')}")
 
         # Generate and write skill files
-        skill_result = await create_skill(user_request, settings)
+        skill_result = await create_skill(user_request, settings, skill_to_extend)
 
         if not skill_result.get("success"):
             raise Exception(skill_result.get("error", "Skill-Erstellung fehlgeschlagen"))
@@ -470,12 +484,17 @@ async def handle_skill_merge_approval(
         return f"Merge fehlgeschlagen: {str(e)}"
 
 
-async def create_skill(user_request: str, settings: Settings) -> dict[str, Any]:
+async def create_skill(
+    user_request: str,
+    settings: Settings,
+    skill_to_extend: str | None = None,
+) -> dict[str, Any]:
     """Create or extend a skill using Claude API.
 
     Args:
         user_request: The user's original request describing what they want
         settings: Application settings
+        skill_to_extend: Name of skill to extend (None for new skill)
 
     Returns:
         Dict with skill_name, action, summary, files, success
@@ -494,14 +513,27 @@ async def create_skill(user_request: str, settings: Settings) -> dict[str, Any]:
     # Load existing skill structure for context
     skill_context = load_skill_context(settings)
 
+    # Build the instruction based on whether we're extending or creating
+    if skill_to_extend:
+        instruction = f"""Erweitere den **{skill_to_extend}** Skill für folgende Anfrage:
+"{user_request}"
+
+WICHTIG: Du sollst den bestehenden Skill "{skill_to_extend}" erweitern, NICHT einen neuen Skill erstellen!
+Verwende action: "extend" in deiner Antwort."""
+    else:
+        instruction = f"""Erstelle einen neuen Skill für folgende Anfrage:
+"{user_request}"
+
+WICHTIG: Du sollst einen NEUEN Skill erstellen.
+Verwende action: "create" in deiner Antwort."""
+
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=16384,  # Increased for complex skills with full scripts
         messages=[
             {
                 "role": "user",
-                "content": f"""Erstelle oder erweitere einen Skill für folgende Anfrage:
-"{user_request}"
+                "content": f"""{instruction}
 
 ## Bestehende Skill-Struktur:
 {skill_context}

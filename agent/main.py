@@ -378,7 +378,7 @@ async def process_natural_language(
 
     # Check for skill creation confirmation FIRST
     # User might be responding "Ja" to a pending skill request
-    pending_request = get_pending_skill_request(chat_id)
+    pending_request, skill_to_extend = get_pending_skill_request(chat_id)
     if pending_request and is_skill_creation_confirmation(text):
         logger.info(f"User confirmed skill creation for: {pending_request[:50]}...")
         # Clear the pending marker by adding a new message
@@ -391,6 +391,7 @@ async def process_natural_language(
             requester_id=user.id,
             chat_id=chat_id,
             settings=settings,
+            skill_to_extend=skill_to_extend,
         )
         await remove_status()
         await send_message(chat_id, response, settings)
@@ -438,7 +439,50 @@ async def process_natural_language(
         # Check if this is a homelab-related request that we can't handle
         is_homelab_request = registry.is_homelab_related(text)
 
-        # If model gave a text response, use it (general chat)
+        # Homelab-related but no skill? Offer to extend or create!
+        # This takes priority over any LLM explanation
+        if is_homelab_request:
+            # Check if there's a matching skill we could extend
+            matching_skill = registry.find_matching_skill(text)
+
+            if matching_skill:
+                # Offer to extend existing skill
+                fallback_response = (
+                    f"🤔 Das kann ich leider noch nicht.\n\n"
+                    f"Soll ich den **{matching_skill}** Skill erweitern? "
+                    f"Antworte mit **Ja** wenn du möchtest."
+                )
+            else:
+                # Offer to create a new skill
+                fallback_response = (
+                    "🤔 Das kann ich leider noch nicht.\n\n"
+                    "Soll ich diese Funktion als neuen Skill anlegen? "
+                    "Antworte mit **Ja** wenn du möchtest."
+                )
+            # Store the pending request in chat history for context
+            add_message(chat_id, "user", text)
+            add_message(chat_id, "assistant", fallback_response)
+            # Store matching skill info for skill_creator
+            if matching_skill:
+                add_message(chat_id, "system", f"PENDING_SKILL_REQUEST:{text}|EXTEND:{matching_skill}")
+            else:
+                add_message(chat_id, "system", f"PENDING_SKILL_REQUEST:{text}")
+
+            await remove_status()
+            await send_message(chat_id, fallback_response, settings)
+            save_conversation_to_db(
+                chat_id=chat_id,
+                user_message=text,
+                assistant_response=fallback_response,
+                user_id=user.id,
+                intent_skill="unknown",
+                intent_confidence=0.0,
+                success=False,
+                error_message="No skill for homelab request",
+            )
+            return
+
+        # Not homelab-related - use LLM response if available (general chat)
         if intent.description and len(intent.description) > 10:
             # Filter out bad responses that mention internal concepts
             bad_keywords = [
@@ -471,23 +515,10 @@ async def process_natural_language(
             )
             return
 
-        # No response from LLM - check if it's homelab-related
-        if is_homelab_request:
-            # Offer to create a skill for this functionality
-            fallback_response = (
-                "🤔 Das kann ich leider noch nicht.\n\n"
-                "Soll ich diese Funktion als neuen Skill anlegen? "
-                "Antworte mit **Ja** wenn du möchtest."
-            )
-            # Store the pending request in chat history for context
-            add_message(chat_id, "user", text)
-            add_message(chat_id, "assistant", fallback_response)
-            add_message(chat_id, "system", f"PENDING_SKILL_REQUEST:{text}")
-        else:
-            # General fallback for non-homelab questions
-            fallback_response = "Hmm, da bin ich mir nicht sicher. Kannst du das anders formulieren?"
-            add_message(chat_id, "user", text)
-            add_message(chat_id, "assistant", fallback_response)
+        # General fallback for non-homelab questions without LLM response
+        fallback_response = "Hmm, da bin ich mir nicht sicher. Kannst du das anders formulieren?"
+        add_message(chat_id, "user", text)
+        add_message(chat_id, "assistant", fallback_response)
 
         await remove_status()
         await send_message(chat_id, fallback_response, settings)
@@ -499,7 +530,7 @@ async def process_natural_language(
             intent_skill="unknown",
             intent_confidence=0.0,
             success=False,
-            error_message="No skill for homelab request" if is_homelab_request else "No LLM response",
+            error_message="No LLM response",
         )
         return
 

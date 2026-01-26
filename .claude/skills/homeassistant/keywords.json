@@ -8,7 +8,8 @@
     "einschalten", "turn on", "ausschalten", "turn off",
     "dimmen", "dim", "helligkeit", "brightness",
     "entity", "entities", "gerät", "geräte",
-    "wohnzimmer", "schlafzimmer", "küche", "bad", "flur"
+    "wohnzimmer", "schlafzimmer", "küche", "bad", "flur",
+    "dashboard", "lovelace", "ui", "oberfläche", "karte", "card"
   ],
   "auto_generated": false
 }

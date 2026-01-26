@@ -97,6 +97,27 @@ class ToolRegistry:
         message_lower = message.lower()
         return any(kw in message_lower for kw in self.homelab_keywords)
 
+    def find_matching_skill(self, message: str) -> Optional[str]:
+        """Find the skill that best matches a message based on keyword overlap.
+
+        Args:
+            message: User message to check
+
+        Returns:
+            Skill name with most keyword matches, or None if no matches
+        """
+        message_lower = message.lower()
+        best_skill = None
+        best_count = 0
+
+        for skill_name, skill in self.skills.items():
+            match_count = sum(1 for kw in skill.keywords if kw in message_lower)
+            if match_count > best_count:
+                best_count = match_count
+                best_skill = skill_name
+
+        return best_skill if best_count > 0 else None
+
     def get_skill_by_name(self, name: str) -> Optional[SkillDefinition]:
         """Find skill by name (handles both - and _ variants).
 

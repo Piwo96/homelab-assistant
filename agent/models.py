@@ -38,6 +38,7 @@ class ApprovalRequest(BaseModel):
     created_at: datetime
     message_id: Optional[int] = None  # Telegram message ID for updating
     status: ApprovalStatus = ApprovalStatus.PENDING
+    skill_to_extend: Optional[str] = None  # Name of skill to extend (None for new)
 
 
 class TelegramUser(BaseModel):
