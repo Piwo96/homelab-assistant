@@ -220,8 +220,6 @@ async def _call_with_tools(
     Returns:
         Raw API response from LM Studio
     """
-    # Note: /no_think flag only works for certain Qwen3 variants, not the thinking
-    # model which has separate reasoning_content. Just use message directly.
     user_message = message
 
     # Build system prompt with dynamic examples from registry
@@ -243,7 +241,7 @@ async def _call_with_tools(
         "tools": tools,
         "tool_choice": "auto",  # Let model decide
         "temperature": 0.1,  # Low temperature for consistent results
-        "max_tokens": 8192,  # High limit for thinking models
+        "max_tokens": 2048,  # Sufficient for instruct models
     }
 
     if model:

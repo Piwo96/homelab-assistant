@@ -74,7 +74,7 @@ async def format_response(
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.5,
-                    "max_tokens": 8192,  # High limit - LLM generates only what's needed
+                    "max_tokens": 2048,  # Sufficient for instruct models
                 },
             )
 

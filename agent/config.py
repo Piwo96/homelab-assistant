@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # LM Studio (local LLM) - must be set in .env
     lm_studio_url: str
     lm_studio_model: str = ""  # Model ID (optional - LM Studio uses loaded model if empty)
-    lm_studio_timeout: int = 300  # 5 Min - großzügig für Thinking-Modelle
+    lm_studio_timeout: int = 120  # 2 Min - sufficient for instruct models
 
     # Gaming PC (for Wake-on-LAN) - must be set in .env
     gaming_pc_ip: str
