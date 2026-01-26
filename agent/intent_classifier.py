@@ -287,7 +287,8 @@ async def _call_with_tools(
 
     # Determine tool_choice based on message content
     # For homelab queries, force tool usage; for general chat, let model decide
-    is_homelab = _is_homelab_query(message)
+    # Use DYNAMIC keywords from registry (loaded from keywords.json files)
+    is_homelab = registry.is_homelab_related(message) or _is_homelab_query(message)
     tool_choice = "required" if is_homelab else "auto"
     logger.info(f"Query type: {'homelab' if is_homelab else 'general'} -> tool_choice: {tool_choice}")
 
