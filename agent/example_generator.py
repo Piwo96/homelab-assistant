@@ -44,7 +44,7 @@ Generiere 3-5 Beispielphrasen pro Command/Action die ein deutschsprachiger User 
 }}
 ```
 
-Antworte NUR mit dem JSON-Objekt."""
+WICHTIG: Antworte DIREKT mit dem JSON-Objekt. Keine Erklärungen, keine Bullet Points, kein Markdown - NUR das JSON."""
 
 
 async def extract_examples_from_skill(
@@ -96,7 +96,7 @@ async def extract_examples_from_skill(
                     "model": lm_studio_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.5,  # Etwas mehr Kreativitaet fuer Variationen
-                    "max_tokens": 2000,
+                    "max_tokens": 4000,  # Increased for complex skills
                 },
             )
 
