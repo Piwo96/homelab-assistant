@@ -169,6 +169,25 @@
       "args": {
         "script": "script.morning_routine"
       }
+    },
+    {
+      "phrase": "Optimiere das Dashboard",
+      "action": "optimize"
+    },
+    {
+      "phrase": "Dashboard optimieren",
+      "action": "optimize"
+    },
+    {
+      "phrase": "Verbessere die Dashboard Konfiguration",
+      "action": "optimize"
+    },
+    {
+      "phrase": "Optimiere mein Home Assistant Dashboard",
+      "action": "optimize",
+      "args": {
+        "dashboard": "lovelace"
+      }
     }
   ],
   "auto_generated": true
