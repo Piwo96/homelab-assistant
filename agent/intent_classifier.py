@@ -243,7 +243,7 @@ async def _call_with_tools(
         "tools": tools,
         "tool_choice": "auto",  # Let model decide
         "temperature": 0.1,  # Low temperature for consistent results
-        "max_tokens": 1500,  # Thinking models need more tokens for reasoning + output
+        "max_tokens": 8192,  # High limit for thinking models
     }
 
     if model:
