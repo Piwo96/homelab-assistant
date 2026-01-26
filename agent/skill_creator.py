@@ -552,7 +552,7 @@ async def create_skill(
 "{user_request}"
 
 WICHTIG: Du sollst den bestehenden Skill "{skill_to_extend}" erweitern, NICHT einen neuen Skill erstellen!
-Verwende action: "extend" und "edits" (mit old_string/new_string) in deiner Antwort.
+Verwende action: "extend" und "edits" (mit marker/insert_before) in deiner Antwort.
 Der Skill-Ordner existiert bereits unter: {skill_to_extend}/"""
     else:
         instruction = f"""Erstelle einen neuen Skill für folgende Anfrage:
@@ -762,7 +762,7 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
 
     Handles two formats:
     - "create": new_files with full content
-    - "extend": edits with old_string/new_string
+    - "extend": edits with marker/insert_before (old_string auto-converted)
 
     Args:
         response_text: Claude's response containing JSON

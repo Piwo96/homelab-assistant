@@ -86,7 +86,12 @@ Analysiere den Fehler und erstelle einen Fix. Der Fix sollte:
 
 ## WICHTIG: Ausgabeformat
 
-Antworte NUR mit diesem JSON-Format. Verwende GEZIELTE EDITS statt kompletter Dateien:
+⚠️ **WICHTIG: old_string/new_string ist VERBOTEN!**
+Verwende IMMER marker + insert_before ODER marker + insert.
+Das System wird old_string automatisch ablehnen!
+
+### MODUS 1: insert_before (BEVORZUGT für Error-Handling)
+Fügt Code VOR einer Zeile ein. Ideal für try/except Wrapper.
 
 ```json
 {{
@@ -96,34 +101,40 @@ Antworte NUR mit diesem JSON-Format. Verwende GEZIELTE EDITS statt kompletter Da
   "edits": [
     {{
       "path": "{skill_script_path}",
-      "old_string": "Der EXAKTE bestehende Code der ersetzt werden soll",
-      "new_string": "Der neue Code der stattdessen eingefügt wird"
+      "marker": "def problematic_function(self):",
+      "insert_before": "    # Error handling wrapper\\n"
     }}
   ],
   "confidence": 0.8
 }}
 ```
 
-## EDIT-REGELN:
-
-1. **old_string**: EXAKT kopieren - jedes Zeichen, jede Einrückung, jede Leerzeile
-2. **new_string**: Der korrigierte Code - nur das Nötige ändern
-3. **Kontext**: Füge genug Zeilen vor/nach der Änderung ein, damit old_string EINDEUTIG ist
-4. **Minimal**: Ändere NUR was für den Fix nötig ist, nichts anderes
-
-## Beispiel für einen guten Edit:
+### MODUS 2: insert (nach marker)
+Fügt Code NACH einer Zeile ein. Ideal für zusätzliche Checks.
 
 ```json
 {{
-  "old_string": "    def get_status(self):\\n        return self._request('GET', '/status')",
-  "new_string": "    def get_status(self):\\n        try:\\n            return self._request('GET', '/status')\\n        except Exception as e:\\n            logger.error(f'Status request failed: {{e}}')\\n            return None"
+  "edits": [
+    {{
+      "path": "{skill_script_path}",
+      "marker": "def __init__(self):",
+      "insert": "        self.retry_count = 3\\n"
+    }}
+  ]
 }}
 ```
+
+## EDIT-REGELN:
+
+1. **marker**: Eine EINDEUTIGE Zeile aus dem Code (z.B. Funktionsdefinition)
+2. **insert_before**: Code der VOR dem marker eingefügt wird
+3. **insert**: Code der NACH dem marker eingefügt wird
+4. **Einrückung**: Achte auf korrekte Einrückung im eingefügten Code!
 
 - analysis: 1-2 Sätze zur Fehlerursache
 - fix_description: Was der Fix ändert
 - commit_message: Conventional Commits Format
-- edits: Array mit gezielten Ersetzungen (Pfade MÜSSEN mit `{skill_base_path}` beginnen!)
+- edits: Array mit marker-basierten Edits (Pfade MÜSSEN mit `{skill_base_path}` beginnen!)
 - confidence: 0.0-1.0 wie sicher du dir beim Fix bist
 
 Bei niedriger Confidence (< 0.5) oder wenn der Fehler extern ist (API down, Netzwerk):
@@ -275,6 +286,12 @@ async def apply_fix(fix_data: dict[str, Any], settings: Settings) -> dict[str, A
         if not is_valid:
             logger.error(f"Invalid path: {rel_path} - {error_msg}")
             return {"success": False, "error": error_msg}
+
+    # Note: old_string/new_string is supported by edit_utils with fuzzy matching
+    # We prefer marker/insert_before in the prompt, but accept old_string as fallback
+    for i, edit in enumerate(edits):
+        if "old_string" in edit and "marker" not in edit:
+            logger.info(f"Edit {i} uses old_string/new_string (fuzzy matching will be applied)")
 
     # Apply edits using the shared utility
     result = apply_edits(edits, settings.project_root)

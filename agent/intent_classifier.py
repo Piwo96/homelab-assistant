@@ -47,90 +47,54 @@ HOMELAB_KEYWORDS = [
     "aktivität", "activity", "letzte", "recent",
 ]
 
-# Short conversational phrases that should NOT trigger tool calls
-# These are typically responses, acknowledgments, or small talk
-CONVERSATIONAL_PATTERNS = [
-    # Acknowledgments
-    "ok", "okay", "okey", "top", "super", "cool", "nice", "gut", "prima",
-    "alles klar", "verstanden", "danke", "dankeschön", "merci", "thx",
-    # Greetings
-    "hi", "hallo", "hey", "moin", "servus", "guten morgen", "guten tag",
-    "guten abend", "morgen", "abend", "na",
-    # Questions about the bot
-    "was geht", "wie geht", "was machst", "was kannst", "wer bist",
-    "alles gut", "und bei dir", "was läuft",
-    # Affirmations/Negations (short)
-    "ja", "nein", "jep", "nope", "klar", "sicher", "genau",
-    # Farewells
-    "tschüss", "bye", "ciao", "bis dann", "bis später",
-]
-
-# Action verbs that indicate a request, not just acknowledgment
-# If a message contains these after an acknowledgment, it's a context-dependent request
-ACTION_VERBS = [
-    "schieß", "mach", "leg", "fang", "zeig", "erklär", "sag", "hilf",
-    "starte", "stopp", "installier", "erstell", "lösch", "öffne",
-    "los", "weiter", "her", "bitte",
+# Context markers that indicate reference to previous conversation
+# These suggest the user is following up on a previous homelab topic
+CONTEXT_MARKERS = [
+    # Pronouns/Demonstratives (referring to something mentioned before)
+    "das", "die", "den", "es", "sie", "ihn", "ihm",
+    "davon", "damit", "dazu", "darauf", "dafür",
+    # Short confirmations with implicit reference
+    "ja", "okay", "ok", "mach", "zeig", "tu", "los", "weiter", "gerne",
+    # Relative terms (implying continuation)
+    "mehr", "nochmal", "wieder", "auch", "andere", "nächste",
 ]
 
 
-def _is_conversational_message(message: str) -> bool:
-    """Check if message is a short conversational phrase.
+def _is_homelab_query(message: str, history: list[dict] | None = None) -> bool:
+    """Check if message is a homelab/smart home query.
 
-    These messages should use tool_choice: "auto" to let the LLM
-    respond naturally without forcing a tool call.
+    Uses a simple, robust approach:
+    1. If message contains homelab keywords → True
+    2. If message has context markers AND recent history had homelab keywords → True
+    3. Otherwise → False
 
     Args:
         message: User message
+        history: Optional conversation history
 
     Returns:
-        True if message is conversational/small talk
+        True if this should be treated as a homelab query
     """
     message_lower = message.lower().strip()
 
-    # Check if message contains action verbs - if so, it's NOT purely conversational
-    # This catches "Okay schieß mal los", "Ja mach mal", etc.
-    has_action_verb = any(verb in message_lower for verb in ACTION_VERBS)
-    if has_action_verb:
-        return False
+    # Direct homelab keyword match - always homelab
+    if any(kw in message_lower for kw in HOMELAB_KEYWORDS):
+        return True
 
-    # Very short messages (1-2 words) are usually conversational
-    word_count = len(message_lower.split())
-    if word_count <= 2:
-        # Check if it matches a conversational pattern
-        for pattern in CONVERSATIONAL_PATTERNS:
-            if pattern in message_lower or message_lower in pattern:
-                return True
-        # Even without pattern match, very short messages without
-        # explicit homelab terms should be treated as conversational
-        if word_count == 1 and len(message_lower) < 15:
-            return True
+    # Check for context-dependent reference to previous homelab topic
+    if history and len(message_lower.split()) <= 5:
+        # Short message - check if it references previous context
+        has_context_marker = any(marker in message_lower for marker in CONTEXT_MARKERS)
 
-    # Check for conversational patterns in longer messages too
-    for pattern in CONVERSATIONAL_PATTERNS:
-        if message_lower == pattern or message_lower.startswith(pattern + " "):
-            return True
+        if has_context_marker:
+            # Check if recent history (last 4 messages) had homelab keywords
+            recent = history[-4:] if len(history) >= 4 else history
+            for msg in recent:
+                content = msg.get("content", "").lower()
+                if any(kw in content for kw in HOMELAB_KEYWORDS):
+                    logger.debug(f"Context reference detected: '{message}' refers to homelab history")
+                    return True
 
-    return False
-
-
-def _is_homelab_query(message: str) -> bool:
-    """Check if message is likely a homelab/smart home query.
-
-    Args:
-        message: User message
-
-    Returns:
-        True if message contains homelab keywords
-    """
-    # Conversational messages should not be treated as homelab queries
-    if _is_conversational_message(message):
-        return False
-
-    message_lower = message.lower()
-    for keyword in HOMELAB_KEYWORDS:
-        if keyword in message_lower:
-            return True
     return False
 
 
@@ -383,11 +347,11 @@ async def _call_with_tools(
         model = await get_loaded_model(settings)
         logger.info(f"Auto-detected model from LM Studio: '{model}'")
 
-    # Always use tool_choice: "auto" - let the LLM decide whether to use a tool
-    # The system prompt has clear examples of when NOT to use tools (greetings, smalltalk)
-    # This is more flexible than hardcoded keyword matching
-    tool_choice = "auto"
-    logger.info("Using tool_choice: auto (LLM decides)")
+    # Determine tool_choice based on whether this looks like a homelab query
+    # If no homelab keywords (direct or via context), don't offer tools at all
+    is_homelab = _is_homelab_query(message, history)
+    tool_choice = "auto" if is_homelab else "none"
+    logger.info(f"Using tool_choice: {tool_choice} (is_homelab={is_homelab})")
 
     # Token limits for retry: start low, increase on context errors
     token_limits = [2048, 4096, 8192]
