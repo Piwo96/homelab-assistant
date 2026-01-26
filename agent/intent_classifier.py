@@ -236,26 +236,48 @@ async def _call_with_tools(
     if not model:
         model = await get_loaded_model(settings)
 
-    payload = {
-        "messages": messages,
-        "tools": tools,
-        "tool_choice": "auto",  # Let model decide
-        "temperature": 0.1,  # Low temperature for consistent results
-        "max_tokens": 2048,  # Sufficient for instruct models
-    }
+    # Token limits for retry: start low, increase on context errors
+    token_limits = [2048, 4096, 8192]
 
-    if model:
-        payload["model"] = model
+    for attempt, max_tokens in enumerate(token_limits):
+        payload = {
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "temperature": 0.1,
+            "max_tokens": max_tokens,
+        }
 
-    logger.debug(f"LM Studio request - model: {model}, tools count: {len(tools)}")
+        if model:
+            payload["model"] = model
 
-    async with httpx.AsyncClient(timeout=settings.lm_studio_timeout) as client:
-        response = await client.post(
-            f"{settings.lm_studio_url}/v1/chat/completions",
-            json=payload,
-        )
-        response.raise_for_status()
-        return response.json()
+        logger.debug(f"LM Studio request - model: {model}, tools: {len(tools)}, max_tokens: {max_tokens}")
+
+        async with httpx.AsyncClient(timeout=settings.lm_studio_timeout) as client:
+            response = await client.post(
+                f"{settings.lm_studio_url}/v1/chat/completions",
+                json=payload,
+            )
+
+            if response.status_code == 200:
+                return response.json()
+
+            # Check for context/token errors that might benefit from retry
+            body = response.text[:500] if response.text else ""
+            is_context_error = (
+                response.status_code == 400
+                and any(kw in body.lower() for kw in ["context", "token", "length", "exceed"])
+            )
+
+            if is_context_error and attempt < len(token_limits) - 1:
+                logger.warning(f"Context error with max_tokens={max_tokens}, retrying with {token_limits[attempt + 1]}")
+                continue
+
+            # Not a retryable error, raise
+            response.raise_for_status()
+
+    # Should not reach here, but just in case
+    raise httpx.HTTPStatusError("Max retries exceeded", request=None, response=response)
 
 
 def _parse_tool_call_response(response: Dict[str, Any]) -> IntentResult:

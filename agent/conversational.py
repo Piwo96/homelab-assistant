@@ -200,40 +200,57 @@ async def handle_conversational_followup(
         message=message,
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{settings.lm_studio_url}/v1/chat/completions",
-                json={
-                    "model": settings.lm_studio_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                    "max_tokens": 2048,
-                },
-            )
+    # Token limits for retry: start low, increase on context errors
+    token_limits = [2048, 4096, 8192]
 
-            if response.status_code == 200:
-                data = response.json()
-                result = data["choices"][0]["message"]["content"].strip()
+    for attempt, max_tokens in enumerate(token_limits):
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{settings.lm_studio_url}/v1/chat/completions",
+                    json={
+                        "model": settings.lm_studio_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.3,
+                        "max_tokens": max_tokens,
+                    },
+                )
 
-                # Filter bad responses
-                bad_keywords = [
-                    "skill", "tool", "api", "system", "feature",
-                    "self-annealing", "funktion",
-                ]
-                if any(kw in result.lower() for kw in bad_keywords):
-                    logger.warning(f"Filtered bad followup response: {result[:100]}...")
-                    return (
-                        "Entschuldige, das habe ich nicht gut erklärt. "
-                        "Was genau möchtest du wissen?"
-                    )
+                if response.status_code == 200:
+                    data = response.json()
+                    result = data["choices"][0]["message"]["content"].strip()
 
-                logger.debug(f"Followup response: {result[:100]}...")
-                return result
-            else:
+                    # Filter bad responses
+                    bad_keywords = [
+                        "skill", "tool", "api", "system", "feature",
+                        "self-annealing", "funktion",
+                    ]
+                    if any(kw in result.lower() for kw in bad_keywords):
+                        logger.warning(f"Filtered bad followup response: {result[:100]}...")
+                        return (
+                            "Entschuldige, das habe ich nicht gut erklärt. "
+                            "Was genau möchtest du wissen?"
+                        )
+
+                    logger.debug(f"Followup response: {result[:100]}...")
+                    return result
+
+                # Check for context/token errors that might benefit from retry
+                body = response.text[:500] if response.text else ""
+                is_context_error = (
+                    response.status_code == 400
+                    and any(kw in body.lower() for kw in ["context", "token", "length", "exceed"])
+                )
+
+                if is_context_error and attempt < len(token_limits) - 1:
+                    logger.warning(f"Context error with max_tokens={max_tokens}, retrying with {token_limits[attempt + 1]}")
+                    continue
+
                 logger.warning(f"LLM followup failed: {response.status_code}")
                 return None
 
-    except Exception as e:
-        logger.warning(f"Error in followup handling: {e}")
-        return None
+        except Exception as e:
+            logger.warning(f"Error in followup handling: {e}")
+            return None
+
+    return None

@@ -64,42 +64,54 @@ async def format_response(
 
     logger.info(f"Format prompt length: {len(prompt)} chars")
 
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{settings.lm_studio_url}/v1/chat/completions",
-                json={
-                    "model": settings.lm_studio_model,
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.5,
-                    "max_tokens": 2048,  # Sufficient for instruct models
-                },
-            )
+    # Token limits for retry: start low, increase on context errors
+    token_limits = [2048, 4096, 8192]
 
-            if response.status_code == 200:
-                data = response.json()
-                formatted = data["choices"][0]["message"]["content"].strip()
+    for attempt, max_tokens in enumerate(token_limits):
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{settings.lm_studio_url}/v1/chat/completions",
+                    json={
+                        "model": settings.lm_studio_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.5,
+                        "max_tokens": max_tokens,
+                    },
+                )
 
-                # Validate response isn't empty or too short
-                if len(formatted) > 5:
-                    logger.info(f"Formatted {len(raw_output)} chars -> {len(formatted)} chars")
-                    logger.info(f"Formatted response preview: {formatted[:150]}...")
-                    return formatted
-                else:
-                    logger.warning(f"LLM returned empty/short response ({len(formatted)} chars), using raw output")
-                    logger.warning(f"LLM response was: '{formatted}'")
-                    return raw_output
-            else:
-                body = response.text[:500] if response.text else "(empty)"
+                if response.status_code == 200:
+                    data = response.json()
+                    formatted = data["choices"][0]["message"]["content"].strip()
+
+                    # Validate response isn't empty or too short
+                    if len(formatted) > 5:
+                        logger.info(f"Formatted {len(raw_output)} chars -> {len(formatted)} chars")
+                        logger.info(f"Formatted response preview: {formatted[:150]}...")
+                        return formatted
+                    else:
+                        logger.warning(f"LLM returned empty/short response ({len(formatted)} chars), using raw output")
+                        return raw_output
+
+                # Check for context/token errors that might benefit from retry
+                body = response.text[:500] if response.text else ""
+                is_context_error = (
+                    response.status_code == 400
+                    and any(kw in body.lower() for kw in ["context", "token", "length", "exceed"])
+                )
+
+                if is_context_error and attempt < len(token_limits) - 1:
+                    logger.warning(f"Context error with max_tokens={max_tokens}, retrying with {token_limits[attempt + 1]}")
+                    continue
+
                 logger.warning(f"LLM formatting failed: HTTP {response.status_code}, body: {body}")
                 return raw_output
 
-    except Exception as e:
-        logger.warning(f"Error formatting response: {e}")
-        # Fall back to raw output on any error
-        return raw_output
+        except Exception as e:
+            logger.warning(f"Error formatting response: {e}")
+            return raw_output
+
+    return raw_output
 
 
 async def should_format_response(
