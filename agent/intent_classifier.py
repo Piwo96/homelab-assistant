@@ -78,6 +78,9 @@ NIEMALS ein Tool ohne action aufrufen!
 - "Welche Geräte sind online?" → action: clients
 - "Netzwerk Status" → action: health
 - "WLAN Geräte" → action: clients
+- "Welche Netzwerke haben wir?" → action: networks
+- "Zeige Netzwerke" → action: networks
+- "Welche WLANs gibt es?" → action: wifis
 - "Firewall Regeln" → action: firewall-rules
 - "Port Forwarding" → action: port-forwards
 
@@ -268,9 +271,23 @@ def _parse_tool_call_response(response: Dict[str, Any]) -> IntentResult:
         except json.JSONDecodeError:
             arguments = {}
 
+        action = arguments.get("action", "")
+
+        # Validate: action is required for tool calls
+        if not action:
+            skill_name = tool_name.replace("_", "-")
+            logger.warning(f"Tool call without action: {skill_name}, arguments: {arguments}")
+            return IntentResult(
+                skill="error",
+                action="missing_action",
+                description=f"Das habe ich nicht ganz verstanden. Was genau möchtest du mit {skill_name} machen?",
+                confidence=0.3,
+                raw_response=json.dumps(tool_call),
+            )
+
         return IntentResult(
             skill=tool_name.replace("_", "-"),  # unifi_protect -> unifi-protect
-            action=arguments.get("action", ""),
+            action=action,
             target=arguments.get("target"),
             args=arguments.get("args", {}),
             confidence=0.95,  # Tool call implies high confidence

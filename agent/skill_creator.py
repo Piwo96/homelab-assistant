@@ -607,19 +607,61 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
     Returns:
         Dict with skill_name, action, summary, files, success
     """
-    # Try to extract JSON from response (might be wrapped in markdown code block)
-    json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-    if json_match:
-        json_str = json_match.group(1)
-    else:
-        # Try to parse the whole response as JSON
+    logger.debug(f"Raw Claude response length: {len(response_text)}")
+
+    json_str = None
+
+    # Method 1: Find the JSON object by looking for the opening/closing braces
+    # This is more robust than regex for nested content
+    start_idx = response_text.find('{')
+    if start_idx != -1:
+        # Find matching closing brace by counting braces
+        brace_count = 0
+        in_string = False
+        escape_next = False
+        end_idx = start_idx
+
+        for i, char in enumerate(response_text[start_idx:], start_idx):
+            if escape_next:
+                escape_next = False
+                continue
+            if char == '\\' and in_string:
+                escape_next = True
+                continue
+            if char == '"' and not escape_next:
+                in_string = not in_string
+            elif not in_string:
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_idx = i
+                        break
+
+        if brace_count == 0 and end_idx > start_idx:
+            json_str = response_text[start_idx:end_idx + 1]
+            logger.debug(f"Extracted JSON (brace matching): {len(json_str)} chars")
+
+    # Method 2: Fallback to regex if brace matching failed
+    if not json_str:
+        # Try to extract from markdown code block - use greedy match to get all content
+        json_match = re.search(r'```json\s*(\{[\s\S]*\})\s*```', response_text)
+        if json_match:
+            json_str = json_match.group(1)
+            logger.debug(f"Extracted JSON (regex markdown): {len(json_str)} chars")
+
+    # Method 3: Try the whole response as JSON
+    if not json_str:
         json_str = response_text.strip()
+        logger.debug(f"Using whole response as JSON: {len(json_str)} chars")
 
     try:
         data = json.loads(json_str)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON from Claude response: {e}")
-        logger.debug(f"Response was: {response_text[:1000]}")
+        logger.error(f"JSON string (first 500 chars): {json_str[:500] if json_str else 'None'}")
+        logger.error(f"JSON string (last 500 chars): {json_str[-500:] if json_str and len(json_str) > 500 else json_str}")
         return {"success": False, "error": f"JSON parse error: {e}"}
 
     skill_name = data.get("skill_name")
