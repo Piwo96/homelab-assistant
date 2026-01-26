@@ -25,6 +25,7 @@ from .error_approval import handle_error_fix_approval, is_error_request
 from .tool_registry import get_registry, reload_registry
 from .wol import wake_gaming_pc
 from .chat_history import get_history, add_message, clear_history, save_conversation_to_db
+from .response_formatter import format_response, should_format_response
 
 # Configure logging
 logging.basicConfig(
@@ -391,7 +392,13 @@ async def process_natural_language(
 
     # Determine response message
     if result.success:
-        response_msg = result.output
+        # Format response based on original question
+        if await should_format_response(text, result.output, intent.skill):
+            response_msg = await format_response(
+                text, result.output, settings, intent.skill, intent.action
+            )
+        else:
+            response_msg = result.output
         await send_message(chat_id, response_msg, settings)
     else:
         response_msg = f"❌ {result.error}"
