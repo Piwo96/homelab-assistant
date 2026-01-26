@@ -43,9 +43,61 @@ HOMELAB_KEYWORDS = [
     "client", "clients", "gerät", "geräte", "device", "devices",
     "internet", "verbindung", "connection", "bandbreite", "bandwidth",
     # General homelab
-    "homelab", "smart home", "smarthome", "status", "läuft", "running",
-    "aktivität", "activity", "letzte", "recent", "heute", "gestern",
+    "homelab", "smart home", "smarthome", "läuft", "running",
+    "aktivität", "activity", "letzte", "recent",
 ]
+
+# Short conversational phrases that should NOT trigger tool calls
+# These are typically responses, acknowledgments, or small talk
+CONVERSATIONAL_PATTERNS = [
+    # Acknowledgments
+    "ok", "okay", "okey", "top", "super", "cool", "nice", "gut", "prima",
+    "alles klar", "verstanden", "danke", "dankeschön", "merci", "thx",
+    # Greetings
+    "hi", "hallo", "hey", "moin", "servus", "guten morgen", "guten tag",
+    "guten abend", "morgen", "abend", "na",
+    # Questions about the bot
+    "was geht", "wie geht", "was machst", "was kannst", "wer bist",
+    "alles gut", "und bei dir", "was läuft",
+    # Affirmations/Negations (short)
+    "ja", "nein", "jep", "nope", "klar", "sicher", "genau",
+    # Farewells
+    "tschüss", "bye", "ciao", "bis dann", "bis später",
+]
+
+
+def _is_conversational_message(message: str) -> bool:
+    """Check if message is a short conversational phrase.
+
+    These messages should use tool_choice: "auto" to let the LLM
+    respond naturally without forcing a tool call.
+
+    Args:
+        message: User message
+
+    Returns:
+        True if message is conversational/small talk
+    """
+    message_lower = message.lower().strip()
+
+    # Very short messages (1-2 words) are usually conversational
+    word_count = len(message_lower.split())
+    if word_count <= 2:
+        # Check if it matches a conversational pattern
+        for pattern in CONVERSATIONAL_PATTERNS:
+            if pattern in message_lower or message_lower in pattern:
+                return True
+        # Even without pattern match, very short messages without
+        # explicit homelab terms should be treated as conversational
+        if word_count == 1 and len(message_lower) < 15:
+            return True
+
+    # Check for conversational patterns in longer messages too
+    for pattern in CONVERSATIONAL_PATTERNS:
+        if message_lower == pattern or message_lower.startswith(pattern + " "):
+            return True
+
+    return False
 
 
 def _is_homelab_query(message: str) -> bool:
@@ -57,6 +109,10 @@ def _is_homelab_query(message: str) -> bool:
     Returns:
         True if message contains homelab keywords
     """
+    # Conversational messages should not be treated as homelab queries
+    if _is_conversational_message(message):
+        return False
+
     message_lower = message.lower()
     for keyword in HOMELAB_KEYWORDS:
         if keyword in message_lower:
@@ -311,9 +367,18 @@ async def _call_with_tools(
     # Determine tool_choice based on message content
     # For homelab queries, force tool usage; for general chat, let model decide
     # Use DYNAMIC keywords from registry (loaded from keywords.json files)
-    is_homelab = registry.is_homelab_related(message) or _is_homelab_query(message)
+    #
+    # IMPORTANT: Conversational messages (short acknowledgments, greetings, etc.)
+    # should ALWAYS use tool_choice: "auto" to let the LLM respond naturally
+    is_conversational = _is_conversational_message(message)
+    if is_conversational:
+        is_homelab = False
+        logger.info(f"Query type: conversational -> tool_choice: auto")
+    else:
+        is_homelab = registry.is_homelab_related(message) or _is_homelab_query(message)
+        logger.info(f"Query type: {'homelab' if is_homelab else 'general'} -> tool_choice: {'required' if is_homelab else 'auto'}")
+
     tool_choice = "required" if is_homelab else "auto"
-    logger.info(f"Query type: {'homelab' if is_homelab else 'general'} -> tool_choice: {tool_choice}")
 
     # Token limits for retry: start low, increase on context errors
     token_limits = [2048, 4096, 8192]
