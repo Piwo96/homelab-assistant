@@ -60,6 +60,7 @@ class ToolRegistry:
 
     skills: Dict[str, SkillDefinition] = field(default_factory=dict)
     tools: List[Dict[str, Any]] = field(default_factory=list)
+    homelab_keywords: set = field(default_factory=set)  # All keywords from all skills
     _initialized: bool = False
 
     def load_skills(self, skills_path: Path) -> None:
@@ -72,14 +73,29 @@ class ToolRegistry:
 
         for skill in loaded_skills:
             self.skills[skill.name] = skill
+            # Collect keywords from all skills
+            self.homelab_keywords.update(skill.keywords)
 
         # Generate tool definitions
         self.tools = [skill_to_tool(s) for s in self.skills.values()]
         self._initialized = True
 
         logger.info(
-            f"Registry initialized: {len(self.skills)} skills, {len(self.tools)} tools"
+            f"Registry initialized: {len(self.skills)} skills, "
+            f"{len(self.tools)} tools, {len(self.homelab_keywords)} keywords"
         )
+
+    def is_homelab_related(self, message: str) -> bool:
+        """Check if a message contains homelab-related keywords.
+
+        Args:
+            message: User message to check
+
+        Returns:
+            True if message contains homelab keywords
+        """
+        message_lower = message.lower()
+        return any(kw in message_lower for kw in self.homelab_keywords)
 
     def get_skill_by_name(self, name: str) -> Optional[SkillDefinition]:
         """Find skill by name (handles both - and _ variants).

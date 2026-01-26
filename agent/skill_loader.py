@@ -30,6 +30,7 @@ class SkillDefinition:
     triggers: List[str]
     script_path: Optional[Path]
     commands: List[SkillCommand] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)  # Auto-extracted keywords
     is_documentation_only: bool = False
 
 
@@ -85,12 +86,20 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
             if scripts:
                 script = scripts[0]
 
+    # Load keywords from keywords.json if exists
+    keywords = _load_keywords_from_file(skill_path)
+    # Also include tags from frontmatter as keywords
+    tags = frontmatter.get("tags", [])
+    if tags:
+        keywords.extend([t.lower() for t in tags])
+
     skill = SkillDefinition(
         name=frontmatter.get("name", skill_path.name),
         description=frontmatter.get("description", ""),
         version=frontmatter.get("version", "1.0.0"),
         triggers=frontmatter.get("triggers", []),
         script_path=script,
+        keywords=list(set(keywords)),  # Deduplicate
         is_documentation_only=(script is None),
     )
 
@@ -99,6 +108,32 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
         skill.commands = extract_commands_from_script(script)
 
     return skill
+
+
+def _load_keywords_from_file(skill_path: Path) -> List[str]:
+    """Load keywords from keywords.json if it exists.
+
+    Args:
+        skill_path: Path to skill directory
+
+    Returns:
+        List of keywords or empty list
+    """
+    import json
+
+    keywords_file = skill_path / "keywords.json"
+    if keywords_file.exists():
+        try:
+            with open(keywords_file) as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return [k.lower() for k in data]
+                elif isinstance(data, dict) and "keywords" in data:
+                    return [k.lower() for k in data["keywords"]]
+        except Exception as e:
+            logger.warning(f"Failed to load keywords from {keywords_file}: {e}")
+
+    return []
 
 
 def extract_commands_from_script(script_path: Path) -> List[SkillCommand]:

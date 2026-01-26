@@ -86,6 +86,47 @@ def is_conversational_followup(message: str, chat_id: int) -> bool:
     return False
 
 
+def get_pending_skill_request(chat_id: int) -> Optional[str]:
+    """Check if there's a pending skill creation request.
+
+    Args:
+        chat_id: Chat ID for history lookup
+
+    Returns:
+        The original user request if pending, None otherwise
+    """
+    history = get_history(chat_id)
+    if not history:
+        return None
+
+    # Look for PENDING_SKILL_REQUEST marker in recent history
+    for entry in reversed(history[-5:]):
+        if entry.get("role") == "system":
+            content = entry.get("content", "")
+            if content.startswith("PENDING_SKILL_REQUEST:"):
+                return content.replace("PENDING_SKILL_REQUEST:", "")
+
+    return None
+
+
+def is_skill_creation_confirmation(message: str) -> bool:
+    """Check if message is a confirmation for skill creation.
+
+    Args:
+        message: User message
+
+    Returns:
+        True if user is confirming skill creation
+    """
+    message_lower = message.lower().strip()
+    confirmations = [
+        "ja", "ja!", "ja.", "ja,", "jap", "jo", "yes",
+        "ok", "okay", "klar", "mach", "gerne", "bitte",
+        "ja bitte", "ja gerne", "mach das", "leg an",
+    ]
+    return message_lower in confirmations or message_lower.startswith("ja ")
+
+
 FOLLOWUP_PROMPT = """Du bist ein freundlicher Smart Home Assistant.
 
 ## Konversationsverlauf

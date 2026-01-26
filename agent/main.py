@@ -20,13 +20,18 @@ from .telegram_handler import (
 )
 from .intent_classifier import classify_intent
 from .skill_executor import execute_skill
-from .skill_creator import handle_approval  # request_skill_creation available if needed
 from .error_approval import handle_error_fix_approval, is_error_request
 from .tool_registry import get_registry, reload_registry
 from .wol import wake_gaming_pc
 from .chat_history import get_history, add_message, clear_history, save_conversation_to_db
 from .response_formatter import format_response, should_format_response
-from .conversational import is_conversational_followup, handle_conversational_followup
+from .conversational import (
+    is_conversational_followup,
+    handle_conversational_followup,
+    get_pending_skill_request,
+    is_skill_creation_confirmation,
+)
+from .skill_creator import request_skill_creation, handle_approval
 
 # Configure logging
 logging.basicConfig(
@@ -312,6 +317,28 @@ async def process_natural_language(
             await delete_message(chat_id, status_msg_id, settings)
             status_msg_id = None
 
+    # Check for skill creation confirmation FIRST
+    # User might be responding "Ja" to a pending skill request
+    pending_request = get_pending_skill_request(chat_id)
+    if pending_request and is_skill_creation_confirmation(text):
+        logger.info(f"User confirmed skill creation for: {pending_request[:50]}...")
+        # Clear the pending marker by adding a new message
+        add_message(chat_id, "system", "SKILL_REQUEST_CONFIRMED")
+
+        # Trigger skill creation workflow
+        response = await request_skill_creation(
+            user_request=pending_request,
+            requester_name=user.display_name,
+            requester_id=user.id,
+            chat_id=chat_id,
+            settings=settings,
+        )
+        await remove_status()
+        await send_message(chat_id, response, settings)
+        add_message(chat_id, "user", text)
+        add_message(chat_id, "assistant", response)
+        return
+
     # Check for conversational follow-ups BEFORE classification
     # These are messages like "verstehe ich nicht" that reference previous context
     if is_conversational_followup(text, chat_id):
@@ -345,8 +372,13 @@ async def process_natural_language(
         await send_message(chat_id, f"❌ {error_msg}", settings)
         return
 
-    # Handle unknown intents - general conversation
+    # Handle unknown intents - general conversation or missing functionality
     if intent.skill == "unknown":
+        registry = get_registry(settings)
+
+        # Check if this is a homelab-related request that we can't handle
+        is_homelab_request = registry.is_homelab_related(text)
+
         # If model gave a text response, use it (general chat)
         if intent.description and len(intent.description) > 10:
             # Filter out bad responses that mention internal concepts
@@ -380,13 +412,26 @@ async def process_natural_language(
             )
             return
 
-        # No response from LLM - give a simple fallback (NOT skill creation!)
-        # Skill creation only happens via explicit admin request
-        fallback_response = "Hmm, da bin ich mir nicht sicher. Kannst du das anders formulieren?"
+        # No response from LLM - check if it's homelab-related
+        if is_homelab_request:
+            # Offer to create a skill for this functionality
+            fallback_response = (
+                "🤔 Das kann ich leider noch nicht.\n\n"
+                "Soll ich diese Funktion als neuen Skill anlegen? "
+                "Antworte mit **Ja** wenn du möchtest."
+            )
+            # Store the pending request in chat history for context
+            add_message(chat_id, "user", text)
+            add_message(chat_id, "assistant", fallback_response)
+            add_message(chat_id, "system", f"PENDING_SKILL_REQUEST:{text}")
+        else:
+            # General fallback for non-homelab questions
+            fallback_response = "Hmm, da bin ich mir nicht sicher. Kannst du das anders formulieren?"
+            add_message(chat_id, "user", text)
+            add_message(chat_id, "assistant", fallback_response)
+
         await remove_status()
         await send_message(chat_id, fallback_response, settings)
-        add_message(chat_id, "user", text)
-        add_message(chat_id, "assistant", fallback_response)
         save_conversation_to_db(
             chat_id=chat_id,
             user_message=text,
@@ -395,7 +440,7 @@ async def process_natural_language(
             intent_skill="unknown",
             intent_confidence=0.0,
             success=False,
-            error_message="No LLM response",
+            error_message="No skill for homelab request" if is_homelab_request else "No LLM response",
         )
         return
 

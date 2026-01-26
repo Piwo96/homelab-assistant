@@ -1,0 +1,14 @@
+{
+  "keywords": [
+    "licht", "light", "lichter", "lights", "lampe", "lampen",
+    "schalter", "switch", "steckdose", "outlet",
+    "smart home", "smarthome", "home assistant", "hass",
+    "automation", "automatisierung", "szene", "scene",
+    "sensor", "sensoren", "temperatur", "temperature",
+    "einschalten", "turn on", "ausschalten", "turn off",
+    "dimmen", "dim", "helligkeit", "brightness",
+    "entity", "entities", "gerät", "geräte",
+    "wohnzimmer", "schlafzimmer", "küche", "bad", "flur"
+  ],
+  "auto_generated": false
+}
