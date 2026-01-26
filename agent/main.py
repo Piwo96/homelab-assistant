@@ -18,7 +18,7 @@ from .telegram_handler import (
     parse_telegram_user,
     HELP_TEXT,
 )
-from .intent_classifier import classify_intent
+from .intent_classifier import classify_intent, _is_conversational_message
 from .skill_executor import execute_skill
 from .error_approval import handle_error_fix_approval, is_error_request
 from .tool_registry import get_registry, reload_registry_async
@@ -437,7 +437,10 @@ async def process_natural_language(
         registry = get_registry(settings)
 
         # Check if this is a homelab-related request that we can't handle
-        is_homelab_request = registry.is_homelab_related(text)
+        # BUT: conversational messages should NOT trigger "Soll ich das lernen?"
+        # even if they contain homelab keywords like "läuft" in "Na wie läufts?"
+        is_conversational = _is_conversational_message(text)
+        is_homelab_request = not is_conversational and registry.is_homelab_related(text)
 
         # Homelab-related but no skill? Offer to extend or create!
         # This takes priority over any LLM explanation
