@@ -80,13 +80,15 @@ def build_system_prompt(registry) -> str:
         return _cached_system_prompt
 
     example_sections = []
+    max_examples_per_skill = 5  # Limit to keep context size manageable
 
     for skill_name, skill in registry.skills.items():
         if not skill.examples:
             continue
 
         lines = [f"### {skill_name}"]
-        for ex in skill.examples:
+        # Limit examples per skill to avoid context overflow
+        for ex in skill.examples[:max_examples_per_skill]:
             if ex.args:
                 # Format args as JSON-like string
                 args_str = ", ".join(f"{k}: {v}" for k, v in ex.args.items())
