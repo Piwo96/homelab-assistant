@@ -18,6 +18,7 @@ class SkillCommand:
     name: str  # e.g., "turn-on"
     description: str  # e.g., "Turn on entity"
     parameters: List[dict] = field(default_factory=list)  # argparse arguments
+    script_path: Optional[Path] = None  # Path to script containing this command
 
 
 @dataclass
@@ -228,6 +229,7 @@ def extract_commands_from_script(script_path: Path) -> List[SkillCommand]:
                 name=cmd_name,
                 description=help_text,
                 parameters=[],  # Could be extended to parse add_argument calls
+                script_path=script_path,  # Track which script contains this command
             )
         )
 

@@ -3,31 +3,37 @@
 import asyncio
 import logging
 import subprocess
-from typing import List
+from pathlib import Path
+from typing import List, Optional
 
 from .config import Settings
 from .models import IntentResult, SkillExecutionResult, is_admin_required
-from .skill_loader import SkillDefinition
+from .skill_loader import SkillCommand, SkillDefinition
 from .tool_registry import get_registry
 from .error_approval import request_error_fix_approval
 
 logger = logging.getLogger(__name__)
 
 
-def build_command(intent: IntentResult, skill: SkillDefinition) -> List[str]:
+def build_command(
+    intent: IntentResult, skill: SkillDefinition, script_path: Optional[Path] = None
+) -> List[str]:
     """Build command line arguments for a skill script.
 
     Args:
         intent: Parsed intent from classifier
         skill: Skill definition from registry
+        script_path: Specific script to use (overrides skill.script_path)
 
     Returns:
         Command list for subprocess
     """
-    if not skill.script_path:
+    # Use provided script_path or fall back to skill's primary script
+    target_script = script_path or skill.script_path
+    if not target_script:
         return []
 
-    cmd = ["python", str(skill.script_path)]
+    cmd = ["python", str(target_script)]
 
     # Don't add --json - let scripts use their user-friendly formatted output
 
@@ -129,11 +135,17 @@ async def execute_skill(
             action=intent.action,
         )
 
-    # Validate action exists
-    valid_actions = [cmd.name for cmd in skill.commands]
+    # Validate action exists and find the command
     action_normalized = intent.action.replace("_", "-")
+    matching_command: Optional[SkillCommand] = None
 
-    if valid_actions and action_normalized not in valid_actions:
+    for cmd_def in skill.commands:
+        if cmd_def.name == action_normalized:
+            matching_command = cmd_def
+            break
+
+    valid_actions = [cmd_def.name for cmd_def in skill.commands]
+    if valid_actions and not matching_command:
         return SkillExecutionResult(
             success=False,
             output="",
@@ -142,8 +154,12 @@ async def execute_skill(
             action=intent.action,
         )
 
+    # Determine which script to use: command's script or skill's primary script
+    script_to_use = matching_command.script_path if matching_command else skill.script_path
+    logger.debug(f"Using script {script_to_use} for action {action_normalized}")
+
     # Build command
-    cmd = build_command(intent, skill)
+    cmd = build_command(intent, skill, script_to_use)
     if not cmd:
         return SkillExecutionResult(
             success=False,
