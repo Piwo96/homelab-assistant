@@ -496,7 +496,7 @@ async def create_skill(user_request: str, settings: Settings) -> dict[str, Any]:
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=8192,
+        max_tokens=16384,  # Increased for complex skills with full scripts
         messages=[
             {
                 "role": "user",
@@ -621,6 +621,14 @@ Gib NUR das JSON zurück, keine weiteren Erklärungen.""",
 
     response_text = message.content[0].text
 
+    # Check if response was truncated
+    if message.stop_reason == "max_tokens":
+        logger.error("Claude response was truncated (max_tokens reached)")
+        return {
+            "success": False,
+            "error": "Response too long - skill generation truncated. Try a simpler request.",
+        }
+
     # Parse JSON from response
     return await _parse_and_write_skill_files(response_text, settings)
 
@@ -676,6 +684,10 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
         if brace_count == 0 and end_idx > start_idx:
             json_str = response_text[start_idx:end_idx + 1]
             logger.debug(f"Extracted JSON (brace matching): {len(json_str)} chars")
+        elif brace_count > 0:
+            # JSON is incomplete (truncated)
+            logger.error(f"JSON appears truncated: {brace_count} unclosed braces")
+            return {"success": False, "error": f"JSON truncated ({brace_count} unclosed braces) - response too long"}
 
     # Method 2: Fallback to regex if brace matching failed
     if not json_str:
