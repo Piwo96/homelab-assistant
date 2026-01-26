@@ -2,6 +2,11 @@
 
 Instead of replacing entire files (which leads to lost code), this module
 provides search-and-replace operations that only modify specific parts.
+
+Supports three edit modes:
+1. Exact match: old_string must match exactly
+2. Fuzzy match: normalizes whitespace before matching
+3. Insert after: finds a marker line and inserts code after it
 """
 
 import logging
@@ -11,17 +16,114 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def normalize_whitespace(text: str) -> str:
+    """Normalize whitespace for fuzzy matching.
+
+    - Converts all line endings to \n
+    - Removes trailing whitespace from lines
+    - Preserves leading indentation
+    - Collapses multiple blank lines to one
+    """
+    lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    # Remove trailing whitespace from each line
+    lines = [line.rstrip() for line in lines]
+    # Collapse multiple blank lines
+    result = []
+    prev_blank = False
+    for line in lines:
+        is_blank = not line.strip()
+        if is_blank and prev_blank:
+            continue
+        result.append(line)
+        prev_blank = is_blank
+    return '\n'.join(result)
+
+
+def find_fuzzy_match(content: str, search: str) -> tuple[int, int] | None:
+    """Find a fuzzy match in content, tolerating whitespace differences.
+
+    Returns (start, end) indices of the match, or None if not found.
+    """
+    # First try exact match
+    idx = content.find(search)
+    if idx != -1:
+        return (idx, idx + len(search))
+
+    # Normalize both and try again
+    norm_content = normalize_whitespace(content)
+    norm_search = normalize_whitespace(search)
+
+    idx = norm_content.find(norm_search)
+    if idx == -1:
+        return None
+
+    # Map back to original content position
+    # This is tricky - we need to find corresponding position in original
+    # Strategy: find unique lines from the search that exist in content
+    search_lines = [l.rstrip() for l in search.split('\n') if l.strip()]
+    if not search_lines:
+        return None
+
+    # Find first non-empty line
+    first_line = search_lines[0]
+    last_line = search_lines[-1]
+
+    # Find in original content
+    start_idx = content.find(first_line)
+    if start_idx == -1:
+        # Try without leading whitespace
+        first_line_stripped = first_line.strip()
+        for i, line in enumerate(content.split('\n')):
+            if line.strip() == first_line_stripped:
+                start_idx = content.find(line)
+                break
+
+    if start_idx == -1:
+        return None
+
+    # Find last line
+    end_search_start = start_idx
+    end_idx = content.find(last_line, end_search_start)
+    if end_idx == -1:
+        last_line_stripped = last_line.strip()
+        lines = content.split('\n')
+        cumulative = 0  # Track position incrementally for O(n) complexity
+        for i, line in enumerate(lines):
+            if cumulative >= start_idx and line.strip() == last_line_stripped:
+                end_idx = cumulative
+                break
+            cumulative += len(line) + 1  # +1 for newline
+
+    if end_idx == -1:
+        return None
+
+    # Validate that end comes after start
+    if end_idx < start_idx:
+        logger.warning(f"Fuzzy match found last_line before first_line")
+        return None
+
+    # End position is after the last line
+    end_idx = end_idx + len(last_line)
+    # Include trailing newline if present
+    if end_idx < len(content) and content[end_idx] == '\n':
+        end_idx += 1
+
+    return (start_idx, end_idx)
+
+
 def apply_edit(
     file_path: Path,
     old_string: str,
     new_string: str,
+    fuzzy: bool = True,
 ) -> dict[str, Any]:
     """Apply a single search-and-replace edit to a file.
 
     Args:
         file_path: Path to the file to edit
-        old_string: The exact string to find and replace
+        old_string: The string to find and replace
         new_string: The string to replace it with
+        fuzzy: If True, use fuzzy matching when exact match fails
 
     Returns:
         Dict with success status and details
@@ -40,25 +142,38 @@ def apply_edit(
             "error": f"Failed to read file: {e}",
         }
 
-    # Check if old_string exists in file
-    if old_string not in content:
+    # Try exact match first
+    match_pos = None
+    match_method = "exact"
+
+    if old_string in content:
+        # Check for uniqueness
+        count = content.count(old_string)
+        if count > 1:
+            return {
+                "success": False,
+                "error": f"old_string found {count} times in {file_path.name}. Must be unique.",
+                "hint": "Provide more context in old_string to make it unique.",
+            }
+        match_pos = (content.find(old_string), content.find(old_string) + len(old_string))
+
+    # Try fuzzy match if exact failed
+    elif fuzzy:
+        match_pos = find_fuzzy_match(content, old_string)
+        if match_pos:
+            match_method = "fuzzy"
+            logger.info(f"Using fuzzy match for {file_path.name}")
+
+    if not match_pos:
         return {
             "success": False,
             "error": f"old_string not found in {file_path.name}. Cannot apply edit.",
             "hint": "The file may have changed or the old_string is incorrect.",
         }
 
-    # Check for uniqueness - old_string should appear exactly once
-    count = content.count(old_string)
-    if count > 1:
-        return {
-            "success": False,
-            "error": f"old_string found {count} times in {file_path.name}. Must be unique.",
-            "hint": "Provide more context in old_string to make it unique.",
-        }
-
     # Apply the replacement
-    new_content = content.replace(old_string, new_string, 1)
+    start, end = match_pos
+    new_content = content[:start] + new_string + content[end:]
 
     try:
         file_path.write_text(new_content, encoding="utf-8")
@@ -68,12 +183,204 @@ def apply_edit(
             "error": f"Failed to write file: {e}",
         }
 
-    logger.info(f"Applied edit to {file_path.name}")
+    logger.info(f"Applied edit ({match_method}) to {file_path.name}")
     return {
         "success": True,
         "file": str(file_path),
-        "chars_removed": len(old_string),
+        "chars_removed": end - start,
         "chars_added": len(new_string),
+        "match_method": match_method,
+    }
+
+
+def apply_insert_after(
+    file_path: Path,
+    marker: str,
+    content_to_insert: str,
+) -> dict[str, Any]:
+    """Insert content after a marker line.
+
+    This is more robust than old_string/new_string for appending code,
+    as it only needs to find a unique marker line.
+
+    Args:
+        file_path: Path to the file to edit
+        marker: A unique line/string to find (e.g., "class MyClass:" or "def main():")
+        content_to_insert: The content to insert after the marker line
+
+    Returns:
+        Dict with success status and details
+    """
+    if not file_path.exists():
+        return {
+            "success": False,
+            "error": f"File not found: {file_path}",
+        }
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to read file: {e}",
+        }
+
+    # Find the marker
+    marker_stripped = marker.strip()
+
+    # Try exact match first
+    if marker in content:
+        # Check uniqueness
+        count = content.count(marker)
+        if count > 1:
+            return {
+                "success": False,
+                "error": f"Marker found {count} times in {file_path.name}. Must be unique.",
+                "hint": "Provide more context in marker to make it unique.",
+            }
+        idx = content.find(marker)
+        # Find end of line
+        end_of_line = content.find('\n', idx)
+        if end_of_line == -1:
+            end_of_line = len(content)
+        insert_pos = end_of_line + 1
+    else:
+        # Try line-by-line fuzzy match
+        lines = content.split('\n')
+        insert_pos = None
+        cumulative = 0
+        match_count = 0
+
+        for i, line in enumerate(lines):
+            # Exact stripped match OR marker is substring of line
+            if line.strip() == marker_stripped or marker_stripped in line:
+                if insert_pos is None:
+                    insert_pos = cumulative + len(line) + 1  # +1 for newline
+                match_count += 1
+            cumulative += len(line) + 1
+
+        # Check uniqueness
+        if match_count > 1:
+            return {
+                "success": False,
+                "error": f"Marker found {match_count} times in {file_path.name}. Must be unique.",
+                "hint": "Provide more context in marker to make it unique.",
+            }
+
+        if insert_pos is None:
+            return {
+                "success": False,
+                "error": f"Marker '{marker[:50]}...' not found in {file_path.name}",
+            }
+
+    # Insert the content
+    new_content = content[:insert_pos] + content_to_insert + content[insert_pos:]
+
+    try:
+        file_path.write_text(new_content, encoding="utf-8")
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to write file: {e}",
+        }
+
+    logger.info(f"Inserted content after marker in {file_path.name}")
+    return {
+        "success": True,
+        "file": str(file_path),
+        "chars_added": len(content_to_insert),
+    }
+
+
+def apply_insert_before(
+    file_path: Path,
+    marker: str,
+    content_to_insert: str,
+) -> dict[str, Any]:
+    """Insert content before a marker line.
+
+    Useful for adding methods to a class before a specific function like main().
+
+    Args:
+        file_path: Path to the file to edit
+        marker: A unique line/string to find (e.g., "def main():" or "if __name__")
+        content_to_insert: The content to insert before the marker line
+
+    Returns:
+        Dict with success status and details
+    """
+    if not file_path.exists():
+        return {
+            "success": False,
+            "error": f"File not found: {file_path}",
+        }
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to read file: {e}",
+        }
+
+    # Find the marker
+    marker_stripped = marker.strip()
+    insert_pos = None
+
+    # Try exact match first
+    if marker in content:
+        # Check uniqueness
+        count = content.count(marker)
+        if count > 1:
+            return {
+                "success": False,
+                "error": f"Marker found {count} times in {file_path.name}. Must be unique.",
+                "hint": "Provide more context in marker to make it unique.",
+            }
+        insert_pos = content.find(marker)
+    else:
+        # Try line-by-line fuzzy match
+        lines = content.split('\n')
+        cumulative = 0
+        match_count = 0
+
+        for i, line in enumerate(lines):
+            if line.strip() == marker_stripped or marker_stripped in line:
+                if insert_pos is None:
+                    insert_pos = cumulative
+                match_count += 1
+            cumulative += len(line) + 1
+
+        # Check uniqueness
+        if match_count > 1:
+            return {
+                "success": False,
+                "error": f"Marker found {match_count} times in {file_path.name}. Must be unique.",
+                "hint": "Provide more context in marker to make it unique.",
+            }
+
+    if insert_pos is None:
+        return {
+            "success": False,
+            "error": f"Marker '{marker[:50]}...' not found in {file_path.name}",
+        }
+
+    # Insert the content
+    new_content = content[:insert_pos] + content_to_insert + content[insert_pos:]
+
+    try:
+        file_path.write_text(new_content, encoding="utf-8")
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to write file: {e}",
+        }
+
+    logger.info(f"Inserted content before marker in {file_path.name}")
+    return {
+        "success": True,
+        "file": str(file_path),
+        "chars_added": len(content_to_insert),
     }
 
 
@@ -83,11 +390,15 @@ def apply_edits(
 ) -> dict[str, Any]:
     """Apply multiple edits to files.
 
+    Supports two edit types:
+    1. Replace: old_string + new_string (with fuzzy matching)
+    2. Insert after: marker + insert (finds marker line and inserts after)
+
     Args:
         edits: List of edit operations, each with:
             - path: Relative path to file
-            - old_string: String to find
-            - new_string: String to replace with
+            For replace: old_string, new_string
+            For insert: marker, insert
         base_path: Base path to resolve relative paths against
 
     Returns:
@@ -101,20 +412,10 @@ def apply_edits(
 
     for edit in edits:
         rel_path = edit.get("path", "")
-        old_string = edit.get("old_string", "")
-        new_string = edit.get("new_string", "")
 
         if not rel_path:
             errors.append({"error": "Missing path in edit"})
             continue
-
-        if not old_string:
-            errors.append({"path": rel_path, "error": "Missing old_string in edit"})
-            continue
-
-        # new_string can be empty (for deletions)
-        if new_string is None:
-            new_string = ""
 
         # Resolve and validate path
         full_path = (base_path / rel_path).resolve()
@@ -127,7 +428,41 @@ def apply_edits(
             })
             continue
 
-        result = apply_edit(full_path, old_string, new_string)
+        # Determine edit type
+        if "marker" in edit and "insert" in edit:
+            # Insert after marker mode
+            result = apply_insert_after(
+                full_path,
+                edit["marker"],
+                edit["insert"],
+            )
+        elif "marker" in edit and "insert_before" in edit:
+            # Insert before marker mode
+            result = apply_insert_before(
+                full_path,
+                edit["marker"],
+                edit["insert_before"],
+            )
+        elif "old_string" in edit:
+            # Traditional replace mode
+            old_string = edit.get("old_string", "")
+            new_string = edit.get("new_string", "")
+
+            if not old_string:
+                errors.append({"path": rel_path, "error": "Missing old_string in edit"})
+                continue
+
+            # new_string can be empty (for deletions)
+            if new_string is None:
+                new_string = ""
+
+            result = apply_edit(full_path, old_string, new_string)
+        else:
+            errors.append({
+                "path": rel_path,
+                "error": "Edit must have either (old_string, new_string) or (marker, insert)",
+            })
+            continue
 
         if result["success"]:
             applied.append(rel_path)

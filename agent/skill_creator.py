@@ -30,6 +30,39 @@ from .tool_registry import reload_registry
 
 logger = logging.getLogger(__name__)
 
+
+def validate_python_syntax(base_path: Path, files: list[str]) -> list[str]:
+    """Validate Python syntax of generated files.
+
+    Args:
+        base_path: Base path where files are located
+        files: List of relative file paths
+
+    Returns:
+        List of error messages (empty if all files are valid)
+    """
+    import py_compile
+
+    errors = []
+    for rel_path in files:
+        if not rel_path.endswith('.py'):
+            continue
+
+        full_path = base_path / rel_path
+        if not full_path.exists():
+            continue
+
+        try:
+            py_compile.compile(str(full_path), doraise=True)
+        except py_compile.PyCompileError as e:
+            # Extract just the relevant error info
+            error_msg = str(e).split('\n')[0] if '\n' in str(e) else str(e)
+            errors.append(f"{rel_path}: {error_msg}")
+            logger.error(f"Syntax error in {rel_path}: {e}")
+
+    return errors
+
+
 # File-based storage for pending skill approvals (persists across restarts)
 PENDING_SKILLS_FILE = Path(__file__).parent.parent / ".claude" / "pending_skills.json"
 
@@ -608,8 +641,8 @@ Du MUSST deine Antwort als JSON zurückgeben. Das Format hängt von der Aktion a
   "edits": [
     {{
       "path": "name-des-skills/scripts/name_des_skills_api.py",
-      "old_string": "EXAKTER bestehender Code der erweitert wird",
-      "new_string": "Bestehender Code PLUS neue Methoden/Features"
+      "marker": "eindeutige Zeile nach der eingefügt werden soll",
+      "insert": "neuer Code der eingefügt wird"
     }}
   ]
 }}
@@ -617,23 +650,81 @@ Du MUSST deine Antwort als JSON zurückgeben. Das Format hängt von der Aktion a
 
 ## EDIT-REGELN FÜR "extend":
 
-1. **old_string**: EXAKT kopieren - jedes Zeichen, jede Einrückung
-2. **new_string**: old_string + deine Erweiterungen
-3. **Typisches Muster**: Finde das Ende einer Klasse/Funktion und füge dort hinzu
+Es gibt DREI Edit-Modi. Bevorzuge **insert_before** für neue Funktionen!
 
-### Beispiel: Neue Methode zur Klasse hinzufügen
+### MODUS 1: insert_before (BEVORZUGT für neue Funktionen/Methoden)
+Finde eine Marker-Zeile und füge Code DAVOR ein. Ideal für neue Methoden vor main().
+
 ```json
 {{
-  "old_string": "    def existing_method(self):\\n        return result\\n\\n\\nclass AnotherClass:",
-  "new_string": "    def existing_method(self):\\n        return result\\n\\n    def new_method(self):\\n        # Neue Funktionalität\\n        pass\\n\\n\\nclass AnotherClass:"
+  "edits": [
+    {{
+      "path": "skill-name/scripts/skill_api.py",
+      "marker": "async def main():",
+      "insert_before": "async def new_function(api, args):\\n    \\\"\\\"\\\"Neue Funktion.\\\"\\\"\\\"\\n    result = await api.do_something()\\n    print(result)\\n\\n\\n"
+    }}
+  ]
 }}
 ```
 
-### Beispiel: Neuen argparse Command hinzufügen
+### MODUS 2: insert (nach Marker)
+Finde eine Marker-Zeile und füge Code DANACH ein. Gut für argparse Commands.
+
 ```json
 {{
-  "old_string": "    args = parser.parse_args()\\n\\n    if args.command == 'status':",
-  "new_string": "    # Neuer Subparser\\n    new_parser = subparsers.add_parser('newcmd', help='New command')\\n    new_parser.add_argument('--flag', help='Flag')\\n\\n    args = parser.parse_args()\\n\\n    if args.command == 'newcmd':\\n        handle_newcmd(args)\\n    elif args.command == 'status':"
+  "edits": [
+    {{
+      "path": "skill-name/scripts/skill_api.py",
+      "marker": "subparsers.add_parser(\"list\"",
+      "insert": "\\n\\n    # New command\\n    new_cmd = subparsers.add_parser(\"newcmd\", help=\"New command\")\\n"
+    }}
+  ]
+}}
+```
+
+### MODUS 3: old_string/new_string (nur für kleine Änderungen)
+Nur verwenden wenn du bestehenden Code ÄNDERN musst (z.B. einen String ändern).
+
+```json
+{{
+  "edits": [
+    {{
+      "path": "skill-name/scripts/skill_api.py",
+      "old_string": "help=\"List all items\"",
+      "new_string": "help=\"List all items with details\""
+    }}
+  ]
+}}
+```
+
+**Marker-Regeln (für insert/insert_before):**
+- Muss EINDEUTIG im File sein
+- Kann Teil einer Zeile sein (z.B. "def my_function(")
+- Whitespace wird ignoriert beim Matching
+
+### Komplettes Beispiel: Dashboard-Optimierung hinzufügen
+```json
+{{
+  "skill_name": "homeassistant",
+  "action": "extend",
+  "summary": "Dashboard-Optimierung hinzugefügt",
+  "edits": [
+    {{
+      "path": "homeassistant/scripts/dashboard_api.py",
+      "marker": "subparsers.add_parser(\"list\"",
+      "insert": "\\n\\n    # Optimize dashboard\\n    optimize_cmd = subparsers.add_parser(\"optimize\", help=\"Optimize dashboard\")\\n    optimize_cmd.add_argument(\"--dashboard\", \"-d\", help=\"Dashboard URL path\")\\n"
+    }},
+    {{
+      "path": "homeassistant/scripts/dashboard_api.py",
+      "marker": "async def main():",
+      "insert_before": "async def optimize_dashboard(api, args):\\n    \\\"\\\"\\\"Optimize dashboard configuration.\\\"\\\"\\\"\\n    config = await api.get_config(args.dashboard)\\n    # Add optimization logic here\\n    print(\\\"Dashboard optimized\\\")\\n\\n\\n"
+    }},
+    {{
+      "path": "homeassistant/scripts/dashboard_api.py",
+      "marker": "elif args.command == \\\"list\\\":",
+      "insert_before": "    elif args.command == \\\"optimize\\\":\\n        await optimize_dashboard(api, args)\\n\\n"
+    }}
+  ]
 }}
 ```
 
@@ -740,9 +831,14 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
         data = json.loads(json_str)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON from Claude response: {e}")
+        logger.error(f"JSON extraction method used: {'brace matching' if start_idx != -1 else 'regex or full text'}")
         logger.error(f"JSON string (first 500 chars): {json_str[:500] if json_str else 'None'}")
         logger.error(f"JSON string (last 500 chars): {json_str[-500:] if json_str and len(json_str) > 500 else json_str}")
-        return {"success": False, "error": f"JSON parse error: {e}"}
+        logger.error(f"Full response length: {len(response_text)}")
+        return {
+            "success": False,
+            "error": f"JSON parse error at position {e.pos}: {e.msg}. The response may be incomplete or malformed."
+        }
 
     skill_name = data.get("skill_name")
     action = data.get("action", "create")
@@ -811,6 +907,15 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
     if not files_written:
         return {"success": False, "error": "No files were written or edited"}
 
+    # Validate Python syntax of written files
+    syntax_errors = validate_python_syntax(skills_base, files_written)
+    if syntax_errors:
+        error_msg = "; ".join(syntax_errors)
+        logger.error(f"Syntax validation failed: {error_msg}")
+        return {"success": False, "error": f"Generated code has syntax errors: {error_msg}"}
+
+    logger.info(f"Syntax validation passed for {len(files_written)} files")
+
     # Auto-generate keywords and examples for the new skill
     skill_path = skills_base / skill_name
     try:
@@ -825,34 +930,57 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
             cmd_list = extract_commands_from_script(script_path)
             commands = [{"name": c.name, "description": c.description} for c in cmd_list]
 
-        # Generate keywords (async, need to run in event loop)
+        # Generate keywords (async)
         # For extend actions, force regeneration to include new commands
-        import asyncio
-        loop = asyncio.get_event_loop()
         should_regenerate = (action == "extend")
 
-        keywords = loop.run_until_complete(
-            ensure_keywords(
+        # Check if we're already in an async context
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in an async context, use await
+            keywords = await ensure_keywords(
                 skill_path,
                 settings.lm_studio_url,
                 settings.lm_studio_model,
                 force_regenerate=should_regenerate,
             )
-        )
+        except RuntimeError:
+            # No running loop, create one
+            loop = asyncio.get_event_loop()
+            keywords = loop.run_until_complete(
+                ensure_keywords(
+                    skill_path,
+                    settings.lm_studio_url,
+                    settings.lm_studio_model,
+                    force_regenerate=should_regenerate,
+                )
+            )
+
         if keywords:
             files_written.append(f"{skill_name}/keywords.json")
             logger.info(f"Generated {len(keywords)} keywords for {skill_name}")
 
         # Generate examples
-        examples = loop.run_until_complete(
-            ensure_examples(
+        try:
+            loop = asyncio.get_running_loop()
+            examples = await ensure_examples(
                 skill_path,
                 settings.lm_studio_url,
                 settings.lm_studio_model,
                 commands,
                 force_regenerate=should_regenerate,
             )
-        )
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+            examples = loop.run_until_complete(
+                ensure_examples(
+                    skill_path,
+                    settings.lm_studio_url,
+                    settings.lm_studio_model,
+                    commands,
+                    force_regenerate=should_regenerate,
+                )
+            )
         if examples:
             files_written.append(f"{skill_name}/examples.json")
             logger.info(f"Generated {len(examples)} examples for {skill_name}")
