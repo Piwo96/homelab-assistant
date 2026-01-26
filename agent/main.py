@@ -26,6 +26,7 @@ from .tool_registry import get_registry, reload_registry
 from .wol import wake_gaming_pc
 from .chat_history import get_history, add_message, clear_history, save_conversation_to_db
 from .response_formatter import format_response, should_format_response
+from .conversational import is_conversational_followup, handle_conversational_followup
 
 # Configure logging
 logging.basicConfig(
@@ -310,6 +311,25 @@ async def process_natural_language(
         if status_msg_id:
             await delete_message(chat_id, status_msg_id, settings)
             status_msg_id = None
+
+    # Check for conversational follow-ups BEFORE classification
+    # These are messages like "verstehe ich nicht" that reference previous context
+    if is_conversational_followup(text, chat_id):
+        response = await handle_conversational_followup(text, chat_id, settings)
+        if response:
+            await remove_status()
+            await send_message(chat_id, response, settings)
+            add_message(chat_id, "user", text)
+            add_message(chat_id, "assistant", response)
+            save_conversation_to_db(
+                chat_id=chat_id,
+                user_message=text,
+                assistant_response=response,
+                user_id=user.id,
+                intent_skill="conversational",
+                intent_confidence=1.0,
+            )
+            return
 
     # Get conversation history for context
     history = get_history(chat_id)

@@ -54,8 +54,8 @@ async def format_response(
     user_question: str,
     raw_output: str,
     settings: Settings,
-    skill: str = "",  # noqa: ARG001
-    action: str = "",  # noqa: ARG001
+    skill: str = "",
+    action: str = "",
 ) -> str:
     """Format raw script output into a conversational response.
 
@@ -69,8 +69,11 @@ async def format_response(
     Returns:
         Formatted conversational response
     """
+    logger.info(f"Formatting response for skill={skill}, action={action}, output_len={len(raw_output)}")
+
     # If output is short and simple, just return it
     if len(raw_output) < 100 and "\n" not in raw_output:
+        logger.debug("Short/simple output - returning as-is")
         return raw_output
 
     # Ensure LM Studio is available
@@ -101,13 +104,13 @@ async def format_response(
 
                 # Validate response isn't empty or too short
                 if len(formatted) > 5:
-                    logger.debug(f"Formatted response: {formatted[:100]}...")
+                    logger.info(f"Formatted {len(raw_output)} chars -> {len(formatted)} chars")
                     return formatted
                 else:
                     logger.warning("LLM returned empty/short response, using raw output")
                     return raw_output
             else:
-                logger.warning(f"LLM formatting failed: {response.status_code}")
+                logger.warning(f"LLM formatting failed: HTTP {response.status_code}")
                 return raw_output
 
     except Exception as e:
@@ -119,7 +122,7 @@ async def format_response(
 async def should_format_response(
     user_question: str,
     raw_output: str,
-    skill: str,  # noqa: ARG001
+    skill: str,
 ) -> bool:
     """Determine if response should be formatted by LLM.
 
@@ -133,10 +136,18 @@ async def should_format_response(
     """
     # Always format if output is long or complex
     if len(raw_output) > 200:
+        logger.debug(f"Format needed: output > 200 chars ({len(raw_output)})")
         return True
 
     # Always format if output has multiple lines
     if raw_output.count("\n") > 3:
+        logger.debug(f"Format needed: output has {raw_output.count(chr(10))} newlines")
+        return True
+
+    # Always format for certain skills that return technical data
+    technical_skills = ["unifi-network", "proxmox", "pihole"]
+    if skill in technical_skills:
+        logger.debug(f"Format needed: technical skill {skill}")
         return True
 
     # Format if question is specific but output is general
@@ -146,6 +157,8 @@ async def should_format_response(
         "nur", "wieviel", "wie viele",  # Specific queries
     ]
     if any(kw in user_question.lower() for kw in specific_keywords):
+        logger.debug("Format needed: specific keyword in question")
         return True
 
+    logger.debug("No formatting needed")
     return False
