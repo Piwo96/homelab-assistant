@@ -332,23 +332,32 @@ async def ensure_examples(
         lm_studio_url: LM Studio API URL
         lm_studio_model: Model to use
         commands: Optional list of commands from skill
-        force_regenerate: Force regeneration even if examples exist
+        force_regenerate: If True, regenerate and MERGE with existing examples
 
     Returns:
         List of examples
     """
-    # Try loading existing examples first
-    if not force_regenerate:
-        existing = load_examples(skill_path)
-        if existing:
-            return existing
+    # Load existing examples
+    existing = load_examples(skill_path)
+
+    # If examples exist and we're not forcing regeneration, return them
+    if existing and not force_regenerate:
+        return existing
 
     # Generate new examples
-    examples = await extract_examples_from_skill(
+    new_examples = await extract_examples_from_skill(
         skill_path, lm_studio_url, lm_studio_model, commands
     )
 
-    if examples:
-        save_examples(skill_path, examples)
+    if new_examples:
+        # Merge with existing examples (avoids duplicates)
+        if existing:
+            merged = merge_examples(existing, new_examples)
+            logger.info(f"Merged {len(new_examples)} new + {len(existing)} existing = {len(merged)} examples")
+            save_examples(skill_path, merged)
+            return merged
+        else:
+            save_examples(skill_path, new_examples)
+            return new_examples
 
-    return examples
+    return existing or []

@@ -792,14 +792,17 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
             commands = [{"name": c.name, "description": c.description} for c in cmd_list]
 
         # Generate keywords (async, need to run in event loop)
+        # For extend actions, force regeneration to include new commands
         import asyncio
         loop = asyncio.get_event_loop()
+        should_regenerate = (action == "extend")
 
         keywords = loop.run_until_complete(
             ensure_keywords(
                 skill_path,
                 settings.lm_studio_url,
                 settings.lm_studio_model,
+                force_regenerate=should_regenerate,
             )
         )
         if keywords:
@@ -813,6 +816,7 @@ async def _parse_and_write_skill_files(response_text: str, settings: Settings) -
                 settings.lm_studio_url,
                 settings.lm_studio_model,
                 commands,
+                force_regenerate=should_regenerate,
             )
         )
         if examples:

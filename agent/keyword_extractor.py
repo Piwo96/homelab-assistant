@@ -234,6 +234,21 @@ def save_keywords(skill_path: Path, keywords: list[str]) -> bool:
         return False
 
 
+def merge_keywords(existing: list[str], new: list[str]) -> list[str]:
+    """Merge new keywords into existing, avoiding duplicates.
+
+    Args:
+        existing: Existing keywords list
+        new: New keywords to add
+
+    Returns:
+        Merged list with no duplicate keywords
+    """
+    # Use set for deduplication (all already lowercase)
+    merged_set = set(existing) | set(new)
+    return sorted(merged_set)
+
+
 async def ensure_keywords(
     skill_path: Path,
     lm_studio_url: str,
@@ -246,23 +261,32 @@ async def ensure_keywords(
         skill_path: Path to skill directory
         lm_studio_url: LM Studio API URL
         lm_studio_model: Model to use
-        force_regenerate: Force regeneration even if keywords exist
+        force_regenerate: If True, regenerate and MERGE with existing keywords
 
     Returns:
         List of keywords
     """
-    # Try loading existing keywords first
-    if not force_regenerate:
-        existing = load_keywords(skill_path)
-        if existing:
-            return existing
+    # Load existing keywords
+    existing = load_keywords(skill_path)
+
+    # If keywords exist and we're not forcing regeneration, return them
+    if existing and not force_regenerate:
+        return existing
 
     # Generate new keywords
-    keywords = await extract_keywords_from_skill(
+    new_keywords = await extract_keywords_from_skill(
         skill_path, lm_studio_url, lm_studio_model
     )
 
-    if keywords:
-        save_keywords(skill_path, keywords)
+    if new_keywords:
+        # Merge with existing keywords (avoids duplicates)
+        if existing:
+            merged = merge_keywords(existing, new_keywords)
+            logger.info(f"Merged {len(new_keywords)} new + {len(existing)} existing = {len(merged)} keywords")
+            save_keywords(skill_path, merged)
+            return merged
+        else:
+            save_keywords(skill_path, new_keywords)
+            return new_keywords
 
-    return keywords
+    return existing or []
