@@ -73,7 +73,9 @@ skills/
 
 Skills are living documents. When you discover constraints, better approaches, common errors, or **new capabilities**: **update the skill** (ask first unless explicitly told to modify freely).
 
-## Sub-Agents
+## Sub-Agents (MANDATORY)
+
+> **⚠️ CRITICAL**: Sub-agents are NOT optional. You MUST spawn them after the specified trigger events. Failure to do so violates the self-annealing principle and degrades system quality over time.
 
 Sub-Agents are specialized background workers that handle specific tasks autonomously. Unlike skills (which are instructions you follow), sub-agents are independent processes you spawn.
 
@@ -99,17 +101,23 @@ Sub-Agents are specialized background workers that handle specific tasks autonom
 - **Global agents (Gemini)**: `~/.gemini/antigravity/agents/` - Available across all projects
 - **Project agents**: `.claude/agents/` - Project-specific agents
 
-### Self-Annealing Workflow with Sub-Agents
+### Mandatory Triggers
+
+**You MUST spawn sub-agents when these conditions are met. This is not optional.**
 
 ```
 You complete a task
         │
-        ├─► Code written?
-        │   └─► Spawn: code-reviewer (background)
+        ├─► Code written or modified?
+        │   └─► MUST spawn: code-reviewer (background)
         │       → Reviews scripts, fixes HIGH/CRITICAL issues
         │
-        └─► Error resolved? New pattern discovered?
-            └─► Spawn: skill-documenter (background)
+        ├─► Skill created or modified?
+        │   └─► MUST spawn: code-reviewer (background)
+        │       → Reviews any scripts in the skill
+        │
+        └─► Error resolved? New pattern discovered? Skill updated?
+            └─► MUST spawn: skill-documenter (background)
                 → Documents learning in relevant skill MD
 ```
 
@@ -118,31 +126,43 @@ You complete a task
 Spawn sub-agents as background tasks using the Task tool:
 
 ```
-# After writing code
+# After writing code - MANDATORY
 Task:
   subagent_type: code-reviewer
   run_in_background: true
   prompt: "Review the code I created: [file paths]"
 
-# After self-annealing (error resolved, new pattern found)
+# After self-annealing (error resolved, new pattern found) - MANDATORY
 Task:
   subagent_type: skill-documenter
   run_in_background: true
   prompt: "Document this learning: [what was learned]"
 ```
 
-### When to Spawn Sub-Agents
+### Mandatory Sub-Agent Checklist
 
-**code-reviewer**: After any code creation or modification
-- New scripts added
-- Existing code changed
-- Bug fixes implemented
+Before completing ANY task, verify:
 
-**skill-documenter**: After any learning event
+- [ ] **Code written/modified?** → MUST spawn `code-reviewer`
+- [ ] **Skill created/modified?** → MUST spawn `code-reviewer` (for scripts) AND `skill-documenter` (for documentation)
+- [ ] **Error resolved?** → MUST spawn `skill-documenter`
+- [ ] **New pattern/constraint discovered?** → MUST spawn `skill-documenter`
+
+### Trigger Conditions (Reference)
+
+**code-reviewer** - MUST spawn when:
+- Any script file created (`.py`, `.sh`, `.ts`, `.js`, etc.)
+- Any script file modified
+- Bug fix implemented in code
+- New skill with scripts created
+
+**skill-documenter** - MUST spawn when:
 - Error was encountered and resolved
 - API limit or constraint discovered
 - Better approach found through trial
 - Edge case handled
+- New skill created (to ensure documentation quality)
+- Existing skill updated with new patterns
 
 ## Operating Principles
 
