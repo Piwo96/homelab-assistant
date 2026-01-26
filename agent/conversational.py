@@ -51,6 +51,17 @@ FOLLOWUP_PATTERNS = [
     r"^ja,?\s+aber",
     r"^nein,?\s+ich",
     r"^ok(ay)?,?\s+aber",
+    # Refinements/corrections - user wants to narrow down previous response
+    r"^ich wollte nur",  # "Ich wollte nur den Garten"
+    r"^ich meinte nur",  # "Ich meinte nur die Einfahrt"
+    r"^nur (den|die|das|im|in|am|an)\b",  # "Nur den Garten", "Nur im Wohnzimmer"
+    r"^zeig.*nur",  # "Zeig mir nur..."
+    r"^ich brauch.*nur",  # "Ich brauche nur..."
+    r"^nicht alles",  # "Nicht alles, nur..."
+    r"^ich.*nicht (alle|alles)",  # "Ich wollte nicht alle"
+    r"^filter.*auf",  # "Filter auf Garten"
+    r"^nur (garten|einfahrt|wohnzimmer|küche|flur|schlafzimmer|bad|keller|garage)",
+    r"^(garten|einfahrt|wohnzimmer|küche|flur|schlafzimmer|bad|keller|garage) nur",
 ]
 
 # Compiled patterns for performance
@@ -141,11 +152,19 @@ basierend auf dem Konversationsverlauf.
 
 **Regeln:**
 1. Beziehe dich auf den Kontext der vorherigen Nachrichten
-2. Erkläre oder verdeutliche was gemeint war
-3. Wenn der User etwas nicht verstanden hat, formuliere es einfacher um
-4. Bleibe freundlich und hilfsbereit
-5. Antworte auf Deutsch
-6. Erwähne NIEMALS interne Begriffe wie "Skills", "Tools", "API", "System"
+2. Wenn der User eine **Einschränkung** möchte ("nur Garten", "ich wollte nur..."):
+   - Filtere die vorherige Antwort auf den gewünschten Teil
+   - Zeige NUR den relevanten Ausschnitt, nicht alles nochmal
+3. Erkläre oder verdeutliche was gemeint war
+4. Wenn der User etwas nicht verstanden hat, formuliere es einfacher um
+5. Bleibe freundlich und hilfsbereit
+6. Antworte auf Deutsch
+7. Erwähne NIEMALS interne Begriffe wie "Skills", "Tools", "API", "System"
+
+**Beispiele für Einschränkungen:**
+- User: "Ich wollte nur den Garten" → Zeige NUR Garten-Events aus der vorherigen Antwort
+- User: "Nur die Personen" → Filtere auf Person-Detektionen
+- User: "Nur heute" → Zeige nur heutige Events
 
 Antworte direkt und natürlich."""
 

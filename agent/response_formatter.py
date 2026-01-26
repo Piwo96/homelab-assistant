@@ -13,41 +13,19 @@ from .wol import ensure_lm_studio_available
 
 logger = logging.getLogger(__name__)
 
-# Prompt for formatting responses
-FORMAT_PROMPT = """Du bist ein freundlicher Smart Home Assistant.
+# Prompt for formatting responses - kept simple for local LLMs
+FORMAT_PROMPT = """Frage: "{user_question}"
 
-## User-Frage
-"{user_question}"
-
-## System-Daten
+Daten:
 {raw_output}
 
-## Deine Aufgabe
+Aufgabe: Beantworte die Frage basierend auf den Daten. Zeige NUR den relevanten Teil.
 
-Beantworte die Frage des Users basierend auf den Daten.
+Beispiel:
+- Frage "Was war im Garten?" → Zeige nur Garten-Events
+- Frage "Läuft mein NAS?" → Antworte "Ja" oder "Nein" mit kurzer Info
 
-**Regeln:**
-1. Beantworte NUR was gefragt wurde
-2. Wenn nach einem bestimmten Ort/Gerät gefragt wurde, zeige NUR diesen Teil
-3. Behalte die Formatierung bei (Emojis, Listen) - aber nur für relevante Teile
-4. Bei Ja/Nein-Fragen: Antworte kurz und klar
-5. Wenn die Daten die Frage nicht beantworten können, sag das ehrlich
-
-**Beispiele:**
-
-Frage: "Was war im Garten los?"
-→ Zeige NUR die Garten-Events, nicht alle Kameras
-
-Frage: "Läuft mein NAS?"
-→ Kurze Antwort: "Ja, dein NAS (VM 102) läuft." oder "Nein, VM 102 ist gestoppt."
-
-Frage: "Haben wir Zugriff auf die Videos?"
-→ Erkläre kurz ob/wie man auf Videos zugreifen kann, keine Event-Liste
-
-Frage: "Wie viele Bewegungen heute?"
-→ Zähle zusammen und antworte mit der Zahl
-
-Antworte direkt und natürlich auf Deutsch."""
+Antwort:"""
 
 
 async def format_response(
@@ -81,8 +59,10 @@ async def format_response(
 
     prompt = FORMAT_PROMPT.format(
         user_question=user_question,
-        raw_output=raw_output[:4000],  # Truncate if too long
+        raw_output=raw_output[:2000],  # Truncate if too long - shorter for local LLMs
     )
+
+    logger.info(f"Format prompt length: {len(prompt)} chars")
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -93,8 +73,8 @@ async def format_response(
                     "messages": [
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.3,  # Low temperature for consistent responses
-                    "max_tokens": 1000,
+                    "temperature": 0.5,  # Slightly higher for local LLMs
+                    "max_tokens": 500,  # Shorter responses expected
                 },
             )
 
@@ -105,12 +85,15 @@ async def format_response(
                 # Validate response isn't empty or too short
                 if len(formatted) > 5:
                     logger.info(f"Formatted {len(raw_output)} chars -> {len(formatted)} chars")
+                    logger.info(f"Formatted response preview: {formatted[:150]}...")
                     return formatted
                 else:
-                    logger.warning("LLM returned empty/short response, using raw output")
+                    logger.warning(f"LLM returned empty/short response ({len(formatted)} chars), using raw output")
+                    logger.warning(f"LLM response was: '{formatted}'")
                     return raw_output
             else:
-                logger.warning(f"LLM formatting failed: HTTP {response.status_code}")
+                body = response.text[:500] if response.text else "(empty)"
+                logger.warning(f"LLM formatting failed: HTTP {response.status_code}, body: {body}")
                 return raw_output
 
     except Exception as e:
@@ -144,17 +127,23 @@ async def should_format_response(
         logger.debug(f"Format needed: output has {raw_output.count(chr(10))} newlines")
         return True
 
-    # Always format for certain skills that return technical data
-    technical_skills = ["unifi-network", "proxmox", "pihole"]
+    # Always format for certain skills that return technical/complex data
+    technical_skills = ["unifi-network", "unifi-protect", "proxmox", "pihole", "homeassistant"]
     if skill in technical_skills:
         logger.debug(f"Format needed: technical skill {skill}")
         return True
 
     # Format if question is specific but output is general
     specific_keywords = [
-        "garten", "einfahrt", "wohnzimmer", "küche",  # Locations
-        "heute", "gestern", "letzte",  # Time
-        "nur", "wieviel", "wie viele",  # Specific queries
+        # Locations (cameras, rooms)
+        "garten", "einfahrt", "wohnzimmer", "küche", "flur", "schlafzimmer",
+        "bad", "keller", "garage", "terrasse", "balkon", "grünstreifen",
+        # Time filters
+        "heute", "gestern", "letzte", "letzten", "vor einer stunde", "diese woche",
+        # Specific queries
+        "nur", "wieviel", "wie viele", "wie viel", "zähl", "zeig mir",
+        # Entity types
+        "person", "tier", "auto", "fahrzeug", "paket", "gesicht",
     ]
     if any(kw in user_question.lower() for kw in specific_keywords):
         logger.debug("Format needed: specific keyword in question")
