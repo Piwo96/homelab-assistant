@@ -127,15 +127,38 @@ def build_system_prompt(registry) -> str:
         return _cached_system_prompt
 
     example_sections = []
-    max_examples_per_skill = 5  # Limit to keep context size manageable
+    max_examples_per_skill = 8  # Limit to keep context size manageable
 
     for skill_name, skill in registry.skills.items():
         if not skill.examples:
             continue
 
         lines = [f"### {skill_name}"]
-        # Limit examples per skill to avoid context overflow
-        for ex in skill.examples[:max_examples_per_skill]:
+
+        # Group examples by action to ensure all actions are represented
+        examples_by_action: dict[str, list] = {}
+        for ex in skill.examples:
+            action = ex.action
+            if action not in examples_by_action:
+                examples_by_action[action] = []
+            examples_by_action[action].append(ex)
+
+        # Select examples: one per action first, then fill up to limit
+        selected_examples = []
+        for action, action_examples in examples_by_action.items():
+            selected_examples.append(action_examples[0])  # First example per action
+
+        # If we have room, add more examples (prefer variety)
+        remaining_slots = max_examples_per_skill - len(selected_examples)
+        if remaining_slots > 0:
+            for action, action_examples in examples_by_action.items():
+                for ex in action_examples[1:]:  # Skip first (already added)
+                    if len(selected_examples) >= max_examples_per_skill:
+                        break
+                    selected_examples.append(ex)
+
+        # Format selected examples
+        for ex in selected_examples:
             if ex.args:
                 # Format args as JSON-like string
                 args_str = ", ".join(f"{k}: {v}" for k, v in ex.args.items())
