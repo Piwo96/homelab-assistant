@@ -1,6 +1,10 @@
 {
   "examples": [
     {"phrase": "Welche Geräte sind online?", "action": "clients"},
+    {"phrase": "Welche Geräte sind im WLAN?", "action": "clients"},
+    {"phrase": "Welche Geräte sind per LAN verbunden?", "action": "clients"},
+    {"phrase": "Welche sind wired?", "action": "clients"},
+    {"phrase": "Kabelgebundene Geräte", "action": "clients"},
     {"phrase": "Netzwerk Status", "action": "health"},
     {"phrase": "WLAN Geräte", "action": "clients"},
     {"phrase": "Verbundene Clients", "action": "clients"},

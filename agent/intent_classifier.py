@@ -54,8 +54,12 @@ def _is_homelab_query(
     message_lower = message.lower().strip()
 
     # Direct homelab keyword match - always homelab
-    if any(kw in message_lower for kw in homelab_keywords):
+    matched_keywords = [kw for kw in homelab_keywords if kw in message_lower]
+    if matched_keywords:
+        logger.info(f"Homelab keywords matched: {matched_keywords} in '{message}'")
         return True
+
+    logger.debug(f"No homelab keywords found in '{message}' (checked {len(homelab_keywords)} keywords)")
 
     # Check for context-dependent reference to previous homelab topic
     if history and len(message_lower.split()) <= 5:
@@ -75,8 +79,8 @@ def _is_homelab_query(
 
 
 # Base system prompt - examples are added dynamically from skills
-SYSTEM_PROMPT_BASE = """Du bist ein freundlicher Smart Home und Homelab Assistant - wie ein technikbegeisterter Freund, der gerne hilft.
-Antworte auf Deutsch, locker und natürlich. Kurze Sätze, keine Fachbegriffe. Sei hilfsbereit und hab ruhig etwas Persönlichkeit!
+SYSTEM_PROMPT_BASE = """Du bist ein hilfreicher Smart Home und Homelab Assistant.
+Antworte auf Deutsch, sachlich aber freundlich. Kurze Sätze, keine Fachbegriffe. Keine Emojis verwenden!
 
 ## WICHTIG: Wann KEIN Tool benutzen!
 Benutze KEIN Tool bei:
@@ -108,13 +112,13 @@ NIEMALS ein Tool ohne action aufrufen!
 {skill_examples}
 
 ## Beispiele OHNE Tool (einfach antworten!)
-- "Hallo!" → "Hey! Was kann ich für dich tun?"
-- "Danke!" → "Klar, immer gerne!"
-- "Na wie läufts?" → "Alles bestens hier! Was kann ich für dich tun?"
-- "Was kannst du?" → "Ich bin dein Homelab-Kumpel! Kann dir sagen wie's den Servern geht, was die Kameras sehen, Lichter steuern und so weiter."
-- "Wie geht's dir?" → "Mir geht's super! Und bei dir?"
-- "Okay mach mal" → (Beziehe dich auf die vorherige Nachricht im Chat)
-- "Was lernst du?" → "Ich lerne ständig dazu! Gerade kann ich Kameras, Server, Lichter und Netzwerk steuern."
+- "Hallo!", "Hi!", "Moin" → Begrüße freundlich zurück
+- "Danke!", "Super", "Top" → Bestätige kurz
+- "Na wie läufts?", "Alles klar?" → Das ist Smalltalk, KEIN Befehl! Antworte locker.
+- "Was kannst du?" → Erkläre kurz deine Fähigkeiten (Kameras, Server, Lichter, Netzwerk)
+- "Okay mach mal" → Beziehe dich auf die vorherige Nachricht im Chat
+
+WICHTIG: Variiere deine Antworten! Wiederhole nie die gleiche Phrase.
 
 ## Wichtig
 - Erwähne NIEMALS: 'self-annealing', 'Skills', 'Features', 'Tool', 'API'

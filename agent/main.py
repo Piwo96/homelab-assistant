@@ -480,15 +480,29 @@ async def process_natural_language(
 
         # Not homelab-related - use LLM response if available (general chat)
         if intent.description and len(intent.description) > 10:
-            # Filter out bad responses that mention internal concepts
+            # Filter out bad responses that mention internal concepts or are lazy fallbacks
             bad_keywords = [
                 "self-annealing", "self_annealing", "selbstverbesserung",
                 "skill updates", "skill-updates", "neue features",
                 "fehlerbehebung", "github sync", "error tracking",
                 "können wir automatisch", "durch die selbstverbesserung",
+                # Lazy fallback responses that get repeated
+                "alles bestens hier",
+                "was kann ich für dich tun",
             ]
             response_lower = intent.description.lower()
             is_bad_response = any(kw in response_lower for kw in bad_keywords)
+
+            # Also filter responses that seem to hallucinate device/network data
+            # when user asked about devices but no tool was called
+            hallucination_indicators = [
+                "trockner", "dampfgarer", "backofen", "wärmeschublade",  # Specific devices
+                "sechs geräte", "drei geräte", "fünf geräte",  # Made-up counts
+                "direkt an der router", "2.4g",  # Technical details without API
+            ]
+            if any(ind in response_lower for ind in hallucination_indicators):
+                logger.warning(f"Detected hallucinated device data: {intent.description[:150]}...")
+                is_bad_response = True
 
             response_text = intent.description
             if is_bad_response:

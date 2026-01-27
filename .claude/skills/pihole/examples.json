@@ -2,6 +2,9 @@
   "examples": [
     {"phrase": "Pi-hole Status", "action": "status"},
     {"phrase": "Ist Pi-hole aktiv?", "action": "status"},
+    {"phrase": "Ist der Adblocker aktiv?", "action": "status"},
+    {"phrase": "Ist der Werbeblocker an?", "action": "status"},
+    {"phrase": "Läuft der Ad-Blocker?", "action": "status"},
     {"phrase": "Wie viel geblockt?", "action": "summary"},
     {"phrase": "DNS Statistiken", "action": "summary"},
     {"phrase": "Werbung blockiert?", "action": "summary"},
