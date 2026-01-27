@@ -110,15 +110,6 @@ class ProtectAPI(UniFiAPI):
         print(f"Available cameras: {', '.join(available)}", file=sys.stderr)
         return None
 
-    def resolve_camera_id_old(self, camera_ref: str) -> Optional[str]:
-        """Resolve camera name to ID. Returns ID if already an ID."""
-    def resolve_camera_id_old(self, camera_ref: str) -> Optional[str]:        """Resolve camera name to ID. Returns ID if already an ID."""
-        cameras = self.get_cameras()
-        for cam in cameras:
-            if cam.get("id") == camera_ref or cam.get("name", "").lower() == camera_ref.lower():
-                return cam.get("id")
-        return None
-
     def get_detections(self, start: int = None, end: int = None, camera_id: str = None,
                        detection_type: str = None) -> list:
         """Get smart detections (license plates, faces, vehicles, persons).
