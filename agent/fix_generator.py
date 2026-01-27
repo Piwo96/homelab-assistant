@@ -5,6 +5,7 @@ Analyzes errors and generates code fixes automatically.
 
 import json
 import logging
+import py_compile
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -13,6 +14,25 @@ from .config import Settings
 from .skill_config import get_skill_dir, get_skill_path, validate_file_path, SKILLS_BASE_PATH
 
 logger = logging.getLogger(__name__)
+
+
+def validate_python_syntax(file_path: Path) -> tuple[bool, str | None]:
+    """Validate Python file syntax before committing.
+
+    Args:
+        file_path: Path to the Python file
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not file_path.suffix == ".py":
+        return True, None  # Not a Python file, skip validation
+
+    try:
+        py_compile.compile(str(file_path), doraise=True)
+        return True, None
+    except py_compile.PyCompileError as e:
+        return False, str(e)
 
 
 async def generate_fix(
@@ -301,8 +321,22 @@ async def apply_fix(fix_data: dict[str, Any], settings: Settings) -> dict[str, A
         error_msg = "; ".join(e.get("error", "Unknown error") for e in errors)
         return {"success": False, "error": error_msg}
 
+    # Validate syntax of all modified Python files BEFORE returning success
+    # This prevents committing corrupted code
+    applied_files = result.get("applied", [])
+    for rel_path in applied_files:
+        file_path = settings.project_root / rel_path
+        is_valid, syntax_error = validate_python_syntax(file_path)
+        if not is_valid:
+            logger.error(f"Syntax error in {rel_path}: {syntax_error}")
+            return {
+                "success": False,
+                "error": f"Syntax-Fehler in {rel_path}: {syntax_error}",
+                "syntax_error": True,
+            }
+
     return {
         "success": True,
-        "files": result.get("applied", []),
+        "files": applied_files,
         "commit_message": fix_data.get("commit_message", "fix: auto-generated fix"),
     }
