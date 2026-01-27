@@ -244,8 +244,12 @@ async def request_error_fix_approval(
     except Exception as e:
         logger.error(f"Failed to create fix PR: {e}")
 
-        # Cleanup: switch back to original branch and delete fix branch
+        # Cleanup: discard uncommitted changes and switch back to original branch
+        # IMPORTANT: Uncommitted changes persist across branch switches when branches
+        # share the same base commit, so we must explicitly discard them
         try:
+            # Discard all uncommitted changes first
+            git.discard_changes()
             git.checkout(original_branch)
             git.delete_branch(branch_name, force=True)
         except Exception:

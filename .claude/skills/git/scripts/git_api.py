@@ -417,6 +417,29 @@ class GitAPI:
 
         return {"success": True, "branch": branch_name}
 
+    def discard_changes(self, paths: list = None) -> Dict:
+        """Discard all uncommitted changes in the working directory.
+
+        This is essential for cleanup after failed operations, as uncommitted
+        changes persist across branch switches when branches share the same base.
+
+        Args:
+            paths: Optional list of paths to discard. If None, discards all.
+
+        Returns:
+            Dict with success status
+        """
+        if paths:
+            args = ["checkout", "--"] + paths
+        else:
+            args = ["checkout", "--", "."]
+
+        returncode, _, stderr = self._run_git(*args)
+        if returncode != 0:
+            return {"success": False, "error": stderr}
+
+        return {"success": True}
+
     def delete_branch(self, branch_name: str, force: bool = False) -> Dict:
         """Delete a branch.
 
