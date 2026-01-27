@@ -171,16 +171,55 @@ async def request_error_fix_approval(
     git = GitAPI()
     original_branch = git.get_current_branch()
 
+    # Retry loop for syntax errors - give Claude a chance to fix its own mistakes
+    max_retries = 2
+    current_fix_data = fix_data
+
     try:
         # Create fix branch
         branch_result = git.create_branch(branch_name)
         if not branch_result.get("success"):
             raise Exception(f"Branch creation failed: {branch_result.get('error')}")
 
-        # Apply the fix
-        apply_result = await apply_fix(fix_data, settings)
-        if not apply_result.get("success"):
-            raise Exception(f"Fix application failed: {apply_result.get('error')}")
+        for attempt in range(max_retries):
+            # Apply the fix
+            apply_result = await apply_fix(current_fix_data, settings)
+
+            if apply_result.get("success"):
+                break  # Success, continue with commit
+
+            # Check if this is a syntax error we can retry
+            if apply_result.get("syntax_error") and attempt < max_retries - 1:
+                syntax_error = apply_result.get("error", "Unknown syntax error")
+                logger.warning(f"Syntax error on attempt {attempt + 1}, retrying: {syntax_error}")
+
+                # Discard the broken changes before retry
+                git.discard_changes()
+
+                # Generate a new fix with the syntax error as additional context
+                retry_context = (
+                    f"{context}\n\n"
+                    f"WICHTIG: Der vorherige Fix hatte einen Syntax-Fehler:\n{syntax_error}\n"
+                    f"Bitte korrigiere den Code und stelle sicher, dass die Syntax korrekt ist."
+                )
+
+                new_fix_data = await generate_fix(
+                    error_type=error_type,
+                    error_message=f"{error_message}\n\nPrevious fix had syntax error: {syntax_error}",
+                    skill=skill,
+                    action=action,
+                    context=retry_context,
+                    settings=settings,
+                )
+
+                if new_fix_data and new_fix_data.get("confidence", 0) >= MIN_FIX_CONFIDENCE:
+                    current_fix_data = new_fix_data
+                    logger.info(f"Retry fix generated, attempting again...")
+                    continue
+                else:
+                    raise Exception(f"Retry fix generation failed after syntax error: {syntax_error}")
+            else:
+                raise Exception(f"Fix application failed: {apply_result.get('error')}")
 
         # Commit changes
         commit_msg = fix_data.get("commit_message", f"fix({skill}): auto-fix for {error_type}")
