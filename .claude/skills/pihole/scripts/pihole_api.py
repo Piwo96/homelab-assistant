@@ -312,6 +312,50 @@ def format_output(data: Any, format_type: str = "table") -> str:
     return str(data)
 
 
+def execute(action: str, args: dict) -> Any:
+    """Execute a Pi-hole action directly (no CLI).
+
+    Args:
+        action: Command name (e.g. "summary", "status", "block")
+        args: Dict of arguments (e.g. {"domain": "example.com"})
+
+    Returns:
+        Raw Python data (dict/list)
+
+    Raises:
+        ValueError: Unknown action
+        KeyError: Missing required argument
+    """
+    api = PiHoleAPI()
+
+    if action == "info":
+        return api.get_info()
+    elif action == "summary":
+        return api.get_summary()
+    elif action == "status":
+        return api.get_status()
+    elif action == "enable":
+        return api.enable_blocking()
+    elif action == "disable":
+        return api.disable_blocking(int(args.get("duration", 0)))
+    elif action == "top-domains":
+        return api.get_top_domains(int(args.get("count", 10)))
+    elif action == "top-clients":
+        return api.get_top_clients(int(args.get("count", 10)))
+    elif action == "queries":
+        return api.get_queries(domain=args.get("domain"), client=args.get("client"))
+    elif action == "block":
+        return api.add_to_blocklist(args["domain"], args.get("comment", ""))
+    elif action == "allow":
+        return api.add_to_allowlist(args["domain"], args.get("comment", ""))
+    elif action == "lists":
+        return api.get_lists()
+    elif action == "gravity-update":
+        return api.update_gravity()
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pi-hole API Client")
     parser.add_argument("--json", action="store_true", help="Output as JSON")

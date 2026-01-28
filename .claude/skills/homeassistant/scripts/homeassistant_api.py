@@ -261,6 +261,92 @@ class HomeAssistantAPI:
         return self.call_service("script", "turn_off", {"entity_id": script_id})
 
 
+def execute(action: str, args: dict) -> Any:
+    """Execute a Home Assistant action directly (no CLI).
+
+    Args:
+        action: Command name (e.g. "turn-on", "entities", "status")
+        args: Dict of arguments (e.g. {"entity_id": "light.living_room"})
+
+    Returns:
+        Raw Python data (dict/list)
+
+    Raises:
+        ValueError: Unknown action
+        KeyError: Missing required argument
+    """
+    api = HomeAssistantAPI()
+
+    if action == "status":
+        return {"status": api.get_status(), "config": api.get_config()}
+    elif action == "config":
+        return api.get_config()
+    elif action == "components":
+        return api.get_components()
+    elif action == "entities":
+        states = api.get_states()
+        if args.get("domain"):
+            states = [s for s in states if s["entity_id"].startswith(f"{args['domain']}.")]
+        if args.get("state"):
+            states = [s for s in states if s["state"] == args["state"]]
+        if args.get("area"):
+            states = [s for s in states if s.get("attributes", {}).get("area_id") == args["area"]]
+        return states
+    elif action == "get-state":
+        return api.get_state(args["entity_id"])
+    elif action in ("turn-on", "turn_on"):
+        kwargs = {}
+        if args.get("brightness") is not None:
+            kwargs["brightness"] = int(args["brightness"])
+        if args.get("color_temp") is not None:
+            kwargs["color_temp"] = int(args["color_temp"])
+        return api.turn_on(args["entity_id"], **kwargs)
+    elif action in ("turn-off", "turn_off"):
+        return api.turn_off(args["entity_id"])
+    elif action == "toggle":
+        return api.toggle(args["entity_id"])
+    elif action == "call-service":
+        data = {}
+        if args.get("entity"):
+            data["entity_id"] = args["entity"]
+        if args.get("data"):
+            extra = args["data"]
+            if isinstance(extra, str):
+                extra = json.loads(extra)
+            data.update(extra)
+        return api.call_service(args["domain"], args["service"], data)
+    elif action == "list-automations":
+        return api.list_automations()
+    elif action == "trigger":
+        return api.trigger_automation(args["automation_id"])
+    elif action == "enable":
+        return api.turn_on(args["automation_id"])
+    elif action == "disable":
+        return api.turn_off(args["automation_id"])
+    elif action == "reload-automations":
+        return api.reload_automations()
+    elif action == "list-scenes":
+        return api.list_scenes()
+    elif action == "activate-scene":
+        return api.activate_scene(args["scene_id"])
+    elif action == "list-scripts":
+        return api.list_scripts()
+    elif action == "run-script":
+        return api.run_script(args["script_id"])
+    elif action == "stop-script":
+        return api.stop_script(args["script_id"])
+    elif action == "history":
+        hours = int(args.get("hours", 24))
+        start_time = datetime.now() - timedelta(hours=hours)
+        return api.get_history(args.get("entity_id"), start_time)
+    elif action == "logbook":
+        hours = int(args.get("hours", 1))
+        start_time = datetime.now() - timedelta(hours=hours)
+        return api.get_logbook(start_time)
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Home Assistant API Client")
     parser.add_argument("--json", action="store_true", help="Output as JSON")

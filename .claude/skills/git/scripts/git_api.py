@@ -674,6 +674,53 @@ class GitAPI:
             return {"success": False, "error": "Konnte PR-Info nicht parsen"}
 
 
+def execute(action: str, args: dict):
+    """Execute a Git action directly (no CLI).
+
+    Args:
+        action: Command name (e.g. "status", "commit", "push")
+        args: Dict of arguments (e.g. {"message": "fix: bug"})
+
+    Returns:
+        Raw Python data (dict)
+
+    Raises:
+        ValueError: Unknown action
+    """
+    git = GitAPI()
+
+    if action == "status":
+        return git.status()
+    elif action == "commit":
+        return git.commit(message=args.get("message"))
+    elif action == "push":
+        return git.push()
+    elif action == "commit-and-push":
+        return git.commit_and_push(message=args.get("message"))
+    elif action == "log":
+        return git.log(count=int(args.get("count", 5)))
+    elif action == "create-branch":
+        return git.create_branch(args["branch_name"], checkout=args.get("checkout", True))
+    elif action == "checkout":
+        return git.checkout(args["branch_name"])
+    elif action == "delete-branch":
+        return git.delete_branch(args["branch_name"], force=args.get("force", False))
+    elif action == "merge":
+        return git.merge_branch(args["branch_name"], message=args.get("message"))
+    elif action == "pull":
+        return git.pull()
+    elif action == "create-pr":
+        return git.create_pr(args["title"], args["body"], base=args.get("base", "master"))
+    elif action == "merge-pr":
+        return git.merge_pr(args["pr_number"], delete_branch=args.get("delete_branch", True))
+    elif action == "close-pr":
+        return git.close_pr(args["pr_number"], delete_branch=args.get("delete_branch", True))
+    elif action == "pr-info":
+        return git.get_pr_info(args["pr_number"])
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Git operations for Homelab Assistant",

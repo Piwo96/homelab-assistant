@@ -1,84 +1,19 @@
-"""Skill execution - maps intents to skill script calls using dynamic registry."""
+"""Skill execution - maps intents to skill script calls using dynamic imports."""
 
 import asyncio
+import inspect
+import json
 import logging
-import subprocess
-from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from .config import Settings
 from .models import IntentResult, SkillExecutionResult, is_admin_required
-from .skill_loader import SkillCommand, SkillDefinition
+from .skill_loader import SkillCommand
+from .skill_importer import get_execute_fn
 from .tool_registry import get_registry
 from .error_approval import request_error_fix_approval
 
 logger = logging.getLogger(__name__)
-
-
-def build_command(
-    intent: IntentResult, skill: SkillDefinition, script_path: Optional[Path] = None
-) -> List[str]:
-    """Build command line arguments for a skill script.
-
-    Args:
-        intent: Parsed intent from classifier
-        skill: Skill definition from registry
-        script_path: Specific script to use (overrides skill.script_path)
-
-    Returns:
-        Command list for subprocess
-    """
-    # Use provided script_path or fall back to skill's primary script
-    target_script = script_path or skill.script_path
-    if not target_script:
-        return []
-
-    cmd = ["python", str(target_script)]
-
-    # Use JSON output for structured data - the response_formatter will
-    # convert it to natural language for the user.
-    # Only add for skills whose scripts support --json flag.
-    json_skills = {"unifi-network", "unifi-protect", "proxmox", "pihole", "homeassistant"}
-    if skill.name in json_skills:
-        cmd.append("--json")
-
-    # Action is the subcommand
-    if intent.action:
-        cmd.append(intent.action)
-
-    # Determine positional argument order based on skill and action
-    # Proxmox action commands: vmid first, then optional node
-    # Other commands: standard order
-    proxmox_action_commands = ["start", "stop", "shutdown", "reboot"]
-    if skill.name == "proxmox" and intent.action in proxmox_action_commands:
-        positional_args = ["vmid", "node"]
-    else:
-        # Generic positional args for all skills
-        # Order: most specific first (IDs), then general (node, domain)
-        positional_args = [
-            "entity_id",  # homeassistant
-            "id",         # unifi-protect (camera, light)
-            "mac",        # unifi-network (clients, devices)
-            "vmid",       # proxmox
-            "node",       # proxmox
-            "domain",     # pihole, homeassistant
-            "storage",    # proxmox
-            "rule_id",    # unifi-network port forwards
-        ]
-
-    # First pass: add positional args in order
-    for pos_arg in positional_args:
-        if pos_arg in intent.args:
-            cmd.append(str(intent.args[pos_arg]))
-
-    # Second pass: add remaining args as flags
-    for key, value in intent.args.items():
-        if key in ("action",) or key in positional_args:
-            continue  # Already handled
-        cmd.append(f"--{key}")
-        cmd.append(str(value))
-
-    return cmd
 
 
 async def execute_skill(
@@ -159,74 +94,79 @@ async def execute_skill(
             action=intent.action,
         )
 
-    # Determine which script to use: command's script or skill's primary script
+    # Determine which script to use
     script_to_use = matching_command.script_path if matching_command else skill.script_path
     logger.debug(f"Using script {script_to_use} for action {action_normalized}")
 
-    # Build command
-    cmd = build_command(intent, skill, script_to_use)
-    if not cmd:
+    # Try direct Python import
+    execute_fn = get_execute_fn(script_to_use)
+
+    if execute_fn:
+        return await _execute_direct(execute_fn, intent, skill_name, action_normalized, settings)
+
+    return SkillExecutionResult(
+        success=False,
+        output="",
+        error=f"Kein execute() in {script_to_use}",
+        skill=skill_name,
+        action=intent.action,
+    )
+
+
+async def _execute_direct(
+    execute_fn,
+    intent: IntentResult,
+    skill_name: str,
+    action: str,
+    settings: Settings,
+) -> SkillExecutionResult:
+    """Execute skill via direct Python import.
+
+    Handles both sync and async execute() functions.
+    Sync functions run in a thread pool to avoid blocking the event loop.
+    """
+    try:
+        if inspect.iscoroutinefunction(execute_fn):
+            # Async function (e.g. dashboard_api) - await directly with timeout
+            result = await asyncio.wait_for(
+                execute_fn(action, intent.args),
+                timeout=30.0,
+            )
+        else:
+            # Sync function - run in thread pool with timeout
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, lambda: execute_fn(action, intent.args)
+                ),
+                timeout=30.0,
+            )
+
+        # Serialize result to JSON string for response_formatter compatibility
+        if isinstance(result, (dict, list)):
+            output = json.dumps(result, indent=2, default=str)
+        elif isinstance(result, bytes):
+            output = f"Binary data ({len(result)} bytes)"
+        elif result is not None:
+            output = str(result)
+        else:
+            output = ""
+
         return SkillExecutionResult(
-            success=False,
-            output="",
-            error=f"Konnte Command nicht bauen für {skill_name}:{intent.action}",
+            success=True,
+            output=format_skill_output(output),
             skill=skill_name,
             action=intent.action,
         )
 
-    logger.info(f"Executing: {' '.join(cmd)}")
-
-    # Execute in thread pool to avoid blocking
-    loop = asyncio.get_event_loop()
-    try:
-        result = await loop.run_in_executor(
-            None,
-            lambda: subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                cwd=str(settings.project_root),
-            ),
-        )
-
-        if result.returncode == 0:
-            return SkillExecutionResult(
-                success=True,
-                output=format_skill_output(result.stdout, skill_name, intent.action),
-                skill=skill_name,
-                action=intent.action,
-            )
-        else:
-            # Request admin approval for error fix
-            error_msg = result.stderr or f"Exit code {result.returncode}"
-            asyncio.create_task(
-                request_error_fix_approval(
-                    error_type="ScriptError",
-                    error_message=error_msg[:500],
-                    skill=skill_name,
-                    action=intent.action,
-                    context=f"Command: {' '.join(cmd)}",
-                    settings=settings,
-                )
-            )
-            return SkillExecutionResult(
-                success=False,
-                output="",
-                error=result.stderr or f"Script fehlgeschlagen (Exit Code: {result.returncode})",
-                skill=skill_name,
-                action=intent.action,
-            )
-
-    except subprocess.TimeoutExpired:
-        # Request admin approval for timeout error fix
+    except asyncio.TimeoutError:
         asyncio.create_task(
             request_error_fix_approval(
                 error_type="TimeoutExpired",
                 error_message="Script timeout after 30s",
                 skill=skill_name,
                 action=intent.action,
-                context=f"Command: {' '.join(cmd)}",
+                context=f"Direct call: {action}({intent.args})",
                 settings=settings,
             )
         )
@@ -237,15 +177,41 @@ async def execute_skill(
             skill=skill_name,
             action=intent.action,
         )
+    except SystemExit:
+        # API classes call sys.exit(1) on auth/connection errors
+        asyncio.create_task(
+            request_error_fix_approval(
+                error_type="SystemExit",
+                error_message="API connection or auth error (sys.exit called)",
+                skill=skill_name,
+                action=intent.action,
+                context=f"Direct call: {action}({intent.args})",
+                settings=settings,
+            )
+        )
+        return SkillExecutionResult(
+            success=False,
+            output="",
+            error="API-Verbindungs- oder Authentifizierungsfehler",
+            skill=skill_name,
+            action=intent.action,
+        )
+    except (ValueError, KeyError) as e:
+        return SkillExecutionResult(
+            success=False,
+            output="",
+            error=str(e),
+            skill=skill_name,
+            action=intent.action,
+        )
     except Exception as e:
-        # Request admin approval for execution error fix
         asyncio.create_task(
             request_error_fix_approval(
                 error_type=type(e).__name__,
                 error_message=str(e),
                 skill=skill_name,
                 action=intent.action,
-                context=f"Command: {' '.join(cmd)}",
+                context=f"Direct call: {action}({intent.args})",
                 settings=settings,
             )
         )
@@ -258,23 +224,14 @@ async def execute_skill(
         )
 
 
-def format_skill_output(output: str, skill: str = "", action: str = "") -> str:  # noqa: ARG001
-    """Format skill output for Telegram display.
+def format_skill_output(output: str) -> str:
+    """Truncate very large outputs for LLM context limits.
 
-    Scripts now have their own user-friendly formatting, so we just
-    pass through the output and truncate for Telegram limits.
-
-    Args:
-        output: Output from skill script (already formatted)
-        skill: Skill name (unused, kept for compatibility)
-        action: Action that was executed (unused, kept for compatibility)
-
-    Returns:
-        Formatted string for Telegram
+    Qwen3 context is ~32K tokens (~120K chars). We limit to 100K chars
+    to leave room for the formatting prompt and output tokens.
     """
-    # Scripts output formatted text directly - just truncate for Telegram
-    if len(output) > 4000:
-        return output[:3950] + "\n\n... (gekürzt)"
+    if len(output) > 100000:
+        return output[:99950] + "\n\n... (gekürzt)"
     return output.strip()
 
 

@@ -78,7 +78,7 @@ async def format_response(
 
     prompt = FORMAT_PROMPT.format(
         user_question=user_question,
-        raw_output=raw_output[:2000],  # Truncate if too long - shorter for local LLMs
+        raw_output=raw_output[:80000],  # Qwen3 handles 32K tokens (~120K chars), leave room for prompt + output
     )
 
     logger.info(f"Format prompt length: {len(prompt)} chars")

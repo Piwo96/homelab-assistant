@@ -188,6 +188,70 @@ class ProtectAPI(UniFiAPI):
         return self._protect_request("PATCH", f"/lights/{light_id}", {"lightOnSettings": {"isLedForceOn": on}})
 
 
+def execute(action: str, args: dict):
+    """Execute a UniFi Protect action directly (no CLI).
+
+    Args:
+        action: Command name (e.g. "cameras", "events", "snapshot")
+        args: Dict of arguments (e.g. {"id": "camera_id", "last": "24h"})
+
+    Returns:
+        Raw Python data (dict/list/bytes)
+
+    Raises:
+        ValueError: Unknown action
+        KeyError: Missing required argument
+    """
+    api = ProtectAPI()
+
+    if action == "cameras":
+        return api.get_cameras()
+    elif action == "camera":
+        return api.get_camera(args["id"])
+    elif action == "snapshot":
+        data = api.get_snapshot(args["id"], args.get("width"), args.get("height"))
+        output = args.get("output") or f"snapshot_{args['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        with open(output, "wb") as f:
+            f.write(data)
+        return {"file": output, "size": len(data)}
+    elif action == "events":
+        hours = int(args.get("last", "24h").replace("h", ""))
+        end = int(datetime.now().timestamp() * 1000)
+        start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
+        types = args.get("types", "").split(",") if args.get("types") else None
+        camera_id = None
+        if args.get("camera"):
+            camera_id = api.resolve_camera_id(args["camera"])
+            if not camera_id:
+                raise ValueError(f"Camera not found: {args['camera']}")
+        events = api.get_events(start, end, types, camera_id)
+        if args.get("limit"):
+            events = events[:int(args["limit"])]
+        return events
+    elif action == "detections":
+        hours = int(args.get("last", "6h").replace("h", ""))
+        end = int(datetime.now().timestamp() * 1000)
+        start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
+        camera_id = None
+        if args.get("camera"):
+            camera_id = api.resolve_camera_id(args["camera"])
+            if not camera_id:
+                raise ValueError(f"Camera not found: {args['camera']}")
+        return api.get_detections(start, end, camera_id, args.get("type"))
+    elif action == "nvr":
+        return api.get_nvr()
+    elif action == "sensors":
+        return api.get_sensors()
+    elif action == "lights":
+        return api.get_lights()
+    elif action == "light-on":
+        return api.control_light(args["id"], True)
+    elif action == "light-off":
+        return api.control_light(args["id"], False)
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="UniFi Protect API Client")
     parser.add_argument("--json", action="store_true", help="Output as JSON")

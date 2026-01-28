@@ -223,6 +223,42 @@ async def backup_dashboard(api, dashboard_path: str = None) -> str:
     return backup_filename
 
 
+async def execute(action: str, args: dict):
+    """Execute a Dashboard action directly (no CLI). Async!
+
+    Args:
+        action: Command name (e.g. "get", "set", "list")
+        args: Dict of arguments (e.g. {"dashboard": "my-dashboard"})
+
+    Returns:
+        Raw Python data (dict/list)
+
+    Raises:
+        ValueError: Unknown action
+        KeyError: Missing required argument
+    """
+    api = DashboardAPI()
+
+    if action == "get":
+        return await api.get_config(args.get("dashboard"))
+    elif action == "set":
+        config = load_dashboard_file(args["file"])
+        await api.save_config(config, args.get("dashboard"))
+        return {"success": True}
+    elif action == "list":
+        return await api.get_dashboards()
+    elif action == "optimize":
+        current_config = await api.get_config(args.get("dashboard"))
+        optimized_config, changes = await optimize_dashboard_config(current_config)
+        if not changes:
+            return {"optimized": False, "message": "Already optimized"}
+        if not args.get("dry_run"):
+            await api.save_config(optimized_config, args.get("dashboard"))
+        return {"optimized": True, "changes": changes, "dry_run": bool(args.get("dry_run"))}
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Home Assistant Dashboard API")
     subparsers = parser.add_subparsers(dest="command", help="Commands")

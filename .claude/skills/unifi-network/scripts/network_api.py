@@ -372,6 +372,68 @@ def format_output(data: Any, format_type: str = "table") -> str:
     return str(data)
 
 
+def execute(action: str, args: dict) -> Any:
+    """Execute a UniFi Network action directly (no CLI).
+
+    Args:
+        action: Command name (e.g. "clients", "devices", "kick")
+        args: Dict of arguments (e.g. {"mac": "aa:bb:cc:dd:ee:ff"})
+
+    Returns:
+        Raw Python data (dict/list)
+
+    Raises:
+        ValueError: Unknown action
+        KeyError: Missing required argument
+    """
+    api = UniFiAPI()
+
+    if action == "detect":
+        return {"controller_type": api.controller_type, "base_url": api.base_url}
+    elif action == "health":
+        return api.get_health()
+    elif action == "sysinfo":
+        return api.get_sysinfo()
+    elif action == "clients":
+        return api.get_clients(active_only=not args.get("all", False))
+    elif action == "kick":
+        return api.kick_client(args["mac"])
+    elif action == "block":
+        return api.block_client(args["mac"])
+    elif action == "unblock":
+        return api.unblock_client(args["mac"])
+    elif action == "devices":
+        return api.get_devices()
+    elif action == "restart-device":
+        return api.restart_device(args["mac"])
+    elif action == "adopt":
+        return api.adopt_device(args["mac"])
+    elif action == "networks":
+        return api.get_networks()
+    elif action == "wifis":
+        return api.get_wifis()
+    elif action == "dpi-stats":
+        return api.get_dpi_stats()
+    elif action == "port-forwards":
+        return api.get_port_forwards()
+    elif action == "create-port-forward":
+        return api.create_port_forward(
+            name=args["name"],
+            dst_port=int(args["dst_port"]),
+            fwd_ip=args["fwd_ip"],
+            fwd_port=int(args["fwd_port"]),
+            proto=args.get("proto", "tcp_udp"),
+        )
+    elif action == "delete-port-forward":
+        return api.delete_port_forward(args["rule_id"])
+    elif action == "firewall-rules":
+        return api.get_firewall_rules()
+    elif action == "firewall-groups":
+        return api.get_firewall_groups()
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="UniFi Controller API Client")
     parser.add_argument("--json", action="store_true", help="Output as JSON")

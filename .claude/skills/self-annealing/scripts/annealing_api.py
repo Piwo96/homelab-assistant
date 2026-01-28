@@ -501,6 +501,60 @@ class SelfAnnealing:
         return results
 
 
+def execute(action: str, args: dict):
+    """Execute a Self-Annealing action directly (no CLI).
+
+    Args:
+        action: Command name (e.g. "log-error", "anneal", "full-cycle")
+        args: Dict of arguments
+
+    Returns:
+        Raw Python data (dict/list)
+
+    Raises:
+        ValueError: Unknown action
+        KeyError: Missing required argument
+    """
+    annealing = SelfAnnealing()
+
+    if action == "log-error":
+        return annealing.error_store.log_error(args["error"], args["context"])
+    elif action == "log-resolution":
+        result = annealing.error_store.log_resolution(args["error_id"], args["resolution"])
+        if not result:
+            raise ValueError(f"Error not found: {args['error_id']}")
+        return result
+    elif action == "list-errors":
+        return annealing.error_store.list_errors(
+            unresolved_only=args.get("unresolved", False),
+            limit=int(args.get("limit", 20)),
+        )
+    elif action == "list-patterns":
+        return annealing.error_store.list_patterns()
+    elif action == "list-skills":
+        return annealing.skill_manager.list_skills()
+    elif action == "update-skill":
+        return annealing.skill_manager.update_skill(
+            args["skill"], args.get("section", "edge_cases"), args["content"],
+        )
+    elif action == "create-skill":
+        return annealing.skill_manager.create_skill(args["name"], args["description"])
+    elif action == "anneal":
+        return annealing.anneal(args["message"], push=not args.get("no_push", False))
+    elif action == "learn":
+        return annealing.learn_from_error(args["error_id"], skill_name=args.get("skill"))
+    elif action == "full-cycle":
+        return annealing.full_cycle(
+            error=args["error"],
+            context=args["context"],
+            resolution=args["resolution"],
+            skill_name=args.get("skill"),
+            commit_message=args.get("message"),
+        )
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Self-Annealing: Error tracking, skill updates, and auto-commit",

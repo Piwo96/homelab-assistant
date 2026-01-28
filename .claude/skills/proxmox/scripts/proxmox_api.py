@@ -226,6 +226,95 @@ class ProxmoxAPI:
         return self.post(f"/nodes/{node}/{vm_type}/{vmid}/snapshot/{name}/rollback")
 
 
+def execute(action: str, args: dict) -> Any:
+    """Execute a Proxmox action directly (no CLI).
+
+    Args:
+        action: Command name (e.g. "vms", "start", "containers")
+        args: Dict of arguments (e.g. {"vmid": 100, "node": "pve"})
+
+    Returns:
+        Raw Python data (dict/list)
+
+    Raises:
+        ValueError: Unknown action
+        KeyError: Missing required argument
+    """
+    api = ProxmoxAPI()
+
+    # Auto-detect node for commands that support it
+    node_optional_actions = {
+        "node-status", "vms", "containers", "overview",
+        "start", "stop", "shutdown", "reboot",
+    }
+    if action in node_optional_actions:
+        node = args.get("node")
+        if not node:
+            node = api.get_default_node()
+        else:
+            valid_nodes = [n.get("node") for n in api.get_nodes()]
+            if node not in valid_nodes:
+                node = api.get_default_node()
+        args = {**args, "node": node}
+
+    if action == "nodes":
+        return api.get_nodes()
+    elif action == "node-status":
+        return api.get_node_status(args["node"])
+    elif action == "vms":
+        return api.get_vms(args["node"])
+    elif action == "containers":
+        return api.get_containers(args["node"])
+    elif action == "status":
+        # Try VM first, then container
+        try:
+            return api.get_vm_status(args["node"], int(args["vmid"]))
+        except SystemExit:
+            return api.get_container_status(args["node"], int(args["vmid"]))
+    elif action in ("start", "stop", "shutdown", "reboot"):
+        vmid = int(args["vmid"])
+        # Try VM first, then container
+        try:
+            return api.vm_action(args["node"], vmid, action)
+        except SystemExit:
+            return api.container_action(args["node"], vmid, action)
+    elif action == "storage":
+        return api.get_storage(args.get("node"))
+    elif action == "storage-info":
+        return api.get_storage_status(args["node"], args["storage"])
+    elif action == "lxc-config":
+        return api.get_container_config(args["node"], int(args["vmid"]))
+    elif action == "add-mount":
+        return api.add_mount_to_lxc(
+            args["node"], int(args["vmid"]), int(args["mp"]),
+            args["source"], args["target"], args.get("readonly", False),
+        )
+    elif action == "remove-mount":
+        return api.remove_mount_from_lxc(
+            args["node"], int(args["vmid"]), int(args["mp"]),
+        )
+    elif action == "snapshots":
+        vm_type = "lxc" if args.get("lxc") else "qemu"
+        return api.get_snapshots(args["node"], int(args["vmid"]), vm_type)
+    elif action == "snapshot":
+        vm_type = "lxc" if args.get("lxc") else "qemu"
+        return api.create_snapshot(args["node"], int(args["vmid"]), args["name"], vm_type)
+    elif action == "rollback":
+        vm_type = "lxc" if args.get("lxc") else "qemu"
+        return api.rollback_snapshot(args["node"], int(args["vmid"]), args["name"], vm_type)
+    elif action == "overview":
+        node = args["node"]
+        return {
+            "node": node,
+            "status": api.get_node_status(node),
+            "vms": api.get_vms(node),
+            "containers": api.get_containers(node),
+            "storage": api.get_storage(node),
+        }
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+
 def format_output(data: Any, format_type: str = "table") -> str:
     """Format output for display."""
     if format_type == "json":
