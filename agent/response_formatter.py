@@ -5,6 +5,7 @@ conversational response that directly answers the user's question.
 """
 
 import logging
+import re
 
 import httpx
 
@@ -13,25 +14,29 @@ from .wol import ensure_lm_studio_available
 
 logger = logging.getLogger(__name__)
 
-# Prompt for formatting responses - encourages friendly, conversational tone
-FORMAT_PROMPT = """Du bist ein Homelab-Assistent. Beantworte die Frage basierend auf den Daten.
+# Prompt for formatting responses - converts JSON data to natural language
+FORMAT_PROMPT = """Du bist ein Homelab-Assistent. Beantworte die Frage basierend auf den JSON-Daten.
 
-## Stil
-- Sachlich und präzise
+## Regeln
+- Antworte auf Deutsch, sachlich und präzise
 - Kurze Sätze, kein Fachchinesisch
-- Keine Emojis verwenden!
+- Keine Emojis!
 - Fasse zusammen statt aufzulisten (außer bei vielen Einträgen)
-- Fokus auf die Fakten, wenig Floskeln
+- Gib NUR Informationen aus den Daten wieder, erfinde NICHTS dazu
+- Bei JSON-Daten: extrahiere die relevanten Felder und formuliere natürlich
 
-## Beispiele für gute Antworten
-Schlecht: "- 14:03 - Person\\n- 14:04 - Person"
-Gut: "Im Garten waren heute zwei Personen zu sehen, zuletzt um 14:04 Uhr."
+## Beispiele
+Frage: "Wann war jemand im Garten?"
+Daten: [{{"type": "motion", "camera": "Garten", "timestamp": "14:03", "smart": ["person"]}}]
+Gut: "Im Garten wurde zuletzt um 14:03 Uhr eine Person erkannt."
 
-Schlecht: "CPU: 2,5%\\nRAM: 6,0 GB / 15,5 GB"
-Gut: "Proxmox läuft stabil. CPU bei 2,5%, RAM etwa ein Drittel belegt."
+Frage: "Wie ist der Server-Status?"
+Daten: {{"cpu": 0.025, "memory": {{"used": 6442450944, "total": 16642998272}}, "uptime": 864000}}
+Gut: "Proxmox läuft stabil. CPU bei 2,5%, RAM bei 6 von 16 GB. Uptime: 10 Tage."
 
-Schlecht: "Ja, VM 100 läuft."
-Gut: "Ja, die Windows-VM läuft."
+Frage: "Welche Geräte sind im Netzwerk?"
+Daten: [{{"name": "iPhone", "type": "WIRELESS"}}, {{"name": "NAS", "type": "WIRED"}}]
+Gut: "Zwei Geräte im Netzwerk: iPhone (WLAN) und NAS (kabelgebunden)."
 
 ## Frage
 {user_question}
@@ -39,7 +44,7 @@ Gut: "Ja, die Windows-VM läuft."
 ## Daten
 {raw_output}
 
-## Deine Antwort (freundlich, natürlich, auf den Punkt):"""
+## Deine Antwort (natürlich, auf den Punkt, NUR basierend auf den Daten):"""
 
 
 async def format_response(
@@ -89,7 +94,7 @@ async def format_response(
                     json={
                         "model": settings.lm_studio_model,
                         "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.5,
+                        "temperature": 0.3,
                         "max_tokens": max_tokens,
                     },
                 )
@@ -97,6 +102,9 @@ async def format_response(
                 if response.status_code == 200:
                     data = response.json()
                     formatted = data["choices"][0]["message"]["content"].strip()
+
+                    # Strip <think> tags from reasoning models (no-op for others)
+                    formatted = re.sub(r"<think>.*?</think>", "", formatted, flags=re.DOTALL).strip()
 
                     # Validate response isn't empty or too short
                     if len(formatted) > 5:
@@ -135,6 +143,9 @@ async def should_format_response(
 ) -> bool:
     """Determine if response should be formatted by LLM.
 
+    With JSON output from scripts, we almost always need formatting
+    to convert structured data into natural language.
+
     Args:
         user_question: Original user question
         raw_output: Raw output from skill script
@@ -143,36 +154,26 @@ async def should_format_response(
     Returns:
         True if formatting is recommended
     """
-    # Always format if output is long or complex
-    if len(raw_output) > 200:
-        logger.debug(f"Format needed: output > 200 chars ({len(raw_output)})")
+    # JSON output always needs formatting into natural language
+    stripped = raw_output.strip()
+    if stripped.startswith(("{", "[")):
+        logger.debug("Format needed: JSON output detected")
         return True
 
-    # Always format if output has multiple lines
-    if raw_output.count("\n") > 3:
-        logger.debug(f"Format needed: output has {raw_output.count(chr(10))} newlines")
+    # Short, simple non-JSON output can be passed through
+    if len(raw_output) < 80 and "\n" not in raw_output and not stripped.startswith(("{", "[")):
+        logger.debug("No formatting needed: short simple output")
+        return False
+
+    # Multi-line or long output needs formatting
+    if len(raw_output) > 200 or raw_output.count("\n") > 3:
+        logger.debug(f"Format needed: output length={len(raw_output)}, lines={raw_output.count(chr(10))}")
         return True
 
-    # Always format for certain skills that return technical/complex data
+    # Technical skills always format
     technical_skills = ["unifi-network", "unifi-protect", "proxmox", "pihole", "homeassistant"]
     if skill in technical_skills:
         logger.debug(f"Format needed: technical skill {skill}")
-        return True
-
-    # Format if question is specific but output is general
-    specific_keywords = [
-        # Locations (cameras, rooms)
-        "garten", "einfahrt", "wohnzimmer", "küche", "flur", "schlafzimmer",
-        "bad", "keller", "garage", "terrasse", "balkon", "grünstreifen",
-        # Time filters
-        "heute", "gestern", "letzte", "letzten", "vor einer stunde", "diese woche",
-        # Specific queries
-        "nur", "wieviel", "wie viele", "wie viel", "zähl", "zeig mir",
-        # Entity types
-        "person", "tier", "auto", "fahrzeug", "paket", "gesicht",
-    ]
-    if any(kw in user_question.lower() for kw in specific_keywords):
-        logger.debug("Format needed: specific keyword in question")
         return True
 
     logger.debug("No formatting needed")

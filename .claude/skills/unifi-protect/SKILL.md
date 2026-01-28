@@ -1,7 +1,7 @@
 ---
 name: unifi-protect
-description: Manage UniFi Protect cameras, NVR, events, smart detections (plates, faces), and lighting
-version: 1.2.0
+description: Kameras, Aufnahmen, Bewegungsereignisse, Kennzeichen, Gesichter und Flutlichter verwalten
+version: 1.3.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -15,6 +15,14 @@ requires:
   - requests
 triggers:
   - /protect
+intent_hints:
+  - "Kameras, Überwachung, Aufnahmen"
+  - "Was war vor der Tür, im Garten, in der Einfahrt"
+  - "Bewegungsereignisse, Personen erkannt"
+  - "Kennzeichen, Nummernschilder, Autos"
+  - "Letztes Ereignis, was ist passiert"
+  - "Kamera-Status, Snapshots, Bilder"
+  - "Flutlicht an/aus, Licht bei Kamera"
 ---
 
 # UniFi Protect Management

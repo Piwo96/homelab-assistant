@@ -35,7 +35,12 @@ def build_command(
 
     cmd = ["python", str(target_script)]
 
-    # Don't add --json - let scripts use their user-friendly formatted output
+    # Use JSON output for structured data - the response_formatter will
+    # convert it to natural language for the user.
+    # Only add for skills whose scripts support --json flag.
+    json_skills = {"unifi-network", "unifi-protect", "proxmox", "pihole", "homeassistant"}
+    if skill.name in json_skills:
+        cmd.append("--json")
 
     # Action is the subcommand
     if intent.action:

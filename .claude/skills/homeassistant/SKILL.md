@@ -1,7 +1,7 @@
 ---
 name: homeassistant
-description: Manage Home Assistant smart home automation - entities, scenes, automations, and scripts
-version: 1.1.0
+description: Smart Home steuern - Licht, Sensoren, Szenen, Automationen, Schalter und Geräte
+version: 1.2.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -15,6 +15,14 @@ requires:
 triggers:
   - /homeassistant
   - /hass
+intent_hints:
+  - "Licht an/aus, dimmen, Farbe ändern"
+  - "Temperatur, Sensor-Werte, Luftfeuchtigkeit"
+  - "Szene aktivieren, Stimmung setzen"
+  - "Geräte ein/ausschalten, Steckdose"
+  - "Automation starten/stoppen"
+  - "Smart Home Status, welche Geräte sind an"
+  - "Wohnzimmer, Küche, Schlafzimmer (Raumsteuerung)"
 ---
 
 # Home Assistant Management

@@ -358,34 +358,62 @@ async def process_natural_language(
     if intent.skill == "unknown":
         # The model decided not to call a tool - use its conversational response
         if intent.description and len(intent.description) > 10:
-            # Filter out bad responses that mention internal concepts or are lazy fallbacks
+            # Filter out bad responses that mention internal concepts
             bad_keywords = [
                 "self-annealing", "self_annealing", "selbstverbesserung",
                 "skill updates", "skill-updates", "neue features",
                 "fehlerbehebung", "github sync", "error tracking",
                 "können wir automatisch", "durch die selbstverbesserung",
-                # Lazy fallback responses that get repeated
                 "alles bestens hier",
                 "was kann ich für dich tun",
             ]
             response_lower = intent.description.lower()
             is_bad_response = any(kw in response_lower for kw in bad_keywords)
 
-            # Also filter responses that seem to hallucinate device/network data
-            # when user asked about devices but no tool was called
-            hallucination_indicators = [
-                "trockner", "dampfgarer", "backofen", "wärmeschublade",  # Specific devices
-                "sechs geräte", "drei geräte", "fünf geräte",  # Made-up counts
-                "direkt an der router", "2.4g",  # Technical details without API
+            # Positive validation: Did the user ask about homelab topics?
+            # If yes, the model SHOULD have used a tool but didn't → likely hallucination
+            homelab_keywords = [
+                # Network
+                "gerät", "geräte", "netzwerk", "lan", "wlan", "wifi", "client",
+                "router", "switch", "access point", "internet", "verbunden",
+                "online", "kabelgebunden", "drahtlos",
+                # Cameras
+                "kamera", "kameras", "aufnahme", "bewegung", "ereignis",
+                "person erkannt", "kennzeichen", "flutlicht", "snapshot",
+                "einfahrt", "garten", "grünstreifen",
+                # Server
+                "server", "vm", "container", "proxmox", "cpu", "ram",
+                "auslastung", "speicher", "storage",
+                # Smart Home
+                "licht", "lampe", "sensor", "temperatur", "schalter",
+                "szene", "automation", "steckdose",
+                # DNS
+                "pihole", "dns", "werbung", "geblockt", "blocklist",
+                "domain", "sperren", "freigeben",
             ]
-            if any(ind in response_lower for ind in hallucination_indicators):
-                logger.warning(f"Detected hallucinated device data: {intent.description[:150]}...")
+            text_lower = text.lower()
+            asked_about_homelab = any(kw in text_lower for kw in homelab_keywords)
+
+            if asked_about_homelab and not is_bad_response:
+                # User asked about homelab but model didn't use a tool
+                # The response is almost certainly hallucinated
+                logger.warning(
+                    f"Homelab question without tool call detected. "
+                    f"User: '{text[:80]}', LLM response: '{intent.description[:100]}'"
+                )
                 is_bad_response = True
 
             response_text = intent.description
             if is_bad_response:
                 logger.warning(f"Filtered bad LLM response: {intent.description[:100]}...")
-                response_text = "Das kann ich leider nicht beantworten. Kann ich dir bei etwas anderem helfen?"
+                if asked_about_homelab:
+                    response_text = (
+                        "Da muss ich kurz nachschauen, aber ich konnte die Anfrage "
+                        "nicht zuordnen. Kannst du es etwas genauer formulieren? "
+                        "Z.B. 'Zeig mir die Netzwerk-Clients' oder 'Welche Kameras haben wir?'"
+                    )
+                else:
+                    response_text = "Das kann ich leider nicht beantworten. Kann ich dir bei etwas anderem helfen?"
 
             await remove_status()
             await send_message(chat_id, response_text, settings)
@@ -399,7 +427,7 @@ async def process_natural_language(
                 intent_skill="conversational",
                 intent_confidence=intent.confidence,
                 success=not is_bad_response,
-                error_message="Bad response filtered" if is_bad_response else None,
+                error_message="Homelab question without tool call" if (is_bad_response and asked_about_homelab) else ("Bad response filtered" if is_bad_response else None),
             )
             return
 

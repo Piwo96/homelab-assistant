@@ -1,7 +1,7 @@
 ---
 name: proxmox
-description: Manage Proxmox VE virtualization platform - VMs, LXC containers, storage, and automation
-version: 1.1.0
+description: Server, VMs, Container und Speicher verwalten - starten, stoppen, Status, Snapshots
+version: 1.2.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -19,6 +19,14 @@ triggers:
   - /proxmox
   - /nas
   - /storage
+intent_hints:
+  - "VM starten, stoppen, neustarten"
+  - "Server-Status, CPU, RAM, Auslastung"
+  - "Container, LXC, Docker"
+  - "Läuft die VM, welche VMs sind an"
+  - "Speicherplatz, Storage, NAS"
+  - "Snapshot erstellen, wiederherstellen"
+  - "Proxmox-Übersicht, Node-Status"
 ---
 
 # Proxmox VE Management

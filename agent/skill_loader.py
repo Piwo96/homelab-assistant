@@ -31,6 +31,7 @@ class SkillDefinition:
     triggers: List[str]
     script_path: Optional[Path]
     commands: List[SkillCommand] = field(default_factory=list)
+    intent_hints: List[str] = field(default_factory=list)
     is_documentation_only: bool = False
 
 
@@ -96,6 +97,7 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
         version=frontmatter.get("version", "1.0.0"),
         triggers=frontmatter.get("triggers", []),
         script_path=script,
+        intent_hints=frontmatter.get("intent_hints", []),
         is_documentation_only=(script is None),
     )
 

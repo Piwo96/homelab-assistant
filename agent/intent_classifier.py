@@ -7,6 +7,7 @@ to tool definitions for function calling.
 
 import json
 import logging
+import re
 from typing import Any, Dict, List
 
 import httpx
@@ -20,43 +21,42 @@ logger = logging.getLogger(__name__)
 
 # System prompt - the model decides via tool definitions whether to call tools.
 # No hardcoded examples needed; the tool schemas provide action enums and descriptions.
-SYSTEM_PROMPT = """Du bist ein hilfreicher Smart Home und Homelab Assistant.
-Antworte auf Deutsch, sachlich aber freundlich. Kurze Sätze, keine Fachbegriffe. Keine Emojis verwenden!
+SYSTEM_PROMPT = """Du bist ein Smart Home und Homelab Assistant. Du steuerst echte Geräte über Tools.
+Antworte auf Deutsch, sachlich, kurze Sätze. Keine Emojis.
 
-## WICHTIG: Wann KEIN Tool benutzen!
-Benutze KEIN Tool bei:
-- Grüßen: "Hallo", "Hi", "Moin", "Na?", "Hey"
-- Smalltalk: "Wie geht's?", "Was machst du?", "Na wie läufts?", "Alles klar?"
-- Bestätigungen: "OK", "Danke", "Super", "Top", "Verstehe", "Ja", "Nein"
-- Fragen über dich: "Was kannst du?", "Wer bist du?", "Was lernst du?"
-- Allgemeine Fragen: "Was ist X?", "Erkläre mir Y", "Wie funktioniert Z?"
-- Wissen: "Hauptstadt von...", "Wer hat...", "Wann war..."
-- Kontext-Antworten: "Okay schieß mal los", "Ja mach mal", "Zeig her" (beziehen sich auf vorherige Nachricht)
-- Verabschiedungen: "Tschüss", "Bye", "Bis später"
+## KRITISCH: Du hast KEIN eigenes Wissen über das Homelab!
+Du weißt NICHTS über Geräte, Kameras, Server, Netzwerk, DNS oder Smart Home Zustände.
+Wenn der User nach solchen Infos fragt, MUSST du ein Tool benutzen.
+ERFINDE NIEMALS Daten! Keine Geräteanzahl, keine Status, keine Namen ausdenken!
 
-ACHTUNG: Wörter wie "läuft" in "Na wie läufts?" sind KEIN Homelab-Befehl! Das ist Smalltalk.
+## Wann KEIN Tool benutzen
+- Grüße: "Hallo", "Hi", "Moin", "Hey"
+- Smalltalk: "Wie geht's?", "Na wie läufts?", "Alles klar?"
+- Bestätigungen: "OK", "Danke", "Super", "Ja", "Nein"
+- Fragen über dich: "Was kannst du?", "Wer bist du?"
+- Allgemeinwissen: "Was ist X?", "Hauptstadt von...", "Wer hat..."
+- Verabschiedungen: "Tschüss", "Bye"
 
-## Wann Tools benutzen
-NUR wenn der User EXPLIZIT nach Homelab/Smart Home fragt.
-Die verfügbaren Tools und ihre Aktionen sind dir als Funktionsdefinitionen bekannt.
+"Na wie läufts?" ist Smalltalk, KEIN Homelab-Befehl!
 
-## REGEL: IMMER eine action setzen!
-Wenn du ein Tool benutzt, MUSST du IMMER eine action angeben.
-NIEMALS ein Tool ohne action aufrufen!
+## Wann Tool benutzen
+Bei JEDER Frage über das Homelab, Smart Home oder Netzwerk. Beispiele:
+- "Haben wir Geräte im LAN?" → unifi_network (clients)
+- "Welche Kameras haben wir?" → unifi_protect (cameras)
+- "Läuft die VM?" → proxmox (vms)
+- "Licht an im Wohnzimmer" → homeassistant (turn-on)
+- "Wie viele Werbungen geblockt?" → pihole (stats)
+- "Gibt es kabelgebundene Geräte?" → unifi_network (clients)
+- "Was war letztens vor der Tür?" → unifi_protect (events)
+- "Wie ist der Server-Status?" → proxmox (node-status)
 
-## Beispiele OHNE Tool (einfach antworten!)
-- "Hallo!", "Hi!", "Moin" → Begrüße freundlich zurück
-- "Danke!", "Super", "Top" → Bestätige kurz
-- "Na wie läufts?", "Alles klar?" → Das ist Smalltalk, KEIN Befehl! Antworte locker.
-- "Was kannst du?" → Erkläre kurz deine Fähigkeiten (Kameras, Server, Lichter, Netzwerk)
-- "Okay mach mal" → Beziehe dich auf die vorherige Nachricht im Chat
+Im Zweifel: IMMER Tool benutzen statt selbst antworten!
 
-WICHTIG: Variiere deine Antworten! Wiederhole nie die gleiche Phrase.
-
-## Wichtig
+## Regeln
+- IMMER eine action angeben wenn du ein Tool benutzt
+- args NUR wenn User explizit IDs/Namen nennt (z.B. "VM 100", "Licht Wohnzimmer")
 - Erwähne NIEMALS: 'self-annealing', 'Skills', 'Features', 'Tool', 'API'
-- Bei unklaren Anfragen: freundlich nachfragen
-- args NUR wenn User explizit IDs/Namen nennt (z.B. "VM 100", "Licht Wohnzimmer")"""
+- Variiere deine Antworten bei Smalltalk"""
 
 
 async def classify_intent(
@@ -290,9 +290,7 @@ def _parse_tool_call_response(response: Dict[str, Any]) -> IntentResult:
         )
     else:
         # Model responded without tool (conversational response)
-        content = message.get("content", "")
-        # Strip thinking tags from thinking models (e.g., Qwen3)
-        content = _strip_thinking_tags(content)
+        content = _strip_thinking_tags(message.get("content", ""))
         logger.info(f"Model did not use tool. Response preview: {content[:200]}...")
         return IntentResult(
             skill="unknown",
@@ -304,21 +302,12 @@ def _parse_tool_call_response(response: Dict[str, Any]) -> IntentResult:
 
 
 def _strip_thinking_tags(text: str) -> str:
-    """Remove <think>...</think> tags from thinking model output.
+    """Strip <think>...</think> tags from model output.
 
-    Args:
-        text: Raw model output that may contain thinking tags
-
-    Returns:
-        Text with thinking sections removed
+    Some reasoning models (e.g. Qwen3, DeepSeek) wrap internal chain-of-thought
+    in <think> tags. This is a no-op for non-thinking models.
     """
-    import re
-
-    # Remove <think>...</think> blocks (including multiline)
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    # Also handle unclosed think tags (model cut off mid-thinking)
-    text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
-    return text.strip()
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 def get_available_skills(settings: Settings) -> list:

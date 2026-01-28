@@ -1,7 +1,7 @@
 ---
 name: git
-description: Git-Operationen - Status, Commit, Push mit Conventional Commits
-version: 1.0.0
+description: Git-Operationen - Status, Commit, Push, Pull, Branches und Pull Requests
+version: 1.1.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -16,6 +16,11 @@ triggers:
   - pushe
   - commit
   - push
+intent_hints:
+  - "Code committen, pushen, pullen"
+  - "Git-Status, Änderungen anzeigen"
+  - "Branch erstellen, wechseln, mergen"
+  - "Pull Request erstellen"
 ---
 
 # Git Management

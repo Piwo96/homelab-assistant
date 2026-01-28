@@ -29,11 +29,17 @@ def skill_to_tool(skill: SkillDefinition) -> Dict[str, Any]:
 
     action_help = "\n".join(action_descriptions) if action_descriptions else ""
 
+    # Build description with intent hints for better routing
+    description = skill.description
+    if skill.intent_hints:
+        hints = "; ".join(skill.intent_hints)
+        description = f"{description}\nBenutze dieses Tool bei: {hints}"
+
     return {
         "type": "function",
         "function": {
             "name": skill.name.replace("-", "_"),  # unifi-protect -> unifi_protect
-            "description": skill.description,
+            "description": description,
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -1,7 +1,7 @@
 ---
 name: unifi-network
-description: Manage UniFi network infrastructure - routers, switches, access points, and client devices
-version: 1.1.0
+description: Netzwerk-Geräte und Clients verwalten (Router, Switches, Access Points, WLAN/LAN-Clients)
+version: 1.2.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -16,6 +16,14 @@ requires:
 triggers:
   - /unifi
   - /network
+intent_hints:
+  - "Geräte im Netzwerk, LAN oder WLAN"
+  - "Welche Geräte sind online/verbunden"
+  - "Kabelgebundene oder drahtlose Geräte"
+  - "Netzwerk-Status, Router, Switch, Access Point"
+  - "Wer ist im WLAN, wie viele Clients"
+  - "Internet-Probleme, Netzwerk-Gesundheit"
+  - "Port-Forwarding, Firewall-Regeln"
 ---
 
 # UniFi Network Management

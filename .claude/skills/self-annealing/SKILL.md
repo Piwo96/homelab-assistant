@@ -1,7 +1,7 @@
 ---
 name: self-annealing
-description: Autonomous self-improvement - error tracking, skill updates, and automatic GitHub sync
-version: 1.0.0
+description: Fehler-Tracking und automatische Selbstverbesserung des Systems
+version: 1.1.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -16,6 +16,10 @@ triggers:
   - /self-annealing
   - /anneal
   - /git
+intent_hints:
+  - "Fehler anzeigen, Error-Log"
+  - "System verbessern, Skill aktualisieren"
+  - "Letzten Fehler beheben"
 ---
 
 # Self-Annealing System

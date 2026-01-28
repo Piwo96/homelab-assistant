@@ -1,7 +1,7 @@
 ---
 name: pihole
-description: Manage Pi-hole DNS and ad-blocking - queries, blocklists, allowlists, and statistics
-version: 1.1.0
+description: DNS und Werbeblocker verwalten - Statistiken, Blocklisten, DNS-Anfragen, Domains sperren/erlauben
+version: 1.2.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -14,6 +14,14 @@ requires:
   - requests
 triggers:
   - /pihole
+intent_hints:
+  - "Werbung geblockt, wie viele Anfragen"
+  - "DNS-Statistiken, DNS-Status"
+  - "Domain sperren oder freigeben"
+  - "Blockliste, Allowliste verwalten"
+  - "Pi-hole aktivieren/deaktivieren"
+  - "Welche Domains werden geblockt"
+  - "DNS-Auflösung, DNS-Probleme"
 ---
 
 # Pi-hole Management
