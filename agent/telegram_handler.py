@@ -252,20 +252,18 @@ async def delete_message(
 # Help text for /help command
 HELP_TEXT = """🏠 *Homelab Assistant*
 
-Ich kann dir bei der Steuerung deines Smart Homes und Homelabs helfen.
+Ich steuere dein Smart Home und Homelab. Frag einfach drauf los.
 
 *Beispiele:*
 • "Mach das Licht im Wohnzimmer an"
-• "Schalte die Szene 'Abendstimmung' ein"
-• "Zeig mir den Status vom Proxmox"
-• "Starte den Plex-Container"
 • "Wer ist im WLAN?"
-• "Zeig mir die Kamera-Ereignisse"
+• "Welche Kameras haben wir?"
+• "Wie ist der Server-Status?"
+• "Wie viele Werbungen wurden geblockt?"
+• "Was war letztens vor der Tür?"
 
 *Befehle:*
 /help - Diese Hilfe anzeigen
 /wake - Gaming-PC aufwecken
 /skills - Geladene Skills anzeigen
-/clear - Chat-Verlauf löschen
-
-*Hinweis:* Wenn ich etwas nicht kann, frage ich den Admin, ob ich die Fähigkeit lernen soll."""
+/clear - Chat-Verlauf löschen"""

@@ -408,10 +408,11 @@ async def process_natural_language(
                 logger.warning(f"Filtered bad LLM response: {intent.description[:100]}...")
                 if asked_about_homelab:
                     response_text = (
-                        "Da muss ich kurz nachschauen, aber ich konnte die Anfrage "
-                        "nicht zuordnen. Kannst du es etwas genauer formulieren? "
-                        "Z.B. 'Zeig mir die Netzwerk-Clients' oder 'Welche Kameras haben wir?'"
+                        "Das kann ich noch nicht, aber ich kann es lernen. "
+                        "Soll ich die Fähigkeit einrichten?"
                     )
+                    # Store pending skill request so user can confirm with "Ja"
+                    add_message(chat_id, "system", f"PENDING_SKILL_REQUEST:{text}")
                 else:
                     response_text = "Das kann ich leider nicht beantworten. Kann ich dir bei etwas anderem helfen?"
 
