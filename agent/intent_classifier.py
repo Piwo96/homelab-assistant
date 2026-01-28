@@ -18,68 +18,9 @@ from .wol import ensure_lm_studio_available, get_loaded_model
 
 logger = logging.getLogger(__name__)
 
-# Context markers that indicate reference to previous conversation
-# These suggest the user is following up on a previous homelab topic
-CONTEXT_MARKERS = [
-    # Pronouns/Demonstratives (referring to something mentioned before)
-    "das", "die", "den", "es", "sie", "ihn", "ihm",
-    "davon", "damit", "dazu", "darauf", "dafür",
-    # Short confirmations with implicit reference
-    "ja", "okay", "ok", "mach", "zeig", "tu", "los", "weiter", "gerne",
-    # Relative terms (implying continuation)
-    "mehr", "nochmal", "wieder", "auch", "andere", "nächste",
-]
-
-
-def _is_homelab_query(
-    message: str,
-    homelab_keywords: set[str],
-    history: list[dict] | None = None,
-) -> bool:
-    """Check if message is a homelab/smart home query.
-
-    Uses a simple, robust approach:
-    1. If message contains homelab keywords → True
-    2. If message has context markers AND recent history had homelab keywords → True
-    3. Otherwise → False
-
-    Args:
-        message: User message
-        homelab_keywords: Set of keywords from registry (dynamically loaded from skills)
-        history: Optional conversation history
-
-    Returns:
-        True if this should be treated as a homelab query
-    """
-    message_lower = message.lower().strip()
-
-    # Direct homelab keyword match - always homelab
-    matched_keywords = [kw for kw in homelab_keywords if kw in message_lower]
-    if matched_keywords:
-        logger.info(f"Homelab keywords matched: {matched_keywords} in '{message}'")
-        return True
-
-    logger.debug(f"No homelab keywords found in '{message}' (checked {len(homelab_keywords)} keywords)")
-
-    # Check for context-dependent reference to previous homelab topic
-    if history and len(message_lower.split()) <= 5:
-        # Short message - check if it references previous context
-        has_context_marker = any(marker in message_lower for marker in CONTEXT_MARKERS)
-
-        if has_context_marker:
-            # Check if recent history (last 4 messages) had homelab keywords
-            recent = history[-4:] if len(history) >= 4 else history
-            for msg in recent:
-                content = msg.get("content", "").lower()
-                if any(kw in content for kw in homelab_keywords):
-                    logger.debug(f"Context reference detected: '{message}' refers to homelab history")
-                    return True
-
-    return False
-
-
-# Base system prompt - examples are added dynamically from skills
-SYSTEM_PROMPT_BASE = """Du bist ein hilfreicher Smart Home und Homelab Assistant.
+# System prompt - the model decides via tool definitions whether to call tools.
+# No hardcoded examples needed; the tool schemas provide action enums and descriptions.
+SYSTEM_PROMPT = """Du bist ein hilfreicher Smart Home und Homelab Assistant.
 Antworte auf Deutsch, sachlich aber freundlich. Kurze Sätze, keine Fachbegriffe. Keine Emojis verwenden!
 
 ## WICHTIG: Wann KEIN Tool benutzen!
@@ -96,20 +37,12 @@ Benutze KEIN Tool bei:
 ACHTUNG: Wörter wie "läuft" in "Na wie läufts?" sind KEIN Homelab-Befehl! Das ist Smalltalk.
 
 ## Wann Tools benutzen
-NUR wenn der User EXPLIZIT nach Homelab/Smart Home fragt:
-- "Wie ist der Server Status?" → proxmox (action: status)
-- "Zeig mir die Kameras" → unifi-protect (action: events)
-- "Mach das Licht an" → homeassistant (action: turn-on)
-- "Wieviel Werbung wurde blockiert?" → pihole (action: stats)
-- "Welche Geräte sind im WLAN?" → unifi-network (action: clients)
+NUR wenn der User EXPLIZIT nach Homelab/Smart Home fragt.
+Die verfügbaren Tools und ihre Aktionen sind dir als Funktionsdefinitionen bekannt.
 
 ## REGEL: IMMER eine action setzen!
 Wenn du ein Tool benutzt, MUSST du IMMER eine action angeben.
 NIEMALS ein Tool ohne action aufrufen!
-
-## Beispiele mit Tool + action
-
-{skill_examples}
 
 ## Beispiele OHNE Tool (einfach antworten!)
 - "Hallo!", "Hi!", "Moin" → Begrüße freundlich zurück
@@ -124,80 +57,6 @@ WICHTIG: Variiere deine Antworten! Wiederhole nie die gleiche Phrase.
 - Erwähne NIEMALS: 'self-annealing', 'Skills', 'Features', 'Tool', 'API'
 - Bei unklaren Anfragen: freundlich nachfragen
 - args NUR wenn User explizit IDs/Namen nennt (z.B. "VM 100", "Licht Wohnzimmer")"""
-
-
-# Cache for built system prompt
-_cached_system_prompt: str | None = None
-
-
-def build_system_prompt(registry) -> str:
-    """Build system prompt with dynamic examples from loaded skills.
-
-    Args:
-        registry: The tool registry with loaded skills
-
-    Returns:
-        Complete system prompt with skill examples
-    """
-    global _cached_system_prompt
-
-    # Return cached prompt if available
-    if _cached_system_prompt is not None:
-        return _cached_system_prompt
-
-    example_sections = []
-    max_examples_per_skill = 8  # Limit to keep context size manageable
-
-    for skill_name, skill in registry.skills.items():
-        if not skill.examples:
-            continue
-
-        lines = [f"### {skill_name}"]
-
-        # Group examples by action to ensure all actions are represented
-        examples_by_action: dict[str, list] = {}
-        for ex in skill.examples:
-            action = ex.action
-            if action not in examples_by_action:
-                examples_by_action[action] = []
-            examples_by_action[action].append(ex)
-
-        # Select examples: one per action first, then fill up to limit
-        selected_examples = []
-        for action, action_examples in examples_by_action.items():
-            selected_examples.append(action_examples[0])  # First example per action
-
-        # If we have room, add more examples (prefer variety)
-        remaining_slots = max_examples_per_skill - len(selected_examples)
-        if remaining_slots > 0:
-            for action, action_examples in examples_by_action.items():
-                for ex in action_examples[1:]:  # Skip first (already added)
-                    if len(selected_examples) >= max_examples_per_skill:
-                        break
-                    selected_examples.append(ex)
-
-        # Format selected examples
-        for ex in selected_examples:
-            if ex.args:
-                # Format args as JSON-like string
-                args_str = ", ".join(f"{k}: {v}" for k, v in ex.args.items())
-                lines.append(f'- "{ex.phrase}" → action: {ex.action}, args: {{{args_str}}}')
-            else:
-                lines.append(f'- "{ex.phrase}" → action: {ex.action}')
-        example_sections.append("\n".join(lines))
-
-    skill_examples = "\n\n".join(example_sections) if example_sections else "# Keine Beispiele geladen"
-
-    _cached_system_prompt = SYSTEM_PROMPT_BASE.format(skill_examples=skill_examples)
-    logger.info(f"Built system prompt with {len(example_sections)} skill example sections")
-
-    return _cached_system_prompt
-
-
-def clear_prompt_cache():
-    """Clear the cached system prompt (call after skill reload)."""
-    global _cached_system_prompt
-    _cached_system_prompt = None
 
 
 async def classify_intent(
@@ -248,7 +107,7 @@ async def classify_intent(
 
     try:
         response = await _call_with_tools(
-            message, settings, registry.get_tools_json(), history or [], registry
+            message, settings, registry.get_tools_json(), history or []
         )
         result = _parse_tool_call_response(response)
 
@@ -295,7 +154,6 @@ async def _call_with_tools(
     settings: Settings,
     tools: List[Dict[str, Any]],
     history: List[Dict[str, str]],
-    registry,
 ) -> Dict[str, Any]:
     """Call LM Studio with tool definitions.
 
@@ -304,18 +162,14 @@ async def _call_with_tools(
         settings: Application settings
         tools: Tool definitions in OpenAI format
         history: Conversation history for context
-        registry: Tool registry for building system prompt
 
     Returns:
         Raw API response from LM Studio
     """
     user_message = message
 
-    # Build system prompt with dynamic examples from registry
-    system_prompt = build_system_prompt(registry)
-
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": SYSTEM_PROMPT},
         *history,
         {"role": "user", "content": user_message},
     ]
@@ -327,12 +181,11 @@ async def _call_with_tools(
         model = await get_loaded_model(settings)
         logger.info(f"Auto-detected model from LM Studio: '{model}'")
 
-    # Determine tool_choice based on whether this looks like a homelab query
-    # Keywords are dynamically loaded from skills (no hardcoded list)
-    homelab_keywords = registry.homelab_keywords
-    is_homelab = _is_homelab_query(message, homelab_keywords, history)
-    tool_choice = "auto" if is_homelab else "none"
-    logger.info(f"Using tool_choice: {tool_choice} (is_homelab={is_homelab}, keywords={len(homelab_keywords)})")
+    # Always let the model decide whether to use tools.
+    # The system prompt already instructs when NOT to call tools (greetings, smalltalk, etc.)
+    # This replaces the previous keyword-gate which was too brittle for natural language.
+    tool_choice = "auto"
+    logger.info(f"Using tool_choice: {tool_choice} (model decides)")
 
     # Token limits for retry: start low, increase on context errors
     token_limits = [2048, 4096, 8192]

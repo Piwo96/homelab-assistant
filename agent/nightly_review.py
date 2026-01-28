@@ -12,11 +12,8 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import sys
-from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -33,7 +30,6 @@ from agent.database import (
     add_learned_example,
     get_database_stats,
 )
-from agent import self_annealing
 from agent.skill_config import get_skill_path, verify_skill_paths
 
 logging.basicConfig(
@@ -190,8 +186,7 @@ def _infer_skill(message: str) -> dict | None:
 
 def apply_improvements(
     improvements: dict,
-    settings,
-    dry_run: bool = False
+    dry_run: bool = False,
 ) -> dict:
     """Apply improvements to the system.
 
@@ -225,35 +220,6 @@ def apply_improvements(
             logger.info(f"Added example: '{example['user_message'][:50]}...' -> {example['suggested_skill']}")
         except Exception as e:
             logger.warning(f"Failed to add example: {e}")
-
-    # Write learned examples directly to examples.json files
-    from .example_generator import load_examples, save_examples, merge_examples
-
-    skills_base = settings.project_root / ".claude" / "skills"
-    results["examples_written"] = 0
-
-    # Group new examples by skill
-    examples_by_skill: dict[str, list[dict]] = {}
-    for example in improvements.get("new_examples", []):
-        skill_name = example["suggested_skill"]
-        if skill_name not in examples_by_skill:
-            examples_by_skill[skill_name] = []
-        examples_by_skill[skill_name].append({
-            "phrase": example["user_message"],
-            "action": example["suggested_action"],
-        })
-
-    # Append to each skill's examples.json
-    for skill_name, new_examples in examples_by_skill.items():
-        skill_path = skills_base / skill_name
-        if skill_path.exists():
-            existing = load_examples(skill_path)
-            merged = merge_examples(existing, new_examples)
-            if len(merged) > len(existing):
-                save_examples(skill_path, merged)
-                added_count = len(merged) - len(existing)
-                results["examples_written"] += added_count
-                logger.info(f"Added {added_count} examples to {skill_name}/examples.json")
 
     if improvements.get("prompt_additions"):
         logger.info(f"Suggested prompt additions: {improvements['prompt_additions']}")
@@ -310,7 +276,7 @@ async def run_review(dry_run: bool = False) -> dict:
     logger.info(f"Suggested improvements: {len(improvements['new_examples'])} new examples")
 
     # Apply improvements
-    results = apply_improvements(improvements, settings, dry_run=dry_run)
+    results = apply_improvements(improvements, dry_run=dry_run)
 
     # Mark conversations as reviewed
     if not dry_run:
