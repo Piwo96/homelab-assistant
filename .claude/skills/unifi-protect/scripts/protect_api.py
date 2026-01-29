@@ -16,12 +16,15 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     import requests
@@ -418,13 +421,23 @@ class ProtectLegacyAPI:
 
         if isinstance(result, list):
             events = result
+            logger.debug("get_events: API returned list with %d items", len(events))
         elif isinstance(result, dict) and "data" in result and isinstance(result["data"], list):
             events = result["data"]
+            logger.debug("get_events: API returned dict with data list (%d items)", len(events))
         else:
+            logger.warning(
+                "get_events: unexpected response type=%s, keys=%s, preview=%s",
+                type(result).__name__,
+                list(result.keys()) if isinstance(result, dict) else "N/A",
+                str(result)[:300],
+            )
             return []
 
         if camera_id:
+            before = len(events)
             events = [e for e in events if isinstance(e, dict) and e.get("camera") == camera_id]
+            logger.debug("get_events: filtered by camera %s: %d -> %d", camera_id, before, len(events))
 
         return events
 
@@ -1042,6 +1055,7 @@ def execute(action: str, args: dict) -> Any:
         hours = _parse_duration(str(args.get("last", "24h")))
         end = int(datetime.now().timestamp() * 1000)
         start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
+        logger.info("events: querying %dh window (start=%d, end=%d)", hours, start, end)
         types = args.get("types", "").split(",") if args.get("types") else None
         camera_id = None
         if args.get("camera"):
@@ -1050,6 +1064,7 @@ def execute(action: str, args: dict) -> Any:
                 raise ValueError(f"Camera not found: {args['camera']}")
         events = api.get_events(start, end, types, camera_id)
         limit = int(args["limit"]) if args.get("limit") else 20
+        logger.info("events: found %d events (returning max %d)", len(events), limit)
         return events[:limit]
     elif action == "detections":
         hours = _parse_duration(str(args.get("last", "6h")))
