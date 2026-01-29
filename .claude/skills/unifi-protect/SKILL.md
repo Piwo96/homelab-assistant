@@ -263,6 +263,14 @@ execute("alarm", {"id": "webhook-id"})
 execute("detect", {})  # Check API mode
 ```
 
+### Agent Output Formatting
+
+The skill provides `format_agent_output(action, data) -> str|None` for compact, human-readable output when used via the agent system. This prevents large JSON responses (e.g., 54K chars of events) from timing out the LLM formatter and overwhelming end users.
+
+Supported formatters: `events`, `detections`, `cameras`, `sensors`, `lights`, `nvr`
+
+See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#large-json-response-times-out-llm-formatter) for details.
+
 ## Related Skills
 
 - [/unifi-network](../unifi-network/SKILL.md) - Network device management

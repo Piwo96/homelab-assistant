@@ -279,6 +279,51 @@ The `ProtectDualAPI` class implements a facade pattern that automatically routes
 
 **Benefit**: More granular control and status information without extra API calls.
 
+## Agent Integration Issues
+
+### Lambda Alias Breaks Command Extraction
+```
+Problem: Skill commands not detected by agent → LLM receives `enum=null` for action parameter → commands fail
+```
+**Cause**: The `protect_api.py` script uses lambda shorthand for argparse subparsers:
+```python
+_p = lambda *a, **kw: subparsers.add_parser(*a, parents=[json_parent], **kw)
+```
+The `skill_loader.py` regex only matched direct `subparsers.add_parser()` calls, missing lambda-aliased calls.
+
+**Impact**: 0 commands extracted from script → agent cannot validate or suggest available actions.
+
+**Solution**: `skill_loader.py` now includes Step 0 that detects lambda aliases (e.g., `_p = lambda`) and matches their invocations. Both direct and aliased calls now work.
+
+**Pattern**: When writing argparse command definitions, either:
+1. Use direct `subparsers.add_parser()` calls (recommended for clarity)
+2. Ensure skill_loader handles your alias pattern
+3. Test command extraction: verify skill registration shows all commands
+
+### Follow-up Context Lost with Small LLMs
+```
+Problem: User asks "and what about Garage?" after previous camera query → Small LLM fails to understand context
+```
+**Cause**: Commit `64db5fd` removed conversational follow-up handling (75 regex patterns + separate LLM call) under the assumption that passing conversation history to the LLM with `tool_choice=auto` would be sufficient.
+
+**Reality**: Small local LLMs (e.g., LM Studio models) struggle with contextual follow-ups, especially when:
+- Action enum is missing/null (due to command extraction failures)
+- Previous exchange used different skill
+- Follow-up is implicit ("and Garage?" vs "show Garage camera")
+
+**Solution**: Added lightweight `enrich_followup_message()` in `conversational.py` that:
+1. Detects follow-up patterns ("and X?", "what about X?", "also X")
+2. Prepends context hint from previous exchange
+3. Enriched message: "Following up on previous query about cameras: and what about Garage?"
+
+**Impact**: Small LLMs now correctly interpret follow-ups without heavyweight regex matching or separate LLM calls.
+
+**Pattern**: When supporting small/local LLMs:
+- Conversation history alone is insufficient for context
+- Explicit hints in user message improve understanding
+- Lightweight pattern detection (10-15 regex) > heavyweight LLM calls (75+ patterns)
+- Test with both large (Claude/GPT-4) and small (Llama 3/Mistral) models
+
 ## CLI Script Issues
 
 ### --json Flag Not Working After Subcommand
@@ -299,6 +344,57 @@ Example: `--last 7d` or `--last 30m` returns error
 - **h** suffix: hours (e.g., `--last 24h` = 24 hours)
 - **m** suffix: minutes (e.g., `--last 30m` = 30 minutes)
 **Pattern**: Duration parsing should support common time units (d/h/m) with simple suffix detection for CLI ergonomics.
+
+## Output Formatting Issues
+
+### Large JSON Response Times Out LLM Formatter
+```
+Problem: Events query returns 54K chars of JSON → LLM formatter times out → raw truncated JSON sent to Telegram (unreadable)
+```
+**Cause**: When skills return large datasets (e.g., 100+ events with full metadata), the response formatter LLM times out trying to summarize the data. The fallback dumps raw JSON which exceeds message limits and is unusable for end users.
+
+**Solution**: Skills implement `format_agent_output(action, data) -> str|None` to pre-format data into compact human-readable text BEFORE the LLM sees it. The skill_executor automatically detects and uses this function via dynamic import.
+
+**Implementation**:
+1. `protect_api.py` exports `format_agent_output(action, data)`
+2. Function returns formatted text for known actions (events, detections, cameras, sensors, lights, nvr)
+3. Returns `None` for unknown actions (falls back to JSON serialization)
+4. `skill_executor.py` calls `_try_format_output()` which dynamically imports and invokes the formatter
+
+**Results**:
+- Events: 54K JSON → 300-1000 chars formatted text
+- Detections: 40K JSON → 200-800 chars formatted text
+- Cameras: 20K JSON → 150-500 chars formatted text
+
+**Format Examples**:
+```
+📹 Kamera-Ereignisse (23 Einträge)
+
+Einfahrt (15 Ereignisse)
+  28.01. 14:23 🚗 smartDetectZone: Person (90%)
+  28.01. 15:45 📷 motion: Bewegung erkannt
+  28.01. 16:12 🔊 smartAudioDetect: Sprechen
+
+System (8 Ereignisse)
+  28.01. 13:00 🔑 access: Admin-Login (192.168.1.100)
+```
+
+**Why Named `format_agent_output` Not `format_output`**:
+- Avoids collision with existing `format_output(data, format_type)` in network_api.py
+- Clear intent: formats for agent/LLM consumption, not CLI output
+- Skill-wide convention for other skills to follow
+
+**Audio Detection Types Supported**:
+- `alrmSpeak`: Sprechen (speaking)
+- `alrmSmoke`: Rauchmelder (smoke alarm)
+- `alrmCmonx`: CO-Melder (carbon monoxide)
+- `alrmBark`: Bellen (barking)
+- `alrmCry`: Weinen (crying)
+- `alrmSiren`: Sirene (siren)
+- `alrmGlass`: Glasbruch (glass break)
+- `alrmBabyCry`: Baby weint (baby crying)
+
+**Pattern**: For any skill returning unbounded lists (events, logs, detections), implement `format_agent_output()` to compress data into human-readable summaries. Reduces LLM processing time, prevents timeouts, and delivers usable output to end users.
 
 ---
 
