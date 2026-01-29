@@ -1035,6 +1035,7 @@ def execute(action: str, args: dict) -> Any:
         ValueError: Unknown action
         KeyError: Missing required argument
     """
+    logger.info("execute(%s, %s)", action, args)
     api = ProtectDualAPI()
 
     # --- Camera commands ---
@@ -1052,7 +1053,17 @@ def execute(action: str, args: dict) -> Any:
 
     # --- Event commands (Legacy API) ---
     elif action == "events":
-        hours = _parse_duration(str(args.get("last", "24h")))
+        last_raw = args.get("last", "24h")
+        last_str = str(last_raw)
+        # LLM may pass a bare integer (e.g. 1) meaning "the last N events",
+        # not "last N hours". Detect bare integers and use them as limit instead.
+        if re.fullmatch(r"\d+", last_str) and int(last_str) < 24:
+            limit_override = int(last_str)
+            hours = 24  # default window
+            logger.info("events: bare integer last=%s -> limit=%d, window=24h", last_str, limit_override)
+        else:
+            limit_override = None
+            hours = _parse_duration(last_str)
         end = int(datetime.now().timestamp() * 1000)
         start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
         logger.info("events: querying %dh window (start=%d, end=%d)", hours, start, end)
@@ -1063,7 +1074,7 @@ def execute(action: str, args: dict) -> Any:
             if not camera_id:
                 raise ValueError(f"Camera not found: {args['camera']}")
         events = api.get_events(start, end, types, camera_id)
-        limit = int(args["limit"]) if args.get("limit") else 20
+        limit = limit_override or (int(args["limit"]) if args.get("limit") else 20)
         logger.info("events: found %d events (returning max %d)", len(events), limit)
         return events[:limit]
     elif action == "detections":
