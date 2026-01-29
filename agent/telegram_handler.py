@@ -37,6 +37,10 @@ def parse_telegram_user(user_data: Dict[str, Any]) -> TelegramUser:
     )
 
 
+# Telegram message limit (official: 4096 UTF-8 chars, leave margin)
+_TELEGRAM_MAX_LEN = 4000
+
+
 async def send_message(
     chat_id: int,
     text: str,
@@ -46,6 +50,8 @@ async def send_message(
 ) -> Optional[int]:
     """Send a message to a Telegram chat.
 
+    Automatically splits messages that exceed Telegram's 4096 char limit.
+
     Args:
         chat_id: Telegram chat ID
         text: Message text (supports Markdown)
@@ -54,8 +60,19 @@ async def send_message(
         reply_markup: Optional inline keyboard markup
 
     Returns:
-        Message ID if successful, None otherwise
+        Message ID of the last sent message if successful, None otherwise
     """
+    # Auto-split long messages
+    if len(text) > _TELEGRAM_MAX_LEN:
+        parts = _split_message(text, _TELEGRAM_MAX_LEN)
+        logger.info(f"Splitting message ({len(text)} chars) into {len(parts)} parts")
+        last_msg_id = None
+        for i, part in enumerate(parts):
+            # Only attach reply_markup to the last part
+            markup = reply_markup if i == len(parts) - 1 else None
+            last_msg_id = await send_message(chat_id, part, settings, parse_mode, markup)
+        return last_msg_id
+
     payload = {
         "chat_id": chat_id,
         "text": text,
@@ -267,3 +284,37 @@ Ich steuere dein Smart Home und Homelab. Frag einfach drauf los.
 /wake - Gaming-PC aufwecken
 /skills - Geladene Skills anzeigen
 /clear - Chat-Verlauf löschen"""
+
+
+def _split_message(text: str, max_len: int) -> list[str]:
+    """Split a long message into parts that fit Telegram's limit.
+
+    Tries to split at paragraph boundaries, then newlines.
+    """
+    if len(text) <= max_len:
+        return [text]
+
+    parts = []
+    remaining = text
+
+    while remaining:
+        if len(remaining) <= max_len:
+            parts.append(remaining)
+            break
+
+        # Find a good split point
+        chunk = remaining[:max_len]
+
+        # Try paragraph break (double newline)
+        split_at = chunk.rfind("\n\n")
+        if split_at < max_len // 3:
+            # Try single newline
+            split_at = chunk.rfind("\n")
+        if split_at < max_len // 3:
+            # Hard cut at max_len
+            split_at = max_len
+
+        parts.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+
+    return parts

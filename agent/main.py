@@ -168,9 +168,9 @@ async def lifespan(app: FastAPI):
         background_tasks.append(pull_task)
 
     # Start nightly review task
-    # review_task = asyncio.create_task(periodic_nightly_review(settings))
-    # background_tasks.append(review_task)
-    # logger.info("Nightly review task started")
+    review_task = asyncio.create_task(periodic_nightly_review(settings))
+    background_tasks.append(review_task)
+    logger.info("Nightly review task started")
 
     yield
 
@@ -525,25 +525,49 @@ async def process_natural_language(
     # Execute known skill (with user_id for permission checks)
     result = await execute_skill(intent, settings, user_id=user.id)
 
-    # Determine response message
-    if result.success:
-        # Format response based on original question
-        if await should_format_response(text, result.output, intent.skill):
-            response_msg = await format_response(
-                text, result.output, settings, intent.skill, intent.action
+    # Determine response message - wrapped to catch pipeline errors
+    response_msg = ""
+    pipeline_error = None
+    try:
+        if result.success:
+            # Format response based on original question
+            if await should_format_response(text, result.output, intent.skill):
+                response_msg = await format_response(
+                    text, result.output, settings, intent.skill, intent.action
+                )
+            else:
+                response_msg = result.output
+        else:
+            # Show technical details to admin, friendly message to regular users
+            if user.id == settings.admin_telegram_id:
+                response_msg = f"Fehler: {result.error}"
+            else:
+                response_msg = f"Ups, da ist etwas schief gelaufen. {settings.admin_name} wird informiert!"
+    except Exception as e:
+        pipeline_error = f"Response-Formatierung: {e}"
+        logger.error(f"Response pipeline error: {e}", exc_info=True)
+        response_msg = "Da ist etwas bei der Antwort-Aufbereitung schief gelaufen."
+
+    # Send response to user
+    await remove_status()
+    msg_sent = await send_message(chat_id, response_msg, settings)
+
+    # If sending failed, notify admin
+    if msg_sent is None and not pipeline_error:
+        pipeline_error = f"Telegram send failed for {len(response_msg)} chars"
+        logger.error(f"Failed to send response ({len(response_msg)} chars) to {chat_id}")
+
+    # Report pipeline errors to admin (async, non-blocking)
+    if pipeline_error:
+        asyncio.create_task(
+            _notify_pipeline_error(
+                skill=intent.skill,
+                action=intent.action,
+                error=pipeline_error,
+                user_message=text[:100],
+                settings=settings,
             )
-        else:
-            response_msg = result.output
-        await remove_status()
-        await send_message(chat_id, response_msg, settings)
-    else:
-        # Show technical details to admin, friendly message to regular users
-        if user.id == settings.admin_telegram_id:
-            response_msg = f"❌ {result.error}"
-        else:
-            response_msg = f"Ups, da ist etwas schief gelaufen. 🙈 {settings.admin_name} wird informiert!"
-        await remove_status()
-        await send_message(chat_id, response_msg, settings)
+        )
 
     # Store conversation in history
     add_message(chat_id, "user", text)
@@ -559,9 +583,32 @@ async def process_natural_language(
         intent_action=intent.action,
         intent_target=intent.target,
         intent_confidence=intent.confidence,
-        success=result.success,
-        error_message=result.error if not result.success else None,
+        success=result.success and not pipeline_error,
+        error_message=pipeline_error or (result.error if not result.success else None),
     )
+
+
+async def _notify_pipeline_error(
+    skill: str,
+    action: str,
+    error: str,
+    user_message: str,
+    settings: Settings,
+):
+    """Notify admin about a response pipeline error (formatting/sending)."""
+    try:
+        await send_message(
+            settings.admin_telegram_id,
+            f"Pipeline-Fehler\n\n"
+            f"Skill: {skill}\n"
+            f"Aktion: {action}\n"
+            f"Fehler: {error}\n"
+            f"User-Nachricht: {user_message}",
+            settings,
+            parse_mode=None,  # No Markdown to avoid formatting issues
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify admin about pipeline error: {e}")
 
 
 async def handle_callback_update(callback_query: Dict[str, Any], settings: Settings):

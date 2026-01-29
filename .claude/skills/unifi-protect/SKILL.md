@@ -20,9 +20,10 @@ intent_hints:
   - "Was war vor der Tür, im Garten, in der Einfahrt"
   - "Bewegungsereignisse, Personen erkannt"
   - "Kennzeichen, Nummernschilder, Autos"
-  - "Letztes Ereignis, was ist passiert"
+  - "Letztes Ereignis, was ist passiert, Kameraereignis"
   - "Kamera-Status, Snapshots, Bilder"
   - "Flutlicht an/aus, Licht bei Kamera"
+  - "Zeig mir was passiert ist, letzte Bewegung, Aufzeichnung"
 ---
 
 # UniFi Protect Management

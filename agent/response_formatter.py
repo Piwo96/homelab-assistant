@@ -76,17 +76,23 @@ async def format_response(
     # Ensure LM Studio is available
     await ensure_lm_studio_available(settings)
 
-    prompt = FORMAT_PROMPT.format(
-        user_question=user_question,
-        raw_output=raw_output[:80000],  # Qwen3 handles 32K tokens (~120K chars), leave room for prompt + output
-    )
+    # Progressive truncation: try with decreasing output sizes.
+    # Qwen3-4B supports 32K context (~96K chars) but may be loaded
+    # with less in LM Studio. Start generous, reduce on context errors.
+    output_limits = [80000, 20000, 6000, 1500]
 
-    logger.info(f"Format prompt length: {len(prompt)} chars")
+    for attempt, output_limit in enumerate(output_limits):
+        truncated = raw_output[:output_limit]
+        if len(raw_output) > output_limit:
+            truncated += f"\n\n[...{len(raw_output) - output_limit} Zeichen gekürzt...]"
 
-    # Token limits for retry: start low, increase on context errors
-    token_limits = [2048, 4096, 8192]
+        prompt = FORMAT_PROMPT.format(
+            user_question=user_question,
+            raw_output=truncated,
+        )
 
-    for attempt, max_tokens in enumerate(token_limits):
+        logger.info(f"Format attempt {attempt + 1}: output_limit={output_limit}, prompt_len={len(prompt)} chars")
+
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
@@ -95,7 +101,7 @@ async def format_response(
                         "model": settings.lm_studio_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.3,
-                        "max_tokens": max_tokens,
+                        "max_tokens": 2048,
                     },
                 )
 
@@ -109,31 +115,51 @@ async def format_response(
                     # Validate response isn't empty or too short
                     if len(formatted) > 5:
                         logger.info(f"Formatted {len(raw_output)} chars -> {len(formatted)} chars")
-                        logger.info(f"Formatted response preview: {formatted[:150]}...")
                         return formatted
                     else:
-                        logger.warning(f"LLM returned empty/short response ({len(formatted)} chars), using raw output")
-                        return raw_output
+                        logger.warning(f"LLM returned empty/short response ({len(formatted)} chars)")
+                        break  # Fall through to truncated fallback
 
-                # Check for context/token errors that might benefit from retry
+                # Check for context/token errors → retry with less input
                 body = response.text[:500] if response.text else ""
                 is_context_error = (
                     response.status_code == 400
                     and any(kw in body.lower() for kw in ["context", "token", "length", "exceed"])
                 )
 
-                if is_context_error and attempt < len(token_limits) - 1:
-                    logger.warning(f"Context error with max_tokens={max_tokens}, retrying with {token_limits[attempt + 1]}")
+                if is_context_error and attempt < len(output_limits) - 1:
+                    logger.warning(f"Context overflow with {output_limit} chars, retrying with {output_limits[attempt + 1]}")
                     continue
 
                 logger.warning(f"LLM formatting failed: HTTP {response.status_code}, body: {body}")
-                return raw_output
+                break  # Fall through to truncated fallback
 
         except Exception as e:
             logger.warning(f"Error formatting response: {e}")
-            return raw_output
+            break  # Fall through to truncated fallback
 
-    return raw_output
+    # Fallback: return a truncated version that fits in Telegram (max 4000 chars)
+    logger.warning("All LLM formatting attempts failed, returning truncated output")
+    return _truncate_for_telegram(raw_output)
+
+
+def _truncate_for_telegram(text: str, max_len: int = 3800) -> str:
+    """Truncate text to fit Telegram's message limit.
+
+    Tries to cut at a natural boundary (newline or sentence).
+    """
+    if len(text) <= max_len:
+        return text
+
+    # Cut and find a good break point
+    cut = text[:max_len]
+    # Try to break at last newline
+    last_newline = cut.rfind("\n")
+    if last_newline > max_len // 2:
+        cut = cut[:last_newline]
+
+    remaining = len(text) - len(cut)
+    return f"{cut}\n\n[...{remaining} Zeichen gekürzt]"
 
 
 async def should_format_response(

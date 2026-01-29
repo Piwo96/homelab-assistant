@@ -177,26 +177,17 @@ async def _execute_direct(
             skill=skill_name,
             action=intent.action,
         )
-    except SystemExit:
-        # API classes call sys.exit(1) on auth/connection errors
+    except (ValueError, KeyError) as e:
         asyncio.create_task(
             request_error_fix_approval(
-                error_type="SystemExit",
-                error_message="API connection or auth error (sys.exit called)",
+                error_type=type(e).__name__,
+                error_message=str(e),
                 skill=skill_name,
                 action=intent.action,
                 context=f"Direct call: {action}({intent.args})",
                 settings=settings,
             )
         )
-        return SkillExecutionResult(
-            success=False,
-            output="",
-            error="API-Verbindungs- oder Authentifizierungsfehler",
-            skill=skill_name,
-            action=intent.action,
-        )
-    except (ValueError, KeyError) as e:
         return SkillExecutionResult(
             success=False,
             output="",
