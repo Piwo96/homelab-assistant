@@ -118,15 +118,16 @@ def parse_skill_md(skill_path: Path) -> Optional[SkillDefinition]:
 
 
 def extract_commands_from_script(script_path: Path) -> List[SkillCommand]:
-    """Extract argparse subcommands from a Python script.
+    """Extract argparse subcommands and their parameters from a Python script.
 
-    Uses regex to find add_parser() calls and their help text.
+    Uses regex to find add_parser() calls with their help text, and
+    add_argument() calls to extract parameter definitions per command.
 
     Args:
         script_path: Path to the Python script
 
     Returns:
-        List of SkillCommand objects
+        List of SkillCommand objects with parameters populated
     """
     if not script_path or not script_path.exists():
         return []
@@ -139,23 +140,87 @@ def extract_commands_from_script(script_path: Path) -> List[SkillCommand]:
 
     commands = []
 
-    # Pattern for: subparsers.add_parser("command", help="description")
-    # Also matches: add_parser("command", help="description")
-    pattern = r'add_parser\(\s*["\']([^"\']+)["\'].*?help\s*=\s*["\']([^"\']+)["\']'
-    matches = re.findall(pattern, content, re.DOTALL)
+    # Step 1: Find add_parser calls WITH variable assignment
+    # e.g., events = subparsers.add_parser("events", help="List events")
+    assigned_pattern = (
+        r'(\w+)\s*=\s*\w+\.add_parser\(\s*'
+        r'["\']([^"\']+)["\'].*?help\s*=\s*["\']([^"\']+)["\']'
+    )
+    assigned_vars = {}
+    for m in re.finditer(assigned_pattern, content):
+        var_name, cmd_name, help_text = m.group(1), m.group(2), m.group(3)
+        assigned_vars[var_name] = (cmd_name, help_text)
 
-    for cmd_name, help_text in matches:
+    # Step 2: For assigned parsers, extract their add_argument() calls
+    for var_name, (cmd_name, help_text) in assigned_vars.items():
+        # Handle nested parens in help text like: help="Last N hours (e.g., 24h)"
+        # [^()]* stops at both ( and ), so nested groups are handled explicitly.
+        # re.DOTALL handles multi-line add_argument calls.
+        arg_pattern = rf'{re.escape(var_name)}\.add_argument\(([^()]*(?:\([^()]*\)[^()]*)*)\)'
+        parameters = []
+        for m in re.finditer(arg_pattern, content, re.DOTALL):
+            param = _parse_add_argument(m.group(1))
+            if param:
+                parameters.append(param)
+
         commands.append(
             SkillCommand(
                 name=cmd_name,
                 description=help_text,
-                parameters=[],  # Could be extended to parse add_argument calls
-                script_path=script_path,  # Track which script contains this command
+                parameters=parameters,
+                script_path=script_path,
             )
         )
 
+    # Step 3: Find standalone add_parser calls (no variable, no arguments)
+    # e.g., subparsers.add_parser("cameras", help="List all cameras")
+    all_pattern = r'add_parser\(\s*["\']([^"\']+)["\'].*?help\s*=\s*["\']([^"\']+)["\']'
+    for m in re.finditer(all_pattern, content):
+        cmd_name, help_text = m.group(1), m.group(2)
+        if not any(c.name == cmd_name for c in commands):
+            commands.append(
+                SkillCommand(
+                    name=cmd_name,
+                    description=help_text,
+                    parameters=[],
+                    script_path=script_path,
+                )
+            )
+
     logger.debug(f"Extracted {len(commands)} commands from {script_path.name}")
     return commands
+
+
+def _parse_add_argument(arg_text: str) -> Optional[dict]:
+    """Parse an add_argument() call text into a parameter dict.
+
+    Args:
+        arg_text: The text inside add_argument(...) parentheses
+
+    Returns:
+        Dict with name, required, help keys, or None if unparseable
+    """
+    # Extract parameter name (first quoted string)
+    name_match = re.search(r'["\'](-{0,2})([^"\']+)["\']', arg_text)
+    if not name_match:
+        return None
+
+    prefix = name_match.group(1)
+    name = name_match.group(2)
+
+    # Skip short aliases like -o
+    if prefix == "-" and len(name) == 1:
+        return None
+
+    # Extract help text
+    help_match = re.search(r'help\s*=\s*["\']([^"\']+)["\']', arg_text)
+    help_text = help_match.group(1) if help_match else ""
+
+    return {
+        "name": name.lstrip("-"),
+        "required": prefix == "",  # No dash prefix = positional = required
+        "help": help_text,
+    }
 
 
 def load_all_skills(skills_path: Path) -> List[SkillDefinition]:

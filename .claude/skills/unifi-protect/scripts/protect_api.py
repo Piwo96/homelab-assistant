@@ -283,8 +283,8 @@ def execute(action: str, args: dict):
             if not camera_id:
                 raise ValueError(f"Camera not found: {args['camera']}")
         events = api.get_events(start, end, types, camera_id)
-        if args.get("limit"):
-            events = events[:int(args["limit"])]
+        limit = int(args["limit"]) if args.get("limit") else 20
+        events = events[:limit]
         return events
     elif action == "detections":
         hours = int(args.get("last", "6h").replace("h", ""))
@@ -295,7 +295,10 @@ def execute(action: str, args: dict):
             camera_id = api.resolve_camera_id(args["camera"])
             if not camera_id:
                 raise ValueError(f"Camera not found: {args['camera']}")
-        return api.get_detections(start, end, camera_id, args.get("type"))
+        detections = api.get_detections(start, end, camera_id, args.get("type"))
+        limit = int(args["limit"]) if args.get("limit") else 20
+        detections = detections[:limit]
+        return detections
     elif action == "nvr":
         return api.get_nvr()
     elif action == "sensors":
