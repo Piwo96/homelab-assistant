@@ -1039,7 +1039,7 @@ def execute(action: str, args: dict) -> Any:
 
     # --- Event commands (Legacy API) ---
     elif action == "events":
-        hours = int(args.get("last", "24h").replace("h", ""))
+        hours = _parse_duration(str(args.get("last", "24h")))
         end = int(datetime.now().timestamp() * 1000)
         start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
         types = args.get("types", "").split(",") if args.get("types") else None
@@ -1052,7 +1052,7 @@ def execute(action: str, args: dict) -> Any:
         limit = int(args["limit"]) if args.get("limit") else 20
         return events[:limit]
     elif action == "detections":
-        hours = int(args.get("last", "6h").replace("h", ""))
+        hours = _parse_duration(str(args.get("last", "6h")))
         end = int(datetime.now().timestamp() * 1000)
         start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
         camera_id = None
