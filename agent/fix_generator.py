@@ -66,8 +66,8 @@ async def generate_fix(
         logger.error("anthropic package not installed")
         return None
 
-    # Load relevant source code for context
-    source_context = _load_error_context(skill, action, settings)
+    # Load relevant source code for context (pass error_message for targeted extraction)
+    source_context = _load_error_context(skill, action, settings, error_message)
 
     client = Anthropic(api_key=settings.anthropic_api_key)
 
@@ -185,13 +185,164 @@ Gib NUR das JSON zurück, keine weiteren Erklärungen."""
         return None
 
 
-def _load_error_context(skill: str, action: str, settings: Settings) -> str:
+def _extract_relevant_sections(content: str, action: str, error_message: str, budget: int = 60000) -> str:
+    """Extract error-relevant sections from a large source file.
+
+    Instead of blind truncation, this finds the code sections most likely
+    related to the error and returns them with line numbers.
+
+    Args:
+        content: Full file content
+        action: The action that failed (e.g., "events")
+        error_message: The error message for keyword extraction
+        budget: Maximum characters to return
+
+    Returns:
+        Extracted sections with line numbers and separator comments
+    """
+    lines = content.splitlines()
+
+    # Collect line ranges to include (set of line indices)
+    important_lines: set[int] = set()
+
+    # 1. Always include imports and top-level definitions (first 40 lines)
+    for i in range(min(40, len(lines))):
+        important_lines.add(i)
+
+    # 2. Find the action handler: prioritize exact action == "events" matches
+    exact_patterns = [f'action == "{action}"', f"action == '{action}'"]
+    broad_pattern = f'"{action}"'
+    exact_match_lines: list[int] = []
+
+    for i, line in enumerate(lines):
+        if any(p in line for p in exact_patterns):
+            exact_match_lines.append(i)
+            # Exact action handler: wide context (±50 lines to capture full branch)
+            for j in range(max(0, i - 15), min(len(lines), i + 50)):
+                important_lines.add(j)
+        elif broad_pattern in line:
+            # Broad mention: narrow context (±10 lines)
+            for j in range(max(0, i - 5), min(len(lines), i + 10)):
+                important_lines.add(j)
+
+    # 3. Find keywords from the error message (function names, variable names)
+    error_keywords = set()
+    for word in re.findall(r"'(\w+)'|\"(\w+)\"|(\w+Error)", error_message):
+        for w in word:
+            if w and len(w) > 3:
+                error_keywords.add(w)
+    # Also look for .replace, .attribute patterns from AttributeError
+    attr_match = re.search(r"'(\w+)' object has no attribute '(\w+)'", error_message)
+    if attr_match:
+        error_keywords.add(attr_match.group(2))  # The missing attribute
+
+    for i, line in enumerate(lines):
+        if any(kw in line for kw in error_keywords):
+            for j in range(max(0, i - 5), min(len(lines), i + 15)):
+                important_lines.add(j)
+
+    # 4. Find private helper functions called from the exact action handler
+    if exact_match_lines:
+        # Build called_funcs ONLY from the exact action handler section
+        handler_lines = set()
+        for em in exact_match_lines:
+            for j in range(max(0, em - 15), min(len(lines), em + 50)):
+                handler_lines.add(j)
+        handler_section = "\n".join(lines[i] for i in sorted(handler_lines) if i < len(lines))
+        handler_called = set(re.findall(r'(\w+)\(', handler_section))
+
+        # Anchor for nearby range: last exact match (most specific handler)
+        anchor = exact_match_lines[-1]
+        nearby_range = range(max(0, anchor - 150), min(len(lines), anchor + 150))
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped.startswith("def "):
+                continue
+            func_match = re.match(r'def\s+(\w+)', stripped)
+            if not func_match:
+                continue
+            func_name = func_match.group(1)
+
+            # Only include: private helpers called from handler, OR private funcs nearby
+            is_called = func_name in handler_called
+            is_nearby_private = i in nearby_range and func_name.startswith("_")
+            if is_called or is_nearby_private:
+                for j in range(i, min(len(lines), i + 30)):
+                    important_lines.add(j)
+                    if j > i and lines[j].strip() and not lines[j][0].isspace():
+                        break
+
+    # Build output: prioritize exact action matches, then helpers, then broad matches
+    # This ensures the most relevant code isn't cut off by the budget
+
+    def _format_range(line_indices: list[int]) -> str:
+        """Format a contiguous range of lines with line numbers."""
+        parts: list[str] = []
+        prev = -2
+        for idx in sorted(line_indices):
+            if idx >= len(lines):
+                continue
+            if idx != prev + 1:
+                if parts:
+                    parts.append("")
+                if idx > 0:
+                    parts.append(f"# ... (Zeile {idx + 1}) ...")
+            parts.append(f"{idx + 1:>4}| {lines[idx]}")
+            prev = idx
+        return "\n".join(parts)
+
+    # Categorize lines by priority
+    imports_set = set(i for i in important_lines if i < 40)
+    # High priority: exact action handler + any functions called from it
+    exact_set = set(i for i in important_lines
+                    if any(abs(i - em) <= 50 for em in exact_match_lines))
+    # Also include helper function bodies found by Step 4 as high priority
+    # (they're directly referenced from the action handler)
+    handler_helper_set = important_lines - imports_set - exact_set
+    # Lines near the anchor (±150) are helpers, rest is broad context
+    if exact_match_lines:
+        anchor = exact_match_lines[-1]
+        near_anchor = set(i for i in handler_helper_set if abs(i - anchor) <= 150)
+    else:
+        near_anchor = set()
+    broad_set = handler_helper_set - near_anchor
+
+    imports_lines = sorted(imports_set)
+    exact_lines = sorted(exact_set)
+    helper_lines = sorted(near_anchor)
+    broad_lines = sorted(broad_set)
+
+    result_parts: list[str] = []
+    used_chars = 0
+
+    for label, line_set in [("imports", imports_lines), ("action handler", exact_lines), ("helpers", helper_lines), ("context", broad_lines)]:
+        if not line_set:
+            continue
+        section = _format_range(line_set)
+        if used_chars + len(section) > budget:
+            remaining = budget - used_chars
+            if remaining > 200:
+                section = section[:remaining] + "\n... (gekürzt)"
+                result_parts.append(section)
+            break
+        result_parts.append(section)
+        used_chars += len(section) + 2  # +2 for \n\n separator
+
+    return "\n\n".join(result_parts)
+
+
+def _load_error_context(skill: str, action: str, settings: Settings, error_message: str = "") -> str:
     """Load relevant source code for error context.
+
+    For large files, extracts only the sections relevant to the error
+    instead of blind truncation.
 
     Args:
         skill: Skill name
         action: Action that failed
         settings: Application settings
+        error_message: The error message for targeted extraction
 
     Returns:
         String with relevant source code
@@ -205,9 +356,9 @@ def _load_error_context(skill: str, action: str, settings: Settings) -> str:
     if skill_script.exists():
         try:
             content = skill_script.read_text()
-            # Truncate if too long
             if len(content) > 8000:
-                content = content[:8000] + "\n... (truncated)"
+                # Large file: extract relevant sections instead of blind truncation
+                content = _extract_relevant_sections(content, action, error_message)
             # Use FULL RELATIVE PATH so Claude knows exactly where the file is
             context_parts.append(f"### Datei: `{skill_script_rel}`\n```python\n{content}\n```")
         except Exception as e:
