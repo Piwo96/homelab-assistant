@@ -77,6 +77,8 @@ python proxmox_api.py lxc-config pve 100
 python proxmox_api.py remove-mount pve 100 --mp 0
 ```
 
+> **Note**: To update other container configuration (memory, cores, etc.), use the Proxmox web UI or make a direct API call via the `update_container_config()` method in Python.
+
 ## Snapshots
 
 ### Create Snapshot
@@ -84,26 +86,40 @@ python proxmox_api.py remove-mount pve 100 --mp 0
 # VM snapshot
 python proxmox_api.py snapshot pve 100 --name "before-update"
 
-# LXC snapshot
-python proxmox_api.py snapshot pve 101 --name "clean-state"
+# LXC snapshot (requires --lxc flag)
+python proxmox_api.py snapshot pve 101 --name "clean-state" --lxc
 ```
 
 ### List Snapshots
 ```bash
+# VM snapshots
 python proxmox_api.py snapshots pve 100
+
+# LXC snapshots (requires --lxc flag)
+python proxmox_api.py snapshots pve 101 --lxc
 ```
 
 ### Rollback
 ```bash
+# VM rollback
 python proxmox_api.py rollback pve 100 --name "before-update"
+
+# LXC rollback (requires --lxc flag)
+python proxmox_api.py rollback pve 101 --name "clean-state" --lxc
 ```
 
 ## Bulk Operations
 
 ### Start All Containers on Node
 ```bash
+# With explicit node name
 for vmid in $(python proxmox_api.py containers pve --ids-only); do
-  python proxmox_api.py start pve $vmid
+  python proxmox_api.py start $vmid pve
+done
+
+# With auto-detection
+for vmid in $(python proxmox_api.py containers --ids-only); do
+  python proxmox_api.py start $vmid
 done
 ```
 
@@ -111,6 +127,48 @@ done
 ```bash
 python proxmox_api.py overview pve
 ```
+
+## Programmatic Usage (Python)
+
+The `execute()` function allows direct Python integration without subprocess calls:
+
+```python
+from .claude.skills.proxmox.scripts.proxmox_api import execute
+
+# List VMs (auto-detects node)
+vms = execute("vms", {})
+
+# List VMs on specific node
+vms = execute("vms", {"node": "pve"})
+
+# Start VM/Container
+execute("start", {"vmid": 100, "node": "pve"})
+
+# Get status
+status = execute("status", {"vmid": 100, "node": "pve"})
+
+# Add mount
+execute("add-mount", {
+    "node": "pve",
+    "vmid": 101,
+    "mp": 0,
+    "source": "/mnt/pve/qnap-media",
+    "target": "/media",
+    "readonly": False
+})
+
+# Create snapshot
+execute("snapshot", {
+    "node": "pve",
+    "vmid": 100,
+    "name": "pre-update",
+    "lxc": False  # True for containers
+})
+```
+
+**Returns:** Raw Python data (dict/list), not JSON strings.
+
+**Error Handling:** Raises `ValueError` for unknown actions, `KeyError` for missing arguments, `RuntimeError` for API errors.
 
 ## Troubleshooting
 

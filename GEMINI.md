@@ -116,7 +116,7 @@ You complete a task
         │   └─► MUST spawn: code-reviewer (background)
         │       → Reviews any scripts in the skill
         │
-        └─► Error resolved? New pattern discovered? Skill updated?
+        └─► Error resolved? New pattern discovered? Skill scripts updated?
             └─► MUST spawn: skill-documenter (background)
                 → Documents learning in relevant skill MD
 ```
@@ -132,7 +132,7 @@ Task:
   run_in_background: true
   prompt: "Review the code I created: [file paths]"
 
-# After self-annealing (error resolved, new pattern found) - MANDATORY
+# After script updates (error resolved, new pattern found) - MANDATORY
 Task:
   subagent_type: skill-documenter
   run_in_background: true

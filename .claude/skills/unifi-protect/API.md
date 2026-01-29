@@ -38,11 +38,43 @@ See [UniFi API.md](../unifi/API.md) for details.
 | GET | `/events` | List events |
 | GET | `/events?start={unix}&end={unix}` | Events in timerange |
 | GET | `/events?types=motion,ring` | Filter by type |
+| GET | `/events?camera={id}` | Filter by camera ID |
+
+**Query Parameters:**
+- `start` - Start timestamp in milliseconds (Unix epoch)
+- `end` - End timestamp in milliseconds (Unix epoch)
+- `types` - Comma-separated event types
+- `camera` - Camera ID to filter (client-side filtering in script)
 
 **Event types:**
 - `motion` - Motion detected
 - `ring` - Doorbell ring
 - `smartDetectZone` - Smart detection (person, vehicle, etc.)
+
+**Smart Detection Event Structure:**
+```json
+{
+  "id": "event-id",
+  "type": "smartDetectZone",
+  "start": 1640000000000,
+  "end": 1640000005000,
+  "camera": "camera-id",
+  "smartDetectTypes": ["vehicle", "licensePlate"],
+  "metadata": {
+    "detectedThumbnails": [
+      {
+        "type": "vehicle",
+        "name": "ABC123",
+        "confidence": 95,
+        "attributes": {
+          "vehicleType": {"val": "car"},
+          "color": {"val": "white"}
+        }
+      }
+    ]
+  }
+}
+```
 
 ### Recordings
 
@@ -88,6 +120,15 @@ rtsp://{ucg-ip}:7447/{token}
 | GET | `/lights` | List lights |
 | GET | `/chimes` | List chimes/doorbells |
 | PATCH | `/lights/{id}` | Control light |
+
+**Light Control Payload:**
+```json
+{
+  "lightOnSettings": {
+    "isLedForceOn": true  // true = on, false = off
+  }
+}
+```
 
 ## WebSocket Updates
 

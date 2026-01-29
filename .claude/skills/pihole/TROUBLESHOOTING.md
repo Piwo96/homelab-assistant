@@ -28,11 +28,13 @@ Error: Cannot connect to pihole.local:80
 ```
 Error: Could not resolve hostname
 ```
-**Cause**: Using hostname when DNS is down.
+**Cause**: Using hostname when DNS is down (circular dependency - Pi-hole provides DNS).
 **Solution**: Use IP address instead of hostname in `.env`:
 ```bash
 PIHOLE_HOST=192.168.1.53  # Use IP, not pihole.local
 ```
+
+**Why this happens**: If Pi-hole is your primary DNS server and it's down, your system can't resolve hostnames including `pihole.local`. Using an IP address bypasses DNS resolution.
 
 ## Authentication Issues
 
@@ -51,10 +53,10 @@ Error: Authentication failed
 ### Domain Not Being Blocked
 **Cause**: Multiple possible reasons.
 **Solution**:
-1. Check if in blocklist: `pihole_api.py query domain.com`
-2. Check if in allowlist (overrides block)
+1. Check recent queries: `pihole_api.py queries --domain example.com`
+2. View lists to check if in blocklist or allowlist: `pihole_api.py lists` (v6 only)
 3. Flush DNS cache on client: `ipconfig /flushdns` or `sudo dscacheutil -flushcache`
-4. Check gravity updated: `pihole -g` (on server)
+4. Update gravity: `pihole_api.py gravity-update` (v6) or `pihole -g` (on server)
 
 ### Changes Not Taking Effect
 **Cause**: DNS caching.
@@ -75,26 +77,35 @@ Error: Authentication failed
 ### API Endpoints Changed
 **Cause**: Pi-hole v6 has new API structure.
 **Solution**:
-1. Check Pi-hole version: `pihole -v`
+1. Script auto-detects version - no manual configuration needed
 2. v5: Uses `/admin/api.php`
 3. v6: Uses `/api/` with new endpoints
-4. Update API.md with correct endpoints for your version
+4. Check detected version in output: "Connected to Pi-hole (v5)" or "(v6)"
 
 ### Authentication Method Changed
-**Cause**: v6 uses different auth mechanism.
+**Cause**: v6 uses session-based authentication.
 **Solution**:
-1. v5: Password via query parameter
-2. v6: App password/token based
-3. Check official docs for v6 API authentication
+1. v5: Uses API key if provided via `PIHOLE_API_KEY`
+2. v6: Uses password to get session ID (SID), auto-renews on 401
+3. Script handles both automatically
+
+### List Management Not Available in v5
+**Cause**: v5 API doesn't support blocklist/allowlist management.
+**Error**: "Blocklist management requires web interface in v5"
+**Solution**:
+1. Upgrade to Pi-hole v6 for full API support
+2. Or use web interface for list management
+3. Or use SSH and `pihole` CLI commands
 
 ## Performance Issues
 
 ### Slow Query Response
 **Cause**: Large query log or slow storage.
 **Solution**:
-1. Limit recent queries: `recent-queries --limit 100`
-2. Check Pi-hole storage (SD card wear on Raspberry Pi)
-3. Consider moving to faster storage
+1. Query log is limited to 20 entries by default in output
+2. Use `--json` flag for programmatic access without formatting overhead
+3. Check Pi-hole storage (SD card wear on Raspberry Pi)
+4. Consider moving to faster storage
 
 ### High CPU on Pi-hole
 **Cause**: Heavy DNS traffic or logging.
@@ -102,6 +113,36 @@ Error: Authentication failed
 1. Reduce query logging level in Pi-hole settings
 2. Increase flush frequency
 3. Consider scaling up hardware
+
+## Script Issues
+
+### ImportError: requests module not found
+**Error**: "Error: 'requests' library required"
+**Solution**: Install requests library: `pip install requests`
+
+### Session Expired During Long Operations
+**Cause**: v6 sessions expire after 300 seconds (5 minutes) by default.
+**Behavior**: Script automatically re-authenticates on 401 errors.
+**Solution**: If still failing, check password is correct.
+
+### SSL/TLS Verification Warnings
+**Cause**: Self-signed certificates or HTTP-only setup.
+**Behavior**: SSL warnings are automatically suppressed in the script.
+**Solution**: If you want SSL verification, set `verify_ssl=True` when initializing API.
+
+### .env File Not Found
+**Cause**: Script searches in multiple locations but can't find `.env`.
+**Locations checked**:
+1. Current working directory
+2. Parent directory
+3. 5 levels up (for nested script locations)
+**Solution**: Create `.env` in project root with `PIHOLE_HOST` and `PIHOLE_PASSWORD`.
+
+### HTTPS/HTTP Confusion
+**Cause**: `PIHOLE_HOST` includes `http://` or `https://` prefix.
+**Behavior**: Script strips these prefixes and uses HTTP by default.
+**Note**: Pi-hole typically runs on HTTP (port 80) unless configured otherwise.
+**Solution**: Set `PIHOLE_HOST=pihole.local` or `PIHOLE_HOST=192.168.1.53` (no protocol prefix).
 
 ---
 

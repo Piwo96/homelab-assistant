@@ -52,6 +52,11 @@ Ermöglicht das Verwalten von Git-Repositories direkt über Telegram-Befehle.
 - Push-Ergebnis
 - Fehler zu stderr
 
+## Resources
+
+- **[OPERATIONS.md](OPERATIONS.md)** - Detailed workflows and use cases
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
+
 ## Common Commands
 
 ```bash
@@ -99,28 +104,39 @@ git_api.py delete-branch feature/old-feature
 
 # Remote Branch löschen
 git_api.py delete-remote-branch feature/old-feature
+
+# Änderungen verwerfen (cleanup)
+git_api.py discard-changes
+
+# Vergleichs-URL generieren
+git_api.py compare-url main feature/new-feature
 ```
 
 ## GitHub Pull Request Operations
 
-Erfordert GitHub CLI (`gh`) Installation und Authentifizierung.
+**Requirement**: GitHub CLI (`gh`) must be installed and authenticated.
 
 ```bash
+# Install gh CLI (macOS)
+brew install gh
+
+# Authenticate
+gh auth login
+
 # Pull Request erstellen
 git_api.py create-pr --title "Add new feature" --body "Description" --base main
 
 # PR-Informationen abrufen
 git_api.py pr-info 123
 
-# PR mergen
+# PR mergen (und Branch löschen)
 git_api.py merge-pr 123
 
 # PR schließen (ohne merge)
 git_api.py close-pr 123
-
-# Vergleichs-URL generieren
-git_api.py compare-url main feature/new-feature
 ```
+
+> **Note**: PR operations will fail with "GitHub CLI (gh) nicht installiert" if `gh` is not available. See TROUBLESHOOTING.md for setup instructions.
 
 ## Conventional Commits Format
 
@@ -155,12 +171,16 @@ Wenn keine Message angegeben wird, analysiert der Skill die Änderungen und gene
 
 ## Edge Cases
 
-| Szenario | Verhalten |
-|----------|-----------|
-| Keine Änderungen | Commit wird übersprungen |
-| Kein Remote konfiguriert | Push schlägt fehl mit Hinweis |
-| Merge-Konflikt | Warnung, manuelles Eingreifen nötig |
-| Lange Commit-Message | Automatisch gekürzt auf 72 Zeichen |
+| Szenario | Verhalten | Mitigation |
+|----------|-----------|------------|
+| Keine Änderungen | Commit wird übersprungen | Check `git_api.py status` first |
+| Kein Remote konfiguriert | Push schlägt fehl mit Hinweis | Configure remote: `git remote add origin <url>` |
+| Merge-Konflikt | Warnung, manuelles Eingreifen nötig | Resolve conflicts manually, then commit |
+| Lange Commit-Message | Automatisch gekürzt auf 72 Zeichen | Keep messages concise |
+| Ungültiges Conventional Commit Format | Warning ausgegeben, Commit erfolgt trotzdem | Follow format: `type(scope): description` |
+| `gh` CLI nicht installiert | PR operations fail | Install via `brew install gh` or apt |
+| Branch nicht auf Remote | Push mit `--set-upstream` | Automatically handled by script |
+| Uncommitted changes beim Branch-Wechsel | Änderungen bleiben erhalten | Use `discard-changes` to clean up |
 
 ## Beispiel-Anfragen
 

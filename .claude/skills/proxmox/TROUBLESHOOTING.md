@@ -90,6 +90,25 @@ Error: 500 - guest agent is not running
 proxmox_api.py snapshot <node> <vmid> --name backup --lxc
 ```
 
+### Node Name Not Found
+```
+Error: Node 'pve' not found in cluster
+```
+**Cause**: Node name mismatch (e.g., actual node is named 'pve-rollmann' not 'pve').
+**Solution**: The script auto-detects the correct node name if you omit it or provide an invalid name. For most commands, you can simply omit the node parameter:
+```bash
+# Auto-detect node (recommended)
+proxmox_api.py vms
+proxmox_api.py start 100
+
+# Or check actual node name first
+proxmox_api.py nodes
+```
+
+Commands with auto-detection:
+- `vms`, `containers`, `node-status`, `overview`
+- `start`, `stop`, `shutdown`, `reboot`
+
 ## Performance Issues
 
 ### Slow API Responses

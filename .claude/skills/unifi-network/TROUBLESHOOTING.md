@@ -112,9 +112,10 @@ Data returned is for different location
 ```
 **Cause**: Wrong `UNIFI_SITE` configured.
 **Solution**:
-1. List sites: `network_api.py sites`
+1. Check current site setting in `.env`
 2. Site names are usually `default` for single site
-3. Multi-site: use exact site name from web UI
+3. Multi-site: use exact site name from web UI or use `--site` flag
+4. Verify via `network_api.py health --site <sitename>`
 
 ### Site Not Found
 ```

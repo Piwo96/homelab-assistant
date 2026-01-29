@@ -103,15 +103,15 @@ bash -c "$(wget -qLO - https://github.com/community-scripts/ProxmoxVE/raw/main/c
 # - Network: Accept defaults
 
 # Step 2: Find container (if you forgot the ID)
-python .claude/skills/homelab/proxmox/scripts/proxmox_api.py containers pve | grep -i paperless
+python .claude/skills/proxmox/scripts/proxmox_api.py containers pve | grep -i paperless
 
 # Step 3: Add NAS mount for documents
-python .claude/skills/homelab/proxmox/scripts/proxmox_api.py add-mount pve 105 \
+python .claude/skills/proxmox/scripts/proxmox_api.py add-mount pve 105 \
   --source /mnt/pve/qnap-documents \
   --target /data/documents
 
 # Step 4: Verify container is running
-python .claude/skills/homelab/proxmox/scripts/proxmox_api.py status pve 105
+python .claude/skills/proxmox/scripts/proxmox_api.py status pve 105
 
 # Step 5: Access app
 # URL displayed at end of installation (usually http://<proxmox-ip>:8000)
@@ -121,17 +121,17 @@ python .claude/skills/homelab/proxmox/scripts/proxmox_api.py status pve 105
 
 ```bash
 # Find container ID
-python .claude/skills/homelab/proxmox/scripts/proxmox_api.py containers pve | grep -i assistant
+python .claude/skills/proxmox/scripts/proxmox_api.py containers pve | grep -i assistant
 
 # Check status
-python .claude/skills/homelab/proxmox/scripts/proxmox_api.py status pve <vmid>
+python .claude/skills/proxmox/scripts/proxmox_api.py status pve <vmid>
 
 # Start/stop
-python .claude/skills/homelab/proxmox/scripts/proxmox_api.py start pve <vmid>
-python .claude/skills/homelab/proxmox/scripts/proxmox_api.py stop pve <vmid>
+python .claude/skills/proxmox/scripts/proxmox_api.py start pve <vmid>
+python .claude/skills/proxmox/scripts/proxmox_api.py stop pve <vmid>
 
 # View configuration
-python .claude/skills/homelab/proxmox/scripts/proxmox_api.py lxc-config pve <vmid>
+python .claude/skills/proxmox/scripts/proxmox_api.py lxc-config pve <vmid>
 ```
 
 ## Post-Installation Checklist

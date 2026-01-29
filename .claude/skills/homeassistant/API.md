@@ -311,7 +311,7 @@ Response:
 
 ## WebSocket API
 
-For real-time updates, use the WebSocket API at:
+For real-time updates and dashboard management, use the WebSocket API at:
 ```
 ws://<homeassistant-ip>:8123/api/websocket
 ```
@@ -329,6 +329,42 @@ ws://<homeassistant-ip>:8123/api/websocket
   "access_token": "YOUR_TOKEN"
 }
 ```
+
+### Dashboard Management (Lovelace)
+
+Dashboard operations require WebSocket API (not available via REST).
+
+**List dashboards:**
+```json
+{
+  "id": 1,
+  "type": "lovelace/dashboards/list"
+}
+```
+
+**Get dashboard config:**
+```json
+{
+  "id": 2,
+  "type": "lovelace/config",
+  "url_path": null
+}
+```
+
+**Save dashboard config:**
+```json
+{
+  "id": 3,
+  "type": "lovelace/config/save",
+  "config": {
+    "title": "Home",
+    "views": [...]
+  },
+  "url_path": null
+}
+```
+
+> **Note**: Use `scripts/dashboard_api.py` for dashboard operations - it handles WebSocket authentication and message flow.
 
 ## Error Handling
 

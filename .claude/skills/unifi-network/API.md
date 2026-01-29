@@ -144,6 +144,16 @@ Replace `{site}` with site name (usually `default`).
 | PUT | `/api/s/{site}/rest/portforward/{id}` | Update rule |
 | DELETE | `/api/s/{site}/rest/portforward/{id}` | Delete rule |
 
+#### Firewall
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/s/{site}/rest/firewallrule` | List firewall rules |
+| GET | `/api/s/{site}/rest/firewallgroup` | List firewall groups (IP/port groups) |
+| POST | `/api/s/{site}/rest/firewallrule` | Create firewall rule |
+| PUT | `/api/s/{site}/rest/firewallrule/{id}` | Update firewall rule |
+| DELETE | `/api/s/{site}/rest/firewallrule/{id}` | Delete firewall rule |
+
 #### System (UDM Only)
 
 | Method | Endpoint | Description |

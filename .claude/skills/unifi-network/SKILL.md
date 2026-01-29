@@ -51,6 +51,8 @@ Control UniFi network infrastructure via API without needing the web UI or mobil
 |------|---------|
 | `scripts/network_api.py` | CLI for all UniFi Network operations |
 
+**Note**: `network_api.py` can also be imported as a Python module via `execute(action, args)` function for programmatic access.
+
 ## Outputs
 
 - Device and client lists in table or JSON format
@@ -82,49 +84,45 @@ Control UniFi network infrastructure via API without needing the web UI or mobil
 
 ```bash
 # Network Health
+network_api.py detect                     # Detect controller type (UCG/UDM/Standard)
 network_api.py health                     # Overall health status
-network_api.py devices                    # List all devices (APs, switches)
-network_api.py device-status <mac>        # Specific device status
+network_api.py sysinfo                    # System information
 
 # Client Management
 network_api.py clients                    # List active clients
-network_api.py client-info <mac>          # Client details
+network_api.py clients --all              # List all known clients (includes inactive)
 network_api.py kick <mac>                 # Disconnect client
 network_api.py block <mac>                # Block client permanently
 network_api.py unblock <mac>              # Unblock client
 
-# Device Operations
+# Device Management
+network_api.py devices                    # List all devices (APs, switches, gateways)
 network_api.py restart-device <mac>       # Restart AP/switch
-network_api.py locate-device <mac>        # Flash LED to find device
-network_api.py provision <mac>            # Force re-provision
+network_api.py adopt <mac>                # Adopt pending device
 
-# Configuration
+# Network Configuration
 network_api.py networks                   # List networks/VLANs
 network_api.py wifis                      # List WiFi networks/SSIDs
+
+# Port Forwarding
 network_api.py port-forwards              # List port forwarding rules
+network_api.py create-port-forward <name> <dst_port> <fwd_ip> <fwd_port> [--proto tcp_udp]
+network_api.py delete-port-forward <rule_id>
+
+# Firewall
 network_api.py firewall-rules             # List firewall rules
+network_api.py firewall-groups            # List firewall groups (IP/port groups)
 
-# Statistics & System
-network_api.py sysinfo                    # System-Informationen abrufen
-network_api.py dpi-stats                  # Deep Packet Inspection Statistiken
-
-# Device Adoption
-network_api.py adopt <mac>                # Gerät adoptieren
+# Statistics
+network_api.py dpi-stats                  # Deep Packet Inspection statistics
 ```
 
 ## Workflows
 
 ### Troubleshoot Client Connection
-1. Find client: `clients`
-2. Get details: `client-info aa:bb:cc:dd:ee:ff`
-3. Check signal strength, AP, connection time
-4. If issues: `kick aa:bb:cc:dd:ee:ff` to force reconnect
-
-### Find Physical Device
-1. Get MAC: `devices`
-2. Flash LED: `locate-device aa:bb:cc:dd:ee:ff`
-3. Find blinking device
-4. Stop: `locate-device aa:bb:cc:dd:ee:ff --stop`
+1. Find client: `clients` or `clients --all` for inactive
+2. View full JSON details: `clients --json | grep -A 20 "aa:bb:cc:dd:ee:ff"`
+3. If issues: `kick aa:bb:cc:dd:ee:ff` to force reconnect
 
 ### Block Unwanted Device
 1. Identify device: `clients`
@@ -134,10 +132,15 @@ network_api.py adopt <mac>                # Gerät adoptieren
 
 ### Restart Misbehaving AP
 1. Identify AP: `devices`
-2. Check status: `device-status aa:bb:cc:dd:ee:ff`
-3. Restart: `restart-device aa:bb:cc:dd:ee:ff`
-4. Wait 2-3 minutes for reboot
-5. Verify: `device-status aa:bb:cc:dd:ee:ff`
+2. Restart: `restart-device aa:bb:cc:dd:ee:ff`
+3. Wait 2-3 minutes for reboot
+4. Verify: `devices | grep aa:bb:cc:dd:ee:ff`
+
+### Setup Port Forwarding
+1. List existing rules: `port-forwards`
+2. Create rule: `create-port-forward "Web Server" 80 192.168.1.100 8080`
+3. Verify: `port-forwards --json`
+4. Delete if needed: `delete-port-forward <rule_id>`
 
 ## Edge Cases
 

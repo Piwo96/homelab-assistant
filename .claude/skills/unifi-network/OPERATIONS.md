@@ -1,47 +1,62 @@
 # UniFi Operations Guide
 
-Common operations for managing UniFi networks, clients, and devices.
+Common operations for managing UniFi networks, clients, and devices. This guide documents **only** the commands actually implemented in `network_api.py`.
 
 ## Initial Setup
 
 Determine your controller type:
 ```bash
-python unifi_api.py detect
+python network_api.py detect
 ```
 
 This auto-detects:
 - Standard Controller (port 8443)
-- UDM/UDM Pro (port 443, `/proxy/network` prefix)
+- UDM/UDM Pro/UCG (port 443, `/proxy/network` prefix)
 
 ## Client Management
 
 ### List Clients
 
 ```bash
-# All active clients
-python unifi_api.py clients
+# All active clients (formatted output)
+python network_api.py clients
 
 # All known clients (includes inactive)
-python unifi_api.py clients --all
+python network_api.py clients --all
 
-# Filter by hostname
-python unifi_api.py clients --filter "iPhone"
+# JSON output for scripting
+python network_api.py clients --json
+python network_api.py clients --all --json
 ```
+
+**Output includes:**
+- Client name/hostname
+- IP address
+- MAC address
+- Connection type (wired/wireless)
+- SSID (for wireless clients)
 
 ### Client Actions
 
 ```bash
-# Kick client (disconnect)
-python unifi_api.py kick aa:bb:cc:dd:ee:ff
+# Kick client (disconnect, can reconnect)
+python network_api.py kick aa:bb:cc:dd:ee:ff
 
-# Block client
-python unifi_api.py block aa:bb:cc:dd:ee:ff
+# Block client (permanent until unblocked)
+python network_api.py block aa:bb:cc:dd:ee:ff
 
 # Unblock client
-python unifi_api.py unblock aa:bb:cc:dd:ee:ff
+python network_api.py unblock aa:bb:cc:dd:ee:ff
+```
 
-# Get client details
-python unifi_api.py client-info aa:bb:cc:dd:ee:ff
+### Finding Client Details
+
+```bash
+# Get full client details via JSON
+python network_api.py clients --json | jq '.[] | select(.mac=="aa:bb:cc:dd:ee:ff")'
+
+# Filter clients by name pattern using grep
+python network_api.py clients | grep "iPhone"
 ```
 
 ## Device Management
@@ -49,39 +64,28 @@ python unifi_api.py client-info aa:bb:cc:dd:ee:ff
 ### List Devices
 
 ```bash
-# All devices
-python unifi_api.py devices
+# All network devices (APs, switches, gateways)
+python network_api.py devices
 
-# Filter by type
-python unifi_api.py devices --type uap    # Access Points
-python unifi_api.py devices --type usw    # Switches
-python unifi_api.py devices --type ugw    # Gateways
+# JSON output for scripting
+python network_api.py devices --json
 ```
+
+**Output includes:**
+- Device name
+- Model
+- Type (uap=AP, usw=switch, ugw=gateway)
+- State (1=online, 0=offline)
+- Number of connected clients (for APs)
 
 ### Device Actions
 
 ```bash
-# Restart device
-python unifi_api.py restart-device aa:bb:cc:dd:ee:ff
+# Restart device (takes 2-3 minutes)
+python network_api.py restart-device aa:bb:cc:dd:ee:ff
 
 # Adopt pending device
-python unifi_api.py adopt aa:bb:cc:dd:ee:ff
-
-# Locate device (LED blink)
-python unifi_api.py locate aa:bb:cc:dd:ee:ff
-
-# Get device details
-python unifi_api.py device-info aa:bb:cc:dd:ee:ff
-```
-
-### Firmware Updates
-
-```bash
-# Check for updates
-python unifi_api.py check-updates
-
-# Upgrade specific device
-python unifi_api.py upgrade aa:bb:cc:dd:ee:ff
+python network_api.py adopt aa:bb:cc:dd:ee:ff
 ```
 
 ## Network Statistics
@@ -89,67 +93,41 @@ python unifi_api.py upgrade aa:bb:cc:dd:ee:ff
 ### Site Health
 
 ```bash
-# Overall site health
-python unifi_api.py health
+# Overall site health with status indicators
+python network_api.py health
 
-# Detailed system info
-python unifi_api.py sysinfo
+# Detailed system information
+python network_api.py sysinfo
+
+# JSON output
+python network_api.py health --json
+python network_api.py sysinfo --json
 ```
 
 ### Traffic Statistics
 
 ```bash
-# DPI (Deep Packet Inspection) stats
-python unifi_api.py dpi-stats
+# DPI (Deep Packet Inspection) statistics
+python network_api.py dpi-stats
 
-# Top applications
-python unifi_api.py top-apps --count 10
-
-# Top clients by traffic
-python unifi_api.py top-traffic --count 10
+# JSON output for parsing
+python network_api.py dpi-stats --json
 ```
 
-### Recent Events
-
-```bash
-# Last 100 events
-python unifi_api.py events
-
-# Filter by type
-python unifi_api.py events --type user
-python unifi_api.py events --type admin
-```
-
-## WiFi Network Management
+## Network Configuration
 
 ### List Networks
 
 ```bash
-# All WiFi networks
-python unifi_api.py wifis
+# All WiFi networks (SSIDs)
+python network_api.py wifis
 
-# All networks (LAN, VLAN, etc.)
-python unifi_api.py networks
-```
+# All networks (LAN, VLAN, WiFi)
+python network_api.py networks
 
-### Enable/Disable WiFi
-
-```bash
-# Disable WiFi network
-python unifi_api.py wifi-disable "Guest WiFi"
-
-# Enable WiFi network
-python unifi_api.py wifi-enable "Guest WiFi"
-```
-
-### Guest Portal
-
-```bash
-# Create guest voucher
-python unifi_api.py create-voucher --duration 1440 --quota 1  # 24h, 1 device
-
-# List active vouchers
-python unifi_api.py vouchers
+# JSON output
+python network_api.py wifis --json
+python network_api.py networks --json
 ```
 
 ## Port Forwarding
@@ -157,182 +135,215 @@ python unifi_api.py vouchers
 ### Manage Rules
 
 ```bash
-# List port forwarding rules
-python unifi_api.py port-forwards
+# List all port forwarding rules
+python network_api.py port-forwards
+python network_api.py port-forwards --json
 
 # Create rule
-python unifi_api.py add-port-forward \
-  --name "Web Server" \
-  --dst-port 80 \
-  --fwd-ip 192.168.1.100 \
-  --fwd-port 8080
+python network_api.py create-port-forward "Web Server" 80 192.168.1.100 8080
+python network_api.py create-port-forward "SSH" 22 192.168.1.50 22 --proto tcp
 
-# Delete rule
-python unifi_api.py delete-port-forward <rule-id>
+# Delete rule (use ID from list command)
+python network_api.py delete-port-forward <rule-id>
 ```
 
-## System Management (UDM Only)
+**Protocols:** `tcp`, `udp`, `tcp_udp` (default)
 
-### Backups
+## Firewall Management
+
+### Firewall Rules
 
 ```bash
-# List backups
-python unifi_api.py backups
+# List all firewall rules
+python network_api.py firewall-rules
 
-# Create backup
-python unifi_api.py create-backup
+# JSON output
+python network_api.py firewall-rules --json
 ```
 
-### System Control
+**Output includes:**
+- Rule name
+- Enabled status
+- Action (accept/drop/reject)
+- Ruleset
+- Source/destination
+- Protocol and ports
+
+### Firewall Groups
 
 ```bash
-# Reboot UDM
-python unifi_api.py reboot-system
+# List firewall groups (IP groups, port groups)
+python network_api.py firewall-groups
 
-# Power off UDM (caution!)
-python unifi_api.py poweroff-system
+# JSON output
+python network_api.py firewall-groups --json
 ```
 
-## Monitoring & Alerts
+## Output Formats
 
-### Real-time Monitoring
+All commands support two output formats:
+
+### Human-Readable (Default)
+- Formatted with icons and structure
+- Best for interactive terminal use
+- Grouped by category
+
+### JSON (`--json` flag)
+- Machine-readable structured data
+- For scripting and automation
+- Preserves all fields from API
+
+## Common Workflows
+
+### Find and Disconnect a Client
 
 ```bash
-# Watch client count
-python unifi_api.py watch-clients
+# 1. List all clients
+python network_api.py clients
 
-# Monitor bandwidth
-python unifi_api.py watch-bandwidth
+# 2. Find target by name/IP
+python network_api.py clients | grep "suspicious"
+
+# 3. Disconnect
+python network_api.py kick aa:bb:cc:dd:ee:ff
+
+# 4. Or block permanently
+python network_api.py block aa:bb:cc:dd:ee:ff
 ```
 
-### Custom Queries
+### Monitor Network Health
 
 ```bash
-# Clients on specific SSID
-python unifi_api.py clients --ssid "Main WiFi"
+# Check overall health
+python network_api.py health
 
-# Devices offline
-python unifi_api.py devices --status offline
+# List all devices and their status
+python network_api.py devices
 
-# Clients by IP range
-python unifi_api.py clients --ip-range 192.168.1.0/24
+# Count active clients
+python network_api.py clients | grep -c "📡\|📶"
 ```
 
-## Bulk Operations
-
-### Block Multiple Clients
+### Bulk Operations
 
 ```bash
-# From file (one MAC per line)
-python unifi_api.py bulk-block macs.txt
+# Block multiple clients from file
+for mac in $(cat blocked_macs.txt); do
+  python network_api.py block $mac
+done
 
-# From command
-cat suspicious_macs.txt | xargs -I {} python unifi_api.py block {}
-```
-
-### Restart All APs
-
-```bash
-# Get all AP MACs
-python unifi_api.py devices --type uap --macs-only > aps.txt
-
-# Restart each (with delay)
-for mac in $(cat aps.txt); do
-  python unifi_api.py restart-device $mac
+# Restart all devices (one at a time with delay)
+python network_api.py devices --json | jq -r '.[].mac' | while read mac; do
+  python network_api.py restart-device $mac
   sleep 30
 done
 ```
 
+### Export Network Configuration
+
+```bash
+# Export all configuration as JSON
+python network_api.py networks --json > networks.json
+python network_api.py wifis --json > wifis.json
+python network_api.py port-forwards --json > port-forwards.json
+python network_api.py firewall-rules --json > firewall-rules.json
+```
+
+## Site Management
+
+By default, commands operate on the `default` site. To use a different site:
+
+```bash
+# Specify site with --site flag
+python network_api.py clients --site office
+python network_api.py devices --site office
+
+# Or set in environment
+export UNIFI_SITE=office
+python network_api.py clients
+```
+
 ## Troubleshooting
 
-### Connection Issues
-
-1. **Cannot connect:**
-   ```bash
-   # Test connectivity
-   curl -k https://192.168.10.xxx:8443
-
-   # Check controller type
-   python unifi_api.py detect
-   ```
-
-2. **Login fails:**
-   - Verify username/password in `.env`
-   - Check if account has admin privileges
-   - UDM: Try `/api/auth/login` instead of `/api/login`
-
-3. **SSL errors:**
-   - Set `UNIFI_VERIFY_SSL=false` in `.env`
-   - Or add certificate to trust store
-
-### Common Errors
-
-**401 Unauthorized:**
-- Session expired → Re-login automatically handled
-- Invalid credentials → Check UNIFI_USERNAME/PASSWORD
-
-**403 Forbidden:**
-- Account lacks permissions
-- Need admin or super-admin role
-
-**404 Not Found:**
-- Wrong site name (try `default`)
-- UDM: Missing `/proxy/network` prefix
-
-**429 Rate Limited:**
-- Too many requests
-- Implement delays between calls
-
-## Integration Examples
-
-### Auto-block suspicious clients
+### Cannot Connect
 
 ```bash
-# Monitor and auto-block clients with excessive failed auth
-python unifi_api.py events --type user | \
-  grep "authentication failure" | \
-  awk '{print $5}' | \
-  xargs -I {} python unifi_api.py block {}
+# 1. Test connectivity to host
+ping $UNIFI_HOST
+
+# 2. Test HTTPS port
+curl -k https://$UNIFI_HOST:443
+curl -k https://$UNIFI_HOST:8443
+
+# 3. Detect controller type
+python network_api.py detect
 ```
 
-### Daily network report
+### Authentication Issues
 
 ```bash
-# Generate daily stats
-python unifi_api.py health --json > /tmp/health.json
-python unifi_api.py clients --json > /tmp/clients.json
-python unifi_api.py dpi-stats --json > /tmp/dpi.json
+# Verify credentials are set
+echo "Host: $UNIFI_HOST"
+echo "Username: $UNIFI_USERNAME"
+echo "Password: [set: $(test -n "$UNIFI_PASSWORD" && echo yes || echo no)]"
 
-# Email report
-mail -s "Daily UniFi Report" admin@example.com < /tmp/health.json
+# Check .env file location
+ls -la .env
+ls -la ../.env
 ```
 
-### Guest WiFi scheduler
+### SSL Certificate Errors
 
 ```bash
-# Disable guest WiFi at night
-0 23 * * * python unifi_api.py wifi-disable "Guest"
-
-# Enable in morning
-0 7 * * * python unifi_api.py wifi-enable "Guest"
+# Set in .env
+UNIFI_VERIFY_SSL=false
 ```
 
-## Cloud API Operations
+### Session Issues
 
-For read-only cloud access:
+Session cache stored at: `~/.cache/homelab/unifi_session_<host>.pkl`
 
 ```bash
-# Set Cloud API key
-export UNIFI_CLOUD_API_KEY=your-key
-
-# List hosts
-python unifi_api.py cloud-hosts
-
-# List sites
-python unifi_api.py cloud-sites
-
-# List devices
-python unifi_api.py cloud-devices
+# Clear session cache if experiencing issues
+rm ~/.cache/homelab/unifi_session_*.pkl
 ```
 
-Note: Cloud API is read-only. Use local API for write operations.
+## Integration with Other Tools
+
+### Use with jq for JSON Processing
+
+```bash
+# Get IPs of all wireless clients
+python network_api.py clients --json | jq -r '.[] | select(.essid) | .ip'
+
+# Count clients per SSID
+python network_api.py clients --json | jq -r '.[].essid' | sort | uniq -c
+
+# Get offline devices
+python network_api.py devices --json | jq '.[] | select(.state==0) | .name'
+```
+
+### Use with Python Import
+
+The script can also be imported as a module:
+
+```python
+from network_api import execute
+
+# Get clients
+clients = execute("clients", {"all": False})
+
+# Kick a client
+execute("kick", {"mac": "aa:bb:cc:dd:ee:ff"})
+
+# Get devices
+devices = execute("devices", {})
+```
+
+## Notes
+
+- **Rate Limiting**: The API has session caching (~1.5h) to avoid rate limits
+- **Session Sharing**: Network and Protect APIs share the same session cache
+- **Auto-Reconnect**: Session expiry is handled automatically
+- **Controller Detection**: Automatically detects UCG/UDM vs Standard Controller
+- **SSL Verification**: Disabled by default for self-signed certificates

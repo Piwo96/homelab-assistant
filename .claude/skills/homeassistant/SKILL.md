@@ -44,7 +44,8 @@ Automate Home Assistant operations via REST API without needing the web UI or mo
 
 | Tool | Purpose |
 |------|---------|
-| `scripts/homeassistant_api.py` | CLI for all Home Assistant operations |
+| `scripts/homeassistant_api.py` | CLI for entities, automations, scenes, scripts (REST API) |
+| `scripts/dashboard_api.py` | CLI for dashboard/Lovelace management (WebSocket API) |
 
 ## Outputs
 
@@ -72,9 +73,12 @@ Automate Home Assistant operations via REST API without needing the web UI or mo
 
 ## Resources
 
-- **[API.md](API.md)** - REST API reference and authentication
-- **[OPERATIONS.md](OPERATIONS.md)** - Common operational tasks
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Known issues and solutions
+- **[API.md](API.md)** - REST API reference, WebSocket API, and authentication details
+- **[OPERATIONS.md](OPERATIONS.md)** - Common operational tasks (entities, automations, scenes, scripts, dashboards)
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Known issues and solutions (connection, auth, entities, dashboards)
+- **[scripts/homeassistant_api.py](scripts/homeassistant_api.py)** - REST API client for entities and automations
+- **[scripts/dashboard_api.py](scripts/dashboard_api.py)** - WebSocket API client for dashboard management
+- **[dashboards/home.yaml](dashboards/home.yaml)** - Example dashboard configuration
 
 ## Common Commands
 
@@ -142,26 +146,35 @@ homeassistant_api.py toggle light.living_room
 
 ## Dashboard API (Lovelace)
 
-Separate API für Dashboard-Verwaltung via WebSocket (`scripts/dashboard_api.py`).
+Separate API for dashboard management via WebSocket (`scripts/dashboard_api.py`).
+
+**Prerequisites**: `pip install websockets pyyaml`
 
 ```bash
-# Dashboard auflisten
+# List all dashboards
 dashboard_api.py list
 
-# Dashboard-Konfiguration abrufen
-dashboard_api.py get
-dashboard_api.py get --dashboard my-dashboard -o dashboard.json
+# Get dashboard configuration
+dashboard_api.py get                          # Get main dashboard
+dashboard_api.py get --dashboard my-dashboard # Get specific dashboard
+dashboard_api.py get -o dashboard.json        # Save to file
 
-# Dashboard-Konfiguration speichern
-dashboard_api.py set dashboard.yaml
+# Set dashboard configuration
+dashboard_api.py set dashboard.yaml           # Update main dashboard from YAML
 dashboard_api.py set dashboard.json --dashboard my-dashboard
 
+# Optimize dashboard (performance & UX improvements)
+dashboard_api.py optimize                     # Optimize main dashboard
+dashboard_api.py optimize --dashboard my-dash # Optimize specific dashboard
+dashboard_api.py optimize --backup            # Create backup before optimizing
+dashboard_api.py optimize --dry-run           # Preview changes without applying
+```
 
-# Dashboard-Optimierung optimieren
-dashboard_api.py optimize                     # Haupt-Dashboard optimieren
-dashboard_api.py optimize --dashboard my-dash # Spezifisches Dashboard optimieren
-dashboard_api.py optimize --backup            # Mit Backup vor Optimierung
-dashboard_api.py optimize --dry-run           # Zeige geplante Änderungen ohne Anwendung```
+**What optimize does:**
+- Removes empty views
+- Adds refresh intervals to entity cards
+- Sets default time ranges for graph cards
+- Adds mobile-friendly titles
 
 ## Workflows
 
@@ -192,6 +205,12 @@ dashboard_api.py optimize --dry-run           # Zeige geplante Änderungen ohne 
 4. Manually trigger: `trigger automation.motion_light`
 5. If needed, disable: `disable-automation automation.motion_light`
 
+### Update Dashboard
+1. Get current config: `dashboard_api.py get -o backup.json`
+2. Edit dashboard in HA UI or edit the JSON/YAML file
+3. Set updated config: `dashboard_api.py set dashboard.yaml`
+4. Or optimize existing: `dashboard_api.py optimize --backup`
+
 ## Edge Cases
 
 | Scenario | Behavior | Mitigation |
@@ -202,6 +221,9 @@ dashboard_api.py optimize --dry-run           # Zeige geplante Änderungen ohne 
 | Automation disabled | Trigger fails silently | Enable first: `enable-automation` |
 | Script has required variables | Script fails | Pass variables via `--data` |
 | HA restarting | Connection refused | Wait and retry |
+| Dashboard WebSocket timeout | Connection drops | Check network stability, retry |
+| Missing websockets library | Import error | Install: `pip install websockets pyyaml` |
+| Dashboard in YAML mode | Cannot save via API | Convert to storage mode in HA settings |
 
 ## Entity ID Patterns
 

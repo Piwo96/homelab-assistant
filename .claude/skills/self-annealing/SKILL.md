@@ -46,10 +46,12 @@ Enable the agent to learn from errors and improve itself without manual interven
 
 ## Tools
 
-| Tool | Purpose |
-|------|---------|
-| `scripts/git_api.py` | Git operations: status, commit, push |
-| `scripts/annealing_api.py` | Error tracking, skill management, orchestration |
+| Tool | Purpose | Usage |
+|------|---------|-------|
+| `scripts/git_api.py` | Git operations: status, commit, push | CLI or Python `from git_api import GitAPI` |
+| `scripts/annealing_api.py` | Error tracking, skill management, orchestration | CLI or Python `from annealing_api import execute` |
+
+Both scripts support dual-mode operation: command-line interface and direct Python imports. See "Integration" section below for details.
 
 ## Outputs
 
@@ -85,7 +87,37 @@ Enable the agent to learn from errors and improve itself without manual interven
 - **[OPERATIONS.md](OPERATIONS.md)** - Common workflows and use cases
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Known issues and solutions
 
+## Integration
+
+Both scripts can be used via CLI or imported directly in Python:
+
+### CLI Usage
+```bash
+python .claude/skills/self-annealing/scripts/git_api.py status
+python .claude/skills/self-annealing/scripts/annealing_api.py anneal "message"
+```
+
+### Python Import (Programmatic)
+```python
+from .claude.skills.self_annealing.scripts.annealing_api import execute
+
+# Execute commands directly without subprocess
+result = execute("log-error", {
+    "error": "ConnectionTimeout",
+    "context": "API call failed"
+})
+
+result = execute("anneal", {
+    "message": "fix(agent): handle timeout",
+    "no_push": False
+})
+```
+
+Available actions: `log-error`, `log-resolution`, `list-errors`, `list-patterns`, `list-skills`, `update-skill`, `create-skill`, `anneal`, `learn`, `full-cycle`
+
 ## Common Commands
+
+> **Note**: Commands below use short names for readability. Use full paths as shown in "Integration" section, or add to PATH (see OPERATIONS.md "Automation Tips").
 
 ### Git Operations
 
@@ -215,7 +247,7 @@ Scope: Component affected (e.g., agent, homeassistant, pihole)
 
 ## Error Store
 
-Errors are tracked in `.claude/skills/self-annealing/data/errors.json`:
+Errors and learned patterns are tracked in `.claude/skills/self-annealing/data/errors.json`:
 
 ```json
 {
@@ -225,9 +257,19 @@ Errors are tracked in `.claude/skills/self-annealing/data/errors.json`:
       "timestamp": "2024-01-15T10:30:00Z",
       "error": "ConnectionTimeout",
       "context": "API call failed",
+      "metadata": {},
       "resolved": true,
       "resolution": "Added retry logic",
       "resolved_at": "2024-01-15T11:00:00Z"
+    }
+  ],
+  "patterns": [
+    {
+      "id": "pat_001",
+      "timestamp": "2024-01-15T11:00:00Z",
+      "pattern": "ConnectionTimeout",
+      "solution": "Added retry logic",
+      "skill": "homeassistant"
     }
   ]
 }

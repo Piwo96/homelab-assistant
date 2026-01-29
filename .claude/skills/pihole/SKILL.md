@@ -48,10 +48,13 @@ Automate Pi-hole administration without needing the web UI.
 
 ## Outputs
 
-- Statistics in human-readable format
-- JSON data with `--json` flag
-- Status messages for actions
-- Error messages to stderr
+- **Human-readable format** (default): Formatted statistics with emoji indicators
+- **JSON format** (`--json` flag): Raw API responses for scripting
+- **Status messages**: Action confirmations (enable/disable/block/allow)
+- **Error messages**: Sent to stderr with "Error:" prefix
+- **Version detection**: Displays detected API version on stderr
+
+All commands support `--json` flag for machine-readable output.
 
 ## Quick Start
 
@@ -66,6 +69,28 @@ Automate Pi-hole administration without needing the web UI.
    python .claude/skills/pihole/scripts/pihole_api.py summary
    ```
 
+## Programmatic Usage
+
+The script exposes an `execute()` function for direct Python integration:
+
+```python
+from skills.pihole.scripts.pihole_api import execute
+
+# Get summary
+data = execute("summary", {})
+
+# Block domain
+execute("block", {"domain": "ads.example.com", "comment": "Blocked"})
+
+# Disable with duration
+execute("disable", {"duration": 300})
+
+# Query with filters
+queries = execute("queries", {"domain": "google.com"})
+```
+
+See script docstring for available actions and arguments.
+
 ## Resources
 
 - **[API.md](API.md)** - REST API reference and authentication
@@ -78,41 +103,37 @@ Automate Pi-hole administration without needing the web UI.
 # Statistics
 pihole_api.py summary                     # Overview stats
 pihole_api.py status                      # Blocking enabled/disabled
-pihole_api.py top-domains                 # Most queried domains
-pihole_api.py top-ads                     # Most blocked domains
-pihole_api.py top-clients                 # Most active clients
-pihole_api.py query-types                 # Query type distribution
+pihole_api.py top-domains --count 10      # Most queried domains
+pihole_api.py top-clients --count 10      # Most active clients
+pihole_api.py info                        # Pi-hole version and system info
 
 # Blocking Control
 pihole_api.py enable                      # Enable blocking
 pihole_api.py disable                     # Disable permanently
 pihole_api.py disable --duration 300      # Disable for 5 minutes
 
-# List Management
+# List Management (v6 only)
 pihole_api.py block example.com           # Add to blocklist
 pihole_api.py allow example.com           # Add to allowlist
-pihole_api.py unblock example.com         # Remove from blocklist
-pihole_api.py unallow example.com         # Remove from allowlist
+pihole_api.py block example.com --comment "Tracking domain"  # With comment
+pihole_api.py lists                       # Show all lists
 
 # Query Analysis
-pihole_api.py recent-queries              # Recent DNS queries
-pihole_api.py recent-blocked              # Recently blocked queries
-pihole_api.py query example.com           # Check if domain is blocked
+pihole_api.py queries                     # Recent DNS queries (all)
+pihole_api.py queries --domain example.com    # Filter by domain
+pihole_api.py queries --client 192.168.1.100  # Filter by client
 
-# System & Listen (v6 only)
-pihole_api.py info                        # Pi-hole Version und System-Info
-pihole_api.py lists                       # Alle Block-/Allow-Listen anzeigen
-pihole_api.py gravity-update              # Gravity-Datenbank aktualisieren
+# Gravity Management (v6 only)
+pihole_api.py gravity-update              # Update gravity database
 ```
 
 ## Workflows
 
 ### Troubleshoot Blocked Site
 1. User reports site not working
-2. Check recent blocks: `recent-blocked`
-3. Find domain: `query problematic-site.com`
-4. If blocked: `allow problematic-site.com`
-5. Verify: `query problematic-site.com`
+2. Check recent queries: `queries --domain problematic-site.com`
+3. If domain is being blocked, add to allowlist: `allow problematic-site.com`
+4. Verify by checking queries again or testing the site
 
 ### Temporary Disable for Testing
 1. Disable: `disable --duration 600` (10 minutes)
@@ -122,8 +143,9 @@ pihole_api.py gravity-update              # Gravity-Datenbank aktualisieren
 
 ### Block Unwanted Domain
 1. Identify domain from logs or user request
-2. Block: `block tracking.example.com`
-3. Verify in blocklist
+2. Block: `block tracking.example.com --comment "User requested"`
+3. Verify with: `lists` (check blocklist section)
+4. Note: Requires Pi-hole v6 for API-based blocking
 
 ### Analyze Network DNS Usage
 1. View summary: `summary`
@@ -136,10 +158,12 @@ pihole_api.py gravity-update              # Gravity-Datenbank aktualisieren
 | Scenario | Behavior | Mitigation |
 |----------|----------|------------|
 | Wrong password | 401 or empty response | Verify password matches web UI |
-| Pi-hole v6 API changes | Endpoints may differ | Check API.md for version differences |
-| Domain already in list | Operation succeeds silently | Check list before adding |
+| Pi-hole v5 vs v6 | API auto-detects version | v5: list management requires web UI; v6: full API support |
+| List management on v5 | "requires web interface" error | Upgrade to v6 or use web UI for blocklist/allowlist changes |
+| Domain already in list | Operation succeeds silently | Check `lists` before adding |
 | Wildcard domains | Use `*.example.com` syntax | Check Pi-hole docs for regex support |
 | Disable without duration | Stays disabled forever | Always use `--duration` or remember to `enable` |
+| Script path | Commands may fail | Use full path: `python .claude/skills/pihole/scripts/pihole_api.py` |
 
 ## Related Skills
 

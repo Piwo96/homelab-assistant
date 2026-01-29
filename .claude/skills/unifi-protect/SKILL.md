@@ -72,8 +72,9 @@ Control UniFi Protect surveillance system via API without needing the web UI or 
 
 ## Resources
 
-- **[API.md](API.md)** - REST API reference and authentication
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Known issues and solutions
+- **[API.md](./API.md)** - REST API reference and authentication
+- **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - Known issues and solutions
+- **[OPERATIONS.md](./OPERATIONS.md)** - Internal operations and advanced usage
 
 ## Common Commands
 
@@ -105,9 +106,6 @@ protect_api.py detections --camera Einfahrt --type plate  # Combined filters
 protect_api.py lights                     # List smart lights
 protect_api.py light-on <id>              # Turn light on
 protect_api.py light-off <id>             # Turn light off
-
-# Kamera-Einstellungen ändern
-protect_api.py update-camera <id> --settings '{"recordingSettings": {"mode": "always"}}'
 ```
 
 ## Workflows
@@ -177,7 +175,29 @@ The `detections` command extracts data from `smartDetectZone` events. The API re
 | Smart light unresponsive | Command ignored | Check light is adopted and online |
 | Face not identified | API shows detection but no name | Face groups not accessible via API - use Protect App |
 | Plate not readable | Vehicle detected but no plate | Low confidence, bad angle, or obscured plate |
-| Camera name not found | Error message | Use `cameras` to list available names |
+| Camera name variations | Fuzzy matching enabled | "Einfahrt", "einfahrt", "Ein_fahrt" all match |
+
+## Programmatic Access
+
+For direct Python integration without CLI:
+
+```python
+from protect_api import execute
+
+# Get cameras
+cameras = execute("cameras", {})
+
+# Get events for specific camera
+events = execute("events", {"camera": "Einfahrt", "last": "24h"})
+
+# Get license plate detections
+plates = execute("detections", {"camera": "Einfahrt", "type": "plate", "last": "6h"})
+
+# Save snapshot
+execute("snapshot", {"id": "camera-id", "output": "photo.jpg"})
+```
+
+See **[OPERATIONS.md](./OPERATIONS.md)** for advanced usage and internals.
 
 ## Related Skills
 

@@ -1,10 +1,14 @@
 # Pi-hole API Reference
 
+This document covers the Pi-hole REST API endpoints. For CLI usage, see [OPERATIONS.md](OPERATIONS.md).
+
 ## API Versions
 
 Pi-hole v6+ uses a built-in REST API with self-hosted documentation.
 
 **Local documentation:** `http://{PIHOLE_HOST}/api/docs`
+
+> **Note**: The `pihole_api.py` script auto-detects your Pi-hole version and uses the appropriate API endpoints.
 
 ## Authentication
 
@@ -39,17 +43,28 @@ Four ways to pass SID:
 - **Cookie**: `sid=vFA+EP4MQ5JJvJg+3Q2Jnw==` (requires `X-FTL-CSRF` header)
 - **JSON body**: `{"sid":"vFA+EP4MQ5JJvJg+3Q2Jnw=="}`
 
-#### 3. Logout
+#### 3. Session Expiry and Renewal
+
+Sessions expire after `validity` seconds (default: 300). The `pihole_api.py` script automatically:
+- Detects 401 errors (expired session)
+- Re-authenticates transparently
+- Retries the original request
+
+#### 4. Logout
 
 ```bash
 curl -X DELETE http://pihole.local/api/auth \
   -H "X-FTL-SID: your-sid"
 ```
 
+> **Note**: The script does not explicitly logout. Sessions expire automatically.
+
 ### Application Passwords
 
 For automation, generate application passwords in:
 Web Interface → Settings → API / Web interface
+
+The script uses the web UI password by default (`PIHOLE_PASSWORD`).
 
 ## Common Endpoints
 

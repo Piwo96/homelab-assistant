@@ -1,5 +1,7 @@
 # Self-Annealing Operations
 
+> Part of the [Self-Annealing skill](SKILL.md) - Read SKILL.md first for overview and setup.
+
 Common workflows for autonomous self-improvement.
 
 ## Quick Reference
@@ -170,7 +172,32 @@ AUTO_PUSH_ENABLED=true
 
 ## Agent Integration
 
-The agent can call these scripts via subprocess. Example from `intent_classifier.py`:
+### Option 1: Direct Python Import (Recommended)
+
+The agent can import and call functions directly:
+
+```python
+from .claude.skills.self_annealing.scripts.annealing_api import execute
+
+# Log error
+result = execute("log-error", {
+    "error": "ConnectionTimeout",
+    "context": "API call failed after 30s"
+})
+
+# Full annealing cycle
+result = execute("full-cycle", {
+    "error": "ConnectionTimeout",
+    "context": "API call failed",
+    "resolution": "Added retry logic",
+    "skill": "homeassistant",
+    "message": "fix(homeassistant): add retry for timeouts"
+})
+
+# Returns Python dicts, not CLI output strings
+```
+
+### Option 2: CLI via Subprocess
 
 ```python
 import subprocess

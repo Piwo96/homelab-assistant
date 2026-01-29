@@ -162,6 +162,57 @@ Error: Service 'custom_service.xxx' not found
 2. Batch related operations where possible
 3. HA doesn't have strict rate limits, but respect server resources
 
+## Dashboard Issues
+
+### WebSocket Connection Failed
+```
+Error: Cannot connect to WebSocket
+```
+**Cause**: Wrong protocol, port, or network issue.
+**Solution**:
+1. Verify host and port are correct
+2. Check if using SSL: set `HOMEASSISTANT_SSL=true` if using HTTPS
+3. Test REST API first: `homeassistant_api.py status`
+4. Check firewall allows WebSocket connections
+
+### Missing Dependencies
+```
+Error: 'websockets' library required
+```
+**Cause**: Dashboard API requires additional Python packages.
+**Solution**:
+```bash
+pip install websockets pyyaml
+```
+
+### Dashboard Save Failed
+```
+Error: Failed to save config: Invalid configuration
+```
+**Cause**: Dashboard YAML/JSON is malformed or contains invalid entities.
+**Solution**:
+1. Validate YAML syntax: `python -c "import yaml; yaml.safe_load(open('dashboard.yaml'))"`
+2. Validate JSON: `python -m json.tool dashboard.json`
+3. Check all entity_ids exist: `homeassistant_api.py entities | grep <entity>`
+4. Use `--dry-run` to preview changes first
+
+### Dashboard Optimization No Changes
+```
+Dashboard is already optimized!
+```
+**Cause**: Dashboard already follows best practices.
+**Solution**: This is not an error - dashboard is in good shape.
+
+### Backup File Not Found
+```
+Error: File not found: backup.json
+```
+**Cause**: Trying to restore from non-existent backup.
+**Solution**:
+1. List backups: `ls -la *.json`
+2. Create new backup: `dashboard_api.py get -o backup.json`
+3. Verify file path is correct
+
 ---
 
 ## Adding New Issues

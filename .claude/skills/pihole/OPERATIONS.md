@@ -1,6 +1,25 @@
 # Pi-hole Operations Guide
 
-Common operations using the CLI tool or direct API calls.
+Common operations using the CLI tool. All commands use the script at `.claude/skills/pihole/scripts/pihole_api.py`.
+
+> **Note**: Some operations require Pi-hole v6. The script auto-detects your version and uses the appropriate API.
+
+## Available Commands
+
+| Command | Auth | v5 | v6 | Description |
+|---------|------|----|----|-------------|
+| `info` | No | ✅ | ✅ | Pi-hole version and system info |
+| `summary` | No | ✅ | ✅ | Summary statistics |
+| `status` | No | ✅ | ✅ | Blocking status (enabled/disabled) |
+| `enable` | Yes | ✅ | ✅ | Enable blocking |
+| `disable` | Yes | ✅ | ✅ | Disable blocking (optional `--duration`) |
+| `top-domains` | Yes | ✅ | ✅ | Top queried domains (`--count` optional) |
+| `top-clients` | Yes | ✅ | ✅ | Top clients by query count |
+| `queries` | Yes | ✅ | ✅ | Recent queries (`--domain`/`--client` filters) |
+| `block` | Yes | ❌ | ✅ | Add domain to blocklist |
+| `allow` | Yes | ❌ | ✅ | Add domain to allowlist |
+| `lists` | Yes | ❌ | ✅ | Show all lists |
+| `gravity-update` | Yes | ❌ | ✅ | Update gravity database |
 
 ## Statistics
 
@@ -9,35 +28,41 @@ Common operations using the CLI tool or direct API calls.
 # Quick overview (no auth required)
 python pihole_api.py summary
 
-# Detailed stats
-python pihole_api.py stats
+# Blocking status
+python pihole_api.py status
+
+# System info and version
+python pihole_api.py info
 ```
 
 ### Top Lists
 ```bash
-# Top 10 blocked domains
-python pihole_api.py top-blocked
+# Top 10 queried domains
+python pihole_api.py top-domains
 
-# Top 10 allowed domains
-python pihole_api.py top-allowed
+# Top 10 domains with custom count
+python pihole_api.py top-domains --count 25
 
 # Top 10 clients
 python pihole_api.py top-clients
+
+# Top 10 clients with custom count
+python pihole_api.py top-clients --count 20
 ```
 
 ### Query History
 ```bash
-# Recent queries
+# Recent queries (last 20 displayed)
 python pihole_api.py queries
 
 # Filter by domain
 python pihole_api.py queries --domain google.com
 
-# Filter by client
+# Filter by client IP
 python pihole_api.py queries --client 192.168.1.100
 
-# Show only blocked queries
-python pihole_api.py queries --blocked
+# JSON output for scripting
+python pihole_api.py queries --json
 ```
 
 ## Blocking Control
@@ -59,16 +84,18 @@ python pihole_api.py status
 
 ## Custom Lists
 
+> **Requires Pi-hole v6**: List management via API is only available in Pi-hole v6+. For v5, use the web interface.
+
 ### Blocklist Management
 ```bash
 # Add domain to blocklist
+python pihole_api.py block example.com
+
+# Add with comment
 python pihole_api.py block example.com --comment "Blocked via API"
 
-# Add regex to blocklist
-python pihole_api.py block-regex "^ad[sz]?[0-9]*\\..*"
-
-# List all blocked domains
-python pihole_api.py list-blocked
+# View all lists (includes blocklists)
+python pihole_api.py lists
 ```
 
 ### Allowlist Management
@@ -76,43 +103,35 @@ python pihole_api.py list-blocked
 # Add domain to allowlist (whitelist)
 python pihole_api.py allow example.com
 
-# Add regex to allowlist
-python pihole_api.py allow-regex ".*\\.safe\\.com$"
+# Add with comment
+python pihole_api.py allow safe-site.com --comment "Allowed for work"
 
-# List all allowed domains
-python pihole_api.py list-allowed
+# View all lists (includes allowlists)
+python pihole_api.py lists
 ```
 
-### Remove from Lists
+### Viewing Lists
 ```bash
-# Remove from blocklist
-python pihole_api.py unblock example.com
+# Show all lists (blocklists and allowlists)
+python pihole_api.py lists
 
-# Remove from allowlist
-python pihole_api.py unallow example.com
+# JSON output for parsing
+python pihole_api.py lists --json
 ```
+
+> **Note**: To remove domains from lists, use the Pi-hole web interface or direct API calls (see API.md).
 
 ## Gravity (Blocklist Updates)
+
+> **Requires Pi-hole v6**: Gravity management via API is only available in Pi-hole v6+.
 
 ### Update Blocklists
 ```bash
 # Pull latest blocklists and rebuild gravity
 python pihole_api.py gravity-update
-
-# Check gravity status
-python pihole_api.py gravity-status
 ```
 
-## System Management
-
-### Service Control
-```bash
-# Restart Pi-hole services
-python pihole_api.py restart
-
-# Reboot system (caution!)
-python pihole_api.py reboot
-```
+## System Information
 
 ### Version Info
 ```bash
@@ -120,107 +139,98 @@ python pihole_api.py reboot
 python pihole_api.py info
 ```
 
-## Monitoring
+## Global Options
 
-### Real-time Stats
+These options work with any command:
+
 ```bash
-# Watch stats (updates every 5 seconds)
-python pihole_api.py watch
+# JSON output (all commands)
+python pihole_api.py <command> --json
 
-# Show stats for last 24h
-python pihole_api.py stats --hours 24
+# Override host from environment
+python pihole_api.py <command> --host 192.168.1.53
+
+# Override password from environment
+python pihole_api.py <command> --password "mypassword"
+
+# Combined
+python pihole_api.py summary --json --host 192.168.1.53
 ```
 
-### Client Tracking
+## Output Formats
+
+All commands support JSON output for scripting:
+
 ```bash
-# List all clients seen in last 24h
-python pihole_api.py clients
+# JSON output
+python pihole_api.py summary --json
+python pihole_api.py top-domains --json
+python pihole_api.py queries --json
 
-# Get details for specific client
-python pihole_api.py client-info 192.168.1.100
-```
+# Parse with jq
+python pihole_api.py summary --json | jq '.data.dns_queries_today'
 
-## Bulk Operations
-
-### Import Domains
-```bash
-# Import domains from file (one per line)
-python pihole_api.py import-blocklist domains.txt
-
-# Import allowlist
-python pihole_api.py import-allowlist safe-domains.txt
-```
-
-### Export Lists
-```bash
-# Export current blocklist
-python pihole_api.py export-blocklist > my-blocklist.txt
-
-# Export allowlist
-python pihole_api.py export-allowlist > my-allowlist.txt
+# Check blocking status in script
+if python pihole_api.py status --json | jq -r '.data.blocking' | grep -q true; then
+    echo "Blocking is enabled"
+fi
 ```
 
 ## Troubleshooting
 
-### Authentication Issues
-```bash
-# Test login
-python pihole_api.py test-auth
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed issue resolution.
 
-# Check if password is correct
+### Quick Checks
+
+#### Authentication Issues
+```bash
+# Check if password is correct (v6)
 curl -X POST http://pihole.local/api/auth \
   -H "Content-Type: application/json" \
   -d '{"password":"your-password"}'
 ```
 
-### Connection Problems
+#### Connection Problems
 1. Check if Pi-hole is reachable: `ping pihole.local`
 2. Verify web interface: `curl http://pihole.local/admin`
-3. Check container status: `python proxmox_api.py status pve-rollmann 102`
+3. Test API connection: `python pihole_api.py summary`
 
-### DNS Not Blocking
+#### DNS Not Blocking
 1. Check blocking status: `python pihole_api.py status`
-2. Verify gravity database: `python pihole_api.py gravity-status`
-3. Update gravity: `python pihole_api.py gravity-update`
-4. Check if domain is whitelisted: `python pihole_api.py list-allowed`
-
-### Slow Queries
-1. Check upstream DNS servers: `python pihole_api.py upstreams`
-2. Verify network latency to Pi-hole
-3. Check Pi-hole system resources via Proxmox
+2. Update gravity (v6): `python pihole_api.py gravity-update`
+3. Check recent queries: `python pihole_api.py queries --domain problematic-site.com`
 
 ## Integration Examples
 
 ### Auto-disable During Work Hours
 ```bash
-# Disable blocking 9 AM - 5 PM (e.g., for work sites)
-0 9 * * 1-5 python pihole_api.py disable --duration 28800
+# Cron: Disable blocking 9 AM - 5 PM (8 hours = 28800 seconds)
+0 9 * * 1-5 cd /path/to/homelab-assistant && python .claude/skills/pihole/scripts/pihole_api.py disable --duration 28800
 ```
 
 ### Daily Reports
 ```bash
-# Email daily stats
-0 0 * * * python pihole_api.py summary --json | mail -s "Pi-hole Daily" admin@example.com
+# Cron: Email daily stats
+0 0 * * * cd /path/to/homelab-assistant && python .claude/skills/pihole/scripts/pihole_api.py summary --json | mail -s "Pi-hole Daily" admin@example.com
 ```
 
-### Block Domains from Threat Feed
+### Monitor Specific Domain
 ```bash
-# Import fresh threat list daily
-0 3 * * * wget -O /tmp/threats.txt https://example.com/threats && \
-  python pihole_api.py import-blocklist /tmp/threats.txt
+# Check if domain was queried recently
+python pihole_api.py queries --domain ads.tracker.com --json | jq '.data | length'
 ```
 
-## Legacy Commands (Pi-hole v5)
+## API Version Compatibility
 
-If using older Pi-hole version:
+The script auto-detects your Pi-hole version:
 
-```bash
-# Summary
-curl "http://pihole.local/admin/api.php?summary"
+| Feature | v5 | v6 |
+|---------|----|----|
+| Summary stats | ✅ | ✅ |
+| Blocking control | ✅ | ✅ |
+| Top domains/clients | ✅ | ✅ |
+| Query history | ✅ | ✅ |
+| Blocklist/allowlist management | ❌ (use web UI) | ✅ |
+| Gravity updates | ❌ (use CLI) | ✅ |
 
-# Enable/Disable with auth token
-curl "http://pihole.local/admin/api.php?disable=300&auth=TOKEN"
-curl "http://pihole.local/admin/api.php?enable&auth=TOKEN"
-```
-
-Get token from: `/etc/pihole/setupVars.conf` → `WEBPASSWORD`
+See [API.md](API.md) for direct API endpoint documentation.

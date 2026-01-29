@@ -55,13 +55,22 @@ Error: Session expired or invalid
 
 ### Camera Not Found
 ```
-Error: Camera with ID 'xxx' not found
+Error: Camera not found: Einfahrt
+Available cameras: Haustür, Garten, Garage
 ```
-**Cause**: Wrong ID or camera removed.
+**Cause**: Camera name doesn't match exactly or camera was removed.
 **Solution**:
-1. List cameras: `protect_api.py cameras`
-2. Use correct camera ID from list
-3. Camera may have been removed/readopted with new ID
+1. Script uses fuzzy matching - try variations: "Einfahrt", "einfahrt", "Ein_fahrt"
+2. Name normalization ignores: underscores, hyphens, apostrophes, case
+3. List cameras: `protect_api.py cameras`
+4. Use exact camera ID if name matching fails
+5. Camera may have been removed/readopted with new ID
+
+**Fuzzy Matching Examples:**
+- "Mailas Zimmer" matches "Mailas_Zimmer", "maila's zimmer", "mailas-zimmer"
+- "Einfahrt" matches "einfahrt", "Ein_fahrt", "Ein-fahrt"
+- Substring matching: "Tür" matches "Haustür"
+- Typo tolerance: "Garagen" matches "Garage" (80% similarity)
 
 ### Snapshot Fails
 ```

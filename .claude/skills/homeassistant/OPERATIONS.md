@@ -355,6 +355,60 @@ pihole_api.py enable && \
   homeassistant_api.py activate-scene scene.good_night
 ```
 
+### 8. Dashboard Management
+
+#### List all dashboards
+```bash
+dashboard_api.py list
+
+# Output:
+# Dashboards:
+#   - lovelace: Home (storage)
+#   - mobile: Mobile View (storage)
+```
+
+#### Get dashboard configuration
+```bash
+# Get main dashboard
+dashboard_api.py get -o dashboard.json
+
+# Get specific dashboard
+dashboard_api.py get --dashboard mobile -o mobile.json
+```
+
+#### Update dashboard
+```bash
+# Edit YAML file, then apply
+dashboard_api.py set dashboards/home.yaml
+
+# Update specific dashboard
+dashboard_api.py set custom.yaml --dashboard mobile
+```
+
+#### Optimize dashboard
+```bash
+# Preview optimizations
+dashboard_api.py optimize --dry-run
+
+# Apply optimizations with backup
+dashboard_api.py optimize --backup
+
+# Optimizations include:
+# - Remove empty views
+# - Add refresh intervals
+# - Set default time ranges
+# - Mobile-friendly titles
+```
+
+#### Backup and restore
+```bash
+# Backup current dashboard
+dashboard_api.py get -o backup_$(date +%Y%m%d).json
+
+# Later: restore from backup
+dashboard_api.py set backup_20260129.json
+```
+
 ## Best Practices
 
 1. **Use scenes for complex state changes**
@@ -381,6 +435,11 @@ pihole_api.py enable && \
    - Test templates via API before creating automations
    - Validate complex conditions
    - Debug issues
+
+6. **Backup dashboards before changes**
+   - Always use `--backup` flag when optimizing
+   - Keep dated backups for rollback
+   - Test changes on non-production dashboards first
 
 ## Next Steps
 

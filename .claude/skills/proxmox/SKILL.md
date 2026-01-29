@@ -49,9 +49,28 @@ Provide complete control over Proxmox infrastructure via API without needing the
 
 ## Tools
 
-| Tool | Purpose |
-|------|---------|
-| `scripts/proxmox_api.py` | CLI for all Proxmox operations |
+| Tool | Purpose | Usage |
+|------|---------|-------|
+| `scripts/proxmox_api.py` | CLI for all Proxmox operations | Command-line interface |
+| `proxmox_api.execute()` | Programmatic Python API | Direct function calls from code |
+
+### CLI Usage
+```bash
+python scripts/proxmox_api.py <command> [arguments]
+```
+
+### Programmatic Usage
+```python
+from proxmox_api import execute
+
+# Get all VMs on auto-detected node
+vms = execute("vms", {"node": None})
+
+# Start a VM
+execute("start", {"vmid": 100, "node": "pve"})
+
+# Returns raw Python data (dict/list) - no JSON parsing needed
+```
 
 ## Outputs
 
@@ -86,35 +105,40 @@ Provide complete control over Proxmox infrastructure via API without needing the
 ```bash
 # Cluster
 proxmox_api.py nodes                      # List all nodes
-proxmox_api.py node-status <node>         # Node CPU/RAM/uptime
-proxmox_api.py overview <node>            # Full node overview
+proxmox_api.py node-status [node]         # Node CPU/RAM/uptime (auto-detects node)
+proxmox_api.py overview [node]            # Full node overview (auto-detects node)
 
 # VMs
-proxmox_api.py vms <node>                 # List VMs
-proxmox_api.py start <node> <vmid>        # Start VM
-proxmox_api.py stop <node> <vmid>         # Stop VM (hard)
-proxmox_api.py shutdown <node> <vmid>     # Shutdown VM (graceful)
+proxmox_api.py vms [node]                 # List VMs (auto-detects node)
+proxmox_api.py start <vmid> [node]        # Start VM (auto-detects node)
+proxmox_api.py stop <vmid> [node]         # Stop VM (hard)
+proxmox_api.py shutdown <vmid> [node]     # Shutdown VM (graceful)
+proxmox_api.py reboot <vmid> [node]       # Reboot VM
 proxmox_api.py status <node> <vmid>       # VM status
 
 # Containers
-proxmox_api.py containers <node>          # List LXC containers
+proxmox_api.py containers [node]          # List LXC containers (auto-detects node)
 proxmox_api.py lxc-config <node> <vmid>   # Container config
-proxmox_api.py start <node> <vmid>        # Start container
-proxmox_api.py stop <node> <vmid>         # Stop container
+proxmox_api.py start <vmid> [node]        # Start container (auto-detects node)
+proxmox_api.py stop <vmid> [node]         # Stop container
 
 # Storage & Mounts
-proxmox_api.py storage <node>             # List storage
+proxmox_api.py storage [node]             # List storage
 proxmox_api.py add-mount <node> <vmid> --mp 0 --source /mnt/pve/nas --target /data
 proxmox_api.py remove-mount <node> <vmid> --mp 0
 
-# Container-Konfiguration ändern
-proxmox_api.py update-lxc-config <node> <vmid> --config '{"memory": 2048}'
-
-# Snapshots
-proxmox_api.py snapshots <node> <vmid>    # List snapshots
+# Snapshots (VM)
+proxmox_api.py snapshots <node> <vmid>    # List VM snapshots
 proxmox_api.py snapshot <node> <vmid> --name backup-$(date +%Y%m%d)
 proxmox_api.py rollback <node> <vmid> --name backup-20240115
+
+# Snapshots (LXC - requires --lxc flag)
+proxmox_api.py snapshots <node> <vmid> --lxc
+proxmox_api.py snapshot <node> <vmid> --name clean-state --lxc
+proxmox_api.py rollback <node> <vmid> --name clean-state --lxc
 ```
+
+> **Note**: Most commands support automatic node detection. You can omit `[node]` and the script will use the first/only node in your cluster.
 
 ## Workflows
 
@@ -131,9 +155,11 @@ proxmox_api.py rollback <node> <vmid> --name backup-20240115
 4. Monitor in web UI
 
 ### Pre-Maintenance Snapshot
-1. Create snapshot: `snapshot pve 100 --name pre-maintenance --lxc`
+1. Create snapshot: `snapshot pve 100 --name pre-maintenance` (VM) or add `--lxc` for containers
 2. Perform maintenance
-3. If failed: `rollback pve 100 --name pre-maintenance --lxc`
+3. If failed: `rollback pve 100 --name pre-maintenance` (add `--lxc` if container)
+
+> **Important**: Always use `--lxc` flag for LXC container snapshots, otherwise the command will fail.
 
 ## Edge Cases
 
@@ -144,6 +170,7 @@ proxmox_api.py rollback <node> <vmid> --name backup-20240115
 | VM vs Container ambiguity | Script tries VM first, then LXC | Use `--lxc` flag for container snapshots |
 | Container running during mount | Mount added but not visible | Restart container after adding mount |
 | API rate limiting | Unlikely but possible with automation | Add delays between bulk operations |
+| Invalid node name | Auto-detection fallback | Script auto-detects node if name is wrong/omitted |
 
 ## Related Skills
 

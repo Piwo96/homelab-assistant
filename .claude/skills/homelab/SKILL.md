@@ -16,6 +16,36 @@ triggers:
 
 This is a **meta-skill** that provides an overview of all homelab automation capabilities. Each system has its own dedicated skill for focused, efficient operation.
 
+## Goal
+
+Route homelab-related questions and tasks to the appropriate specialized skill. This meta-skill serves as a discovery layer and quick reference guide for 6 specialized homelab skills covering virtualization, DNS, networking, security cameras, smart home automation, and autonomous self-improvement.
+
+## Inputs
+
+| Input | Source | Required | Description |
+|-------|--------|----------|-------------|
+| User intent | Natural language | Yes | What the user wants to accomplish |
+| System context | Sub-skill docs | No | Details from specialized skills |
+
+## Tools
+
+| Tool | Purpose |
+|------|---------|
+| `../proxmox/SKILL.md` | Virtualization, VMs, containers, NAS storage |
+| `../pihole/SKILL.md` | DNS management and ad-blocking |
+| `../unifi-network/SKILL.md` | Network infrastructure (routers, switches, APs) |
+| `../unifi-protect/SKILL.md` | Security cameras and smart lighting |
+| `../homeassistant/SKILL.md` | Smart home devices and automation |
+| `../self-annealing/SKILL.md` | Error tracking and autonomous skill updates |
+
+## Outputs
+
+| Output | Format | Description |
+|--------|--------|-------------|
+| Skill reference | Markdown link | Points user to the correct specialized skill |
+| Quick command | Code snippet | Example command for immediate use |
+| Multi-skill workflow | Step-by-step | Guidance for cross-system tasks |
+
 ## Available Skills
 
 ### [/proxmox](../proxmox/SKILL.md) - Virtualization & Storage
@@ -144,6 +174,35 @@ Additional resources per skill:
 - Home Assistant can control UniFi Protect lights
 - UniFi Network provides presence detection for Home Assistant
 - Proxmox hosts containers for Pi-hole, Home Assistant, etc.
+
+## Edge Cases
+
+### Ambiguous Intent
+**Problem**: User asks "check status" without specifying which system
+**Solution**: Ask clarifying question: "Which system? (proxmox/pihole/network/protect/homeassistant)"
+
+### Multi-System Tasks
+**Problem**: Task requires multiple skills (e.g., "set up a new VM and configure DNS")
+**Solution**: Execute skills sequentially:
+1. Use `/proxmox` to create the VM
+2. Note the IP address assigned
+3. Use `/pihole` to configure DNS entry
+
+### Cross-System Integration
+**Problem**: User asks about a feature that spans systems (e.g., "control camera lights")
+**Solution**: Home Assistant can control UniFi Protect lights - use `/hass` for automation, `/protect` for direct control
+
+### Missing Configuration
+**Problem**: Required environment variables not set in `.env`
+**Solution**: Each skill's error output will indicate missing vars. Refer to Configuration section above.
+
+### Skill Not Found
+**Problem**: User asks about a homelab system not covered by any skill
+**Solution**: This is a trigger for `/skill-creator` - create a new specialized skill following the established pattern
+
+### Unknown Which Skill Updated
+**Problem**: After self-annealing, unclear which skill file was modified
+**Solution**: Use `/self-annealing` to view recent error logs and commits, which include file paths
 
 ## Version History
 

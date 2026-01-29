@@ -1,5 +1,7 @@
 # Troubleshooting - Self-Annealing
 
+> Part of the [Self-Annealing skill](SKILL.md) - Read SKILL.md first for overview and setup.
+
 Known issues and solutions for the self-annealing system.
 
 ## Git Issues
@@ -189,7 +191,9 @@ git_api.py push
 
 ---
 
-## Agent Behavior Issues
+## Agent-Specific Issues
+
+> **Note**: The following issue is specific to agent behavior and may belong in an agent-focused skill rather than the self-annealing skill.
 
 ### Acknowledgment + action verb misclassified as small talk
 
@@ -215,5 +219,7 @@ if has_action_verb:
 ```
 
 **Key Learning:** In conversational AI, word order and context matter. A message starting with an acknowledgment doesn't mean it's not an action request. Check for intent signals (action verbs) across the entire message.
+
+**Future:** This troubleshooting entry should be moved to an agent-specific skill (e.g., `/agent-intent-classification`) when such a skill is created.
 
 ---

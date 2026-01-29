@@ -72,6 +72,26 @@ Default port: `8006`
 | GET | `/nodes/{node}/storage/{storage}/status` | Storage status |
 | GET | `/nodes/{node}/storage/{storage}/content` | Storage content |
 
+### Snapshots
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/nodes/{node}/qemu/{vmid}/snapshot` | List VM snapshots |
+| GET | `/nodes/{node}/lxc/{vmid}/snapshot` | List container snapshots |
+| POST | `/nodes/{node}/qemu/{vmid}/snapshot` | Create VM snapshot |
+| POST | `/nodes/{node}/lxc/{vmid}/snapshot` | Create container snapshot |
+| POST | `/nodes/{node}/qemu/{vmid}/snapshot/{snapname}/rollback` | Rollback VM to snapshot |
+| POST | `/nodes/{node}/lxc/{vmid}/snapshot/{snapname}/rollback` | Rollback container to snapshot |
+| DELETE | `/nodes/{node}/qemu/{vmid}/snapshot/{snapname}` | Delete VM snapshot |
+| DELETE | `/nodes/{node}/lxc/{vmid}/snapshot/{snapname}` | Delete container snapshot |
+
+**Snapshot creation payload:**
+```json
+{
+  "snapname": "backup-20260129"
+}
+```
+
 ## LXC Mount Points
 
 Add bind mount to container:
@@ -83,6 +103,22 @@ mp0=/mnt/pve/qnap-share,mp=/data
 ```
 
 Mount point format: `mp{N}={source},mp={target}[,ro={0|1}]`
+
+Remove mount point:
+```bash
+PUT /nodes/{node}/lxc/{vmid}/config
+Content-Type: application/x-www-form-urlencoded
+
+delete=mp0
+```
+
+Update other container settings:
+```bash
+PUT /nodes/{node}/lxc/{vmid}/config
+Content-Type: application/x-www-form-urlencoded
+
+memory=2048&cores=2&description=My%20Container
+```
 
 ## Response Format
 
