@@ -48,13 +48,17 @@ def skill_to_tool(skill: SkillDefinition) -> Dict[str, Any]:
                         "description": f"Die auszuführende Aktion.\n{action_help}",
                         "enum": action_enum if action_enum else None,
                     },
+                    "confidence": {
+                        "type": "integer",
+                        "description": "Wie sicher bist du, dass dieses Tool richtig ist? 1-100. Unter 50 = unsicher.",
+                    },
                     "args": {
                         "type": "object",
                         "description": "Argumente für die Aktion (z.B. vmid, entity_id, name)",
                         "additionalProperties": True,
                     },
                 },
-                "required": ["action"],
+                "required": ["action", "confidence"],
             },
         },
     }

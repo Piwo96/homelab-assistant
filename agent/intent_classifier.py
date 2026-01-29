@@ -60,7 +60,15 @@ Im Zweifel: IMMER Tool benutzen statt selbst antworten!
 ## Regeln
 - IMMER eine action angeben wenn du ein Tool benutzt
 - args NUR wenn User explizit IDs/Namen nennt (z.B. "VM 100", "Licht Wohnzimmer")
-- Erwähne NIEMALS: 'self-annealing', 'Skills', 'Features', 'Tool', 'API'"""
+- Erwähne NIEMALS: 'self-annealing', 'Skills', 'Features', 'Tool', 'API'
+
+## Confidence (WICHTIG!)
+Setze den confidence-Wert bei JEDEM Tool-Call:
+- 80-100: Du bist sicher, dass das richtige Tool gewählt ist
+- 50-79: Wahrscheinlich richtig, aber nicht ganz eindeutig
+- Unter 50: Mehrdeutig! Mehrere Tools könnten passen.
+  Beispiel: "Was war in Mailas Zimmer?" - könnte Kamera-Events ODER Smart Home sein → confidence=30
+  Beispiel: "Zeig mir das Wohnzimmer" - könnte Kamera-Snapshot ODER Lichtstatus sein → confidence=25"""
 
 
 async def classify_intent(
@@ -294,12 +302,22 @@ def _parse_tool_call_response(response: Dict[str, Any]) -> IntentResult:
                 raw_response=json.dumps(tool_call),
             )
 
+        # Extract model-reported confidence (1-100 scale → 0.0-1.0)
+        raw_confidence = arguments.get("confidence")
+        if raw_confidence is not None:
+            try:
+                confidence = max(0.0, min(1.0, int(raw_confidence) / 100.0))
+            except (ValueError, TypeError):
+                confidence = 0.85  # Fallback if unparseable
+        else:
+            confidence = 0.85  # Model didn't report confidence
+
         return IntentResult(
             skill=tool_name.replace("_", "-"),  # unifi_protect -> unifi-protect
             action=action,
             target=arguments.get("target"),
             args=arguments.get("args", {}),
-            confidence=0.95,  # Tool call implies high confidence
+            confidence=confidence,
             raw_response=json.dumps(tool_call),
         )
     else:

@@ -29,6 +29,7 @@ from .conversational import (
     get_pending_skill_request,
     is_skill_creation_confirmation,
 )
+from .models import IntentResult
 from .skill_creator import request_skill_creation, handle_approval
 
 # Configure logging
@@ -37,6 +38,30 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Confidence threshold: below this, ask the user to clarify
+CONFIDENCE_THRESHOLD = 0.5
+
+# Friendly labels for skills (shown in clarification buttons)
+SKILL_LABELS = {
+    "homeassistant": "Smart Home",
+    "unifi-protect": "Kameras",
+    "unifi-network": "Netzwerk",
+    "proxmox": "Server",
+    "pihole": "DNS",
+}
+
+# Default actions when user picks an alternative skill without a specific action
+SKILL_DEFAULT_ACTIONS = {
+    "homeassistant": "get-state",
+    "unifi-protect": "events",
+    "unifi-network": "clients",
+    "proxmox": "vms",
+    "pihole": "stats",
+}
+
+# Pending clarifications: chat_id -> {intent, original_text, user}
+_pending_clarifications: Dict[int, Dict[str, Any]] = {}
 
 
 async def periodic_git_pull(settings: Settings):
@@ -449,6 +474,54 @@ async def process_natural_language(
         )
         return
 
+    # Low confidence → ask user to clarify before executing
+    if intent.confidence < CONFIDENCE_THRESHOLD:
+        chosen_label = SKILL_LABELS.get(intent.skill, intent.skill)
+        other_skills = [
+            (name, label) for name, label in SKILL_LABELS.items()
+            if name != intent.skill
+        ]
+
+        # Build inline keyboard: chosen skill first, then alternatives
+        buttons = []
+        buttons.append([{
+            "text": f"{chosen_label}",
+            "callback_data": f"clarify:{intent.skill}:{intent.action}",
+        }])
+        # Other skills in rows of 2
+        row = []
+        for skill_name, label in other_skills:
+            row.append({
+                "text": label,
+                "callback_data": f"clarify:{skill_name}:",
+            })
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+
+        # Store pending clarification
+        _pending_clarifications[chat_id] = {
+            "intent": intent,
+            "original_text": text,
+            "user": user,
+        }
+
+        logger.info(
+            f"Low confidence ({intent.confidence:.0%}) for '{text[:50]}' "
+            f"→ asking clarification (chosen: {intent.skill})"
+        )
+
+        await remove_status()
+        await send_message(
+            chat_id,
+            f"Meinst du *{chosen_label}* oder etwas anderes?",
+            settings,
+            reply_markup={"inline_keyboard": buttons},
+        )
+        return
+
     # Execute known skill (with user_id for permission checks)
     result = await execute_skill(intent, settings, user_id=user.id)
 
@@ -496,8 +569,16 @@ async def handle_callback_update(callback_query: Dict[str, Any], settings: Setti
     callback_id = callback_query.get("id")
     data = callback_query.get("data", "")
     user_id = callback_query.get("from", {}).get("id")
+    chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
 
     logger.info(f"Callback from {user_id}: {data}")
+
+    # Handle clarification callbacks (any allowed user)
+    if data.startswith("clarify:"):
+        await _handle_clarification_callback(
+            callback_id, data, chat_id, user_id, settings
+        )
+        return
 
     # Only admin can approve/reject
     if user_id != settings.admin_telegram_id:
@@ -523,3 +604,99 @@ async def handle_callback_update(callback_query: Dict[str, Any], settings: Setti
     await answer_callback_query(callback_id, feedback, settings)
 
     logger.info(f"Approval result for {request_id}: {result}")
+
+
+async def _handle_clarification_callback(
+    callback_id: str,
+    data: str,
+    chat_id: int,
+    user_id: int,
+    settings: Settings,
+):
+    """Handle a clarification button press.
+
+    Callback data format: clarify:{skill}:{action}
+    Action may be empty if user chose an alternative skill.
+    """
+    parts = data.split(":", 2)
+    if len(parts) < 3:
+        await answer_callback_query(callback_id, "Ungueltige Daten", settings)
+        return
+
+    chosen_skill = parts[1]
+    chosen_action = parts[2]  # May be empty for alternative skills
+
+    # Look up pending clarification
+    pending = _pending_clarifications.pop(chat_id, None)
+    if not pending:
+        await answer_callback_query(callback_id, "Anfrage abgelaufen", settings)
+        return
+
+    original_intent: IntentResult = pending["intent"]
+    original_text: str = pending["original_text"]
+
+    # Acknowledge button press
+    chosen_label = SKILL_LABELS.get(chosen_skill, chosen_skill)
+    await answer_callback_query(callback_id, chosen_label, settings)
+
+    # Build the intent to execute
+    if chosen_skill == original_intent.skill:
+        # User confirmed the original choice
+        exec_intent = original_intent
+    else:
+        # User chose a different skill - use provided action, or skill default
+        action = chosen_action or SKILL_DEFAULT_ACTIONS.get(chosen_skill, "status")
+        exec_intent = IntentResult(
+            skill=chosen_skill,
+            action=action,
+            target=original_intent.target,
+            args=original_intent.args,
+            confidence=1.0,  # User explicitly chose
+        )
+
+    logger.info(
+        f"Clarification resolved: {original_intent.skill} → {exec_intent.skill}:{exec_intent.action} "
+        f"for '{original_text[:50]}'"
+    )
+
+    # Send status
+    status_msg_id = await send_message(chat_id, "Bin dran...", settings)
+
+    # Execute the clarified skill
+    result = await execute_skill(exec_intent, settings, user_id=user_id)
+
+    # Remove status
+    if status_msg_id:
+        await delete_message(chat_id, status_msg_id, settings)
+
+    # Send response
+    if result.success:
+        if await should_format_response(original_text, result.output, exec_intent.skill):
+            response_msg = await format_response(
+                original_text, result.output, settings, exec_intent.skill, exec_intent.action
+            )
+        else:
+            response_msg = result.output
+        await send_message(chat_id, response_msg, settings)
+    else:
+        if user_id == settings.admin_telegram_id:
+            response_msg = f"Fehler: {result.error}"
+        else:
+            response_msg = "Ups, da ist etwas schief gelaufen."
+        await send_message(chat_id, response_msg, settings)
+
+    # Store in history and database
+    add_message(chat_id, "user", original_text)
+    add_message(chat_id, "assistant", response_msg)
+    save_conversation_to_db(
+        chat_id=chat_id,
+        user_message=original_text,
+        assistant_response=response_msg,
+        user_id=user_id,
+        intent_skill=exec_intent.skill,
+        intent_action=exec_intent.action,
+        intent_target=exec_intent.target,
+        intent_confidence=exec_intent.confidence,
+        success=result.success,
+        error_message=result.error if not result.success else None,
+    )
