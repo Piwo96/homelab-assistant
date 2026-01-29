@@ -55,7 +55,10 @@ class ProtectAPI(UniFiAPI):
 
     def get_cameras(self):
         """Get all cameras."""
-        return self._protect_request("GET", "/cameras")
+        result = self._protect_request("GET", "/cameras")
+        if isinstance(result, list):
+            return result
+        return []
 
     def get_camera(self, camera_id: str):
         """Get camera details."""
@@ -89,11 +92,19 @@ class ProtectAPI(UniFiAPI):
             params.append(f"types={','.join(types)}")
         query = f"?{'&'.join(params)}" if params else ""
 
-        events = self._protect_request("GET", f"/events{query}")
+        result = self._protect_request("GET", f"/events{query}")
+
+        # Ensure we have a list (API may return dict on error or empty response)
+        if isinstance(result, list):
+            events = result
+        elif isinstance(result, dict) and "data" in result and isinstance(result["data"], list):
+            events = result["data"]
+        else:
+            return []
 
         # Filter by camera if specified
         if camera_id:
-            events = [e for e in events if e.get("camera") == camera_id]
+            events = [e for e in events if isinstance(e, dict) and e.get("camera") == camera_id]
 
         return events
 
@@ -185,6 +196,8 @@ class ProtectAPI(UniFiAPI):
         detections = []
 
         for event in events:
+            if not isinstance(event, dict) or "start" not in event:
+                continue
             ts = datetime.fromtimestamp(event["start"] / 1000)
             metadata = event.get("metadata", {})
             thumbnails = metadata.get("detectedThumbnails", [])
