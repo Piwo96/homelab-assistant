@@ -22,19 +22,15 @@ def skill_to_tool(skill: SkillDefinition) -> Dict[str, Any]:
     # Extract action names from commands
     action_enum = [cmd.name for cmd in skill.commands] if skill.commands else []
 
-    # Build action descriptions with parameter hints
+    # Build action descriptions with compact parameter hints.
+    # Only parameter names are included to minimize token usage;
+    # names like "camera", "limit", "entity_id" are self-explanatory.
     action_descriptions = []
     for cmd in skill.commands:
         if cmd.parameters:
-            param_parts = []
-            for p in cmd.parameters:
-                if p.get("help"):
-                    param_parts.append(f"{p['name']}={p['help']}")
-                else:
-                    param_parts.append(p["name"])
-            params_str = ", ".join(param_parts)
+            param_names = ", ".join(p["name"] for p in cmd.parameters)
             action_descriptions.append(
-                f"- {cmd.name}: {cmd.description} (args: {params_str})"
+                f"- {cmd.name}: {cmd.description} [{param_names}]"
             )
         else:
             action_descriptions.append(f"- {cmd.name}: {cmd.description}")
