@@ -28,6 +28,7 @@ from .response_formatter import format_response, should_format_response
 from .conversational import (
     get_pending_skill_request,
     is_skill_creation_confirmation,
+    enrich_followup_message,
 )
 from .models import IntentResult
 from .skill_creator import request_skill_creation, handle_approval
@@ -368,8 +369,12 @@ async def process_natural_language(
     # Get conversation history for context
     history = get_history(chat_id)
 
+    # Enrich follow-up messages with context from previous exchange
+    # e.g., "Und was war in der Einfahrt?" after asking about recordings
+    classifier_text = enrich_followup_message(text, chat_id)
+
     # Classify intent with history context
-    intent = await classify_intent(text, settings, history)
+    intent = await classify_intent(classifier_text, settings, history)
     logger.info(f"Classified intent: skill={intent.skill}, action={intent.action}")
 
     # Handle errors

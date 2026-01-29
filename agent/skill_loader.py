@@ -140,8 +140,18 @@ def extract_commands_from_script(script_path: Path) -> List[SkillCommand]:
 
     commands = []
 
+    # Step 0: Detect lambda aliases for add_parser
+    # e.g., _p = lambda *a, **kw: subparsers.add_parser(*a, ...)
+    alias_pattern = r'(\w+)\s*=\s*lambda\s.*?\.add_parser\('
+    parser_aliases = set()
+    for m in re.finditer(alias_pattern, content):
+        parser_aliases.add(m.group(1))
+    if parser_aliases:
+        logger.debug(f"Found add_parser aliases: {parser_aliases}")
+
     # Step 1: Find add_parser calls WITH variable assignment
     # e.g., events = subparsers.add_parser("events", help="List events")
+    # Also matches alias calls: events = _p("events", help="List events")
     assigned_pattern = (
         r'(\w+)\s*=\s*\w+\.add_parser\(\s*'
         r'["\']([^"\']+)["\'].*?help\s*=\s*["\']([^"\']+)["\']'
@@ -150,6 +160,17 @@ def extract_commands_from_script(script_path: Path) -> List[SkillCommand]:
     for m in re.finditer(assigned_pattern, content):
         var_name, cmd_name, help_text = m.group(1), m.group(2), m.group(3)
         assigned_vars[var_name] = (cmd_name, help_text)
+
+    # Also find assigned alias calls: events = _p("events", help="...")
+    for alias in parser_aliases:
+        alias_assigned_pattern = (
+            rf'(\w+)\s*=\s*{re.escape(alias)}\(\s*'
+            rf'["\']([^"\']+)["\'].*?help\s*=\s*["\']([^"\']+)["\']'
+        )
+        for m in re.finditer(alias_assigned_pattern, content):
+            var_name, cmd_name, help_text = m.group(1), m.group(2), m.group(3)
+            if var_name != alias:  # Don't match the alias definition itself
+                assigned_vars[var_name] = (cmd_name, help_text)
 
     # Step 2: For assigned parsers, extract their add_argument() calls
     for var_name, (cmd_name, help_text) in assigned_vars.items():
@@ -186,6 +207,24 @@ def extract_commands_from_script(script_path: Path) -> List[SkillCommand]:
                     script_path=script_path,
                 )
             )
+
+    # Also find standalone alias calls: _p("cameras", help="...")
+    for alias in parser_aliases:
+        alias_standalone_pattern = (
+            rf'{re.escape(alias)}\(\s*'
+            rf'["\']([^"\']+)["\'].*?help\s*=\s*["\']([^"\']+)["\']'
+        )
+        for m in re.finditer(alias_standalone_pattern, content):
+            cmd_name, help_text = m.group(1), m.group(2)
+            if not any(c.name == cmd_name for c in commands):
+                commands.append(
+                    SkillCommand(
+                        name=cmd_name,
+                        description=help_text,
+                        parameters=[],
+                        script_path=script_path,
+                    )
+                )
 
     logger.debug(f"Extracted {len(commands)} commands from {script_path.name}")
     return commands
