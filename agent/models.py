@@ -98,6 +98,10 @@ INFRASTRUCTURE_SKILLS: Dict[str, set] = {
     "unifi-network": {
         "health", "devices", "device-status", "clients", "client-info",
         "networks", "port-forwards", "firewall-rules",
+        # Integration API v1 (read-only)
+        "info", "sites", "device-detail", "device-stats",
+        "pending-devices", "client-detail", "wifis",
+        "network-detail", "network-references", "wifi-detail",
     },
     "unifi-protect": {
         "cameras", "camera", "snapshot", "events", "detections", "lights",

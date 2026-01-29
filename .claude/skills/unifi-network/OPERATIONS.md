@@ -1,62 +1,72 @@
 # UniFi Operations Guide
 
-Common operations for managing UniFi networks, clients, and devices. This guide documents **only** the commands actually implemented in `network_api.py`.
+Common operations for managing UniFi networks, clients, and devices. Commands work in dual-API mode (Integration API v1 + Legacy fallback).
 
 ## Initial Setup
 
-Determine your controller type:
+### Detect API Mode
+
 ```bash
 python network_api.py detect
 ```
 
-This auto-detects:
-- Standard Controller (port 8443)
-- UDM/UDM Pro/UCG (port 443, `/proxy/network` prefix)
+Output shows:
+- Configured authentication methods (API Key, Username/Password)
+- Integration API base URL
+- Legacy Controller type (UCG/UDM or Standard)
+- Active API mode (dual, integration, legacy)
+
+### Application Info (Integration API)
+
+```bash
+python network_api.py info
+python network_api.py sites
+```
 
 ## Client Management
 
 ### List Clients
 
 ```bash
-# All active clients (formatted output)
+# Connected clients (uses Integration API if available)
 python network_api.py clients
 
-# All known clients (includes inactive)
+# With pagination
+python network_api.py clients --limit 100 --offset 0
+
+# All known clients including inactive (Legacy only)
 python network_api.py clients --all
 
-# JSON output for scripting
+# JSON output
 python network_api.py clients --json
-python network_api.py clients --all --json
 ```
 
-**Output includes:**
-- Client name/hostname
-- IP address
-- MAC address
-- Connection type (wired/wireless)
-- SSID (for wireless clients)
+### Client Details (Integration API)
+
+```bash
+# Get full client details by UUID
+python network_api.py client-detail <client-uuid>
+python network_api.py client-detail <client-uuid> --json
+```
 
 ### Client Actions
 
 ```bash
-# Kick client (disconnect, can reconnect)
+# Kick client - disconnect, can reconnect (Legacy API)
 python network_api.py kick aa:bb:cc:dd:ee:ff
 
-# Block client (permanent until unblocked)
+# Block client permanently (Legacy API)
 python network_api.py block aa:bb:cc:dd:ee:ff
 
-# Unblock client
+# Unblock client (Legacy API)
 python network_api.py unblock aa:bb:cc:dd:ee:ff
-```
 
-### Finding Client Details
+# Authorize guest access (Integration API)
+python network_api.py authorize-guest <client-uuid>
+python network_api.py authorize-guest <client-uuid> --time-limit 60 --data-limit 500
 
-```bash
-# Get full client details via JSON
-python network_api.py clients --json | jq '.[] | select(.mac=="aa:bb:cc:dd:ee:ff")'
-
-# Filter clients by name pattern using grep
-python network_api.py clients | grep "iPhone"
+# Unauthorize guest (Integration API)
+python network_api.py unauthorize-guest <client-uuid>
 ```
 
 ## Device Management
@@ -64,54 +74,41 @@ python network_api.py clients | grep "iPhone"
 ### List Devices
 
 ```bash
-# All network devices (APs, switches, gateways)
+# All adopted devices (uses Integration API if available)
 python network_api.py devices
 
-# JSON output for scripting
+# With pagination
+python network_api.py devices --limit 100 --offset 0
+
+# JSON output
 python network_api.py devices --json
 ```
 
-**Output includes:**
-- Device name
-- Model
-- Type (uap=AP, usw=switch, ugw=gateway)
-- State (1=online, 0=offline)
-- Number of connected clients (for APs)
+### Device Details & Statistics (Integration API)
+
+```bash
+# Full device details
+python network_api.py device-detail <device-uuid>
+
+# Device statistics: CPU, RAM, uptime, throughput
+python network_api.py device-stats <device-uuid>
+python network_api.py device-stats <device-uuid> --json
+```
 
 ### Device Actions
 
 ```bash
-# Restart device (takes 2-3 minutes)
-python network_api.py restart-device aa:bb:cc:dd:ee:ff
+# Restart device (UUID for Integration API, MAC for Legacy)
+python network_api.py restart-device <device-uuid-or-mac>
 
 # Adopt pending device
 python network_api.py adopt aa:bb:cc:dd:ee:ff
-```
 
-## Network Statistics
+# List pending devices (Integration API)
+python network_api.py pending-devices
 
-### Site Health
-
-```bash
-# Overall site health with status indicators
-python network_api.py health
-
-# Detailed system information
-python network_api.py sysinfo
-
-# JSON output
-python network_api.py health --json
-python network_api.py sysinfo --json
-```
-
-### Traffic Statistics
-
-```bash
-# DPI (Deep Packet Inspection) statistics
-python network_api.py dpi-stats
-
-# JSON output for parsing
-python network_api.py dpi-stats --json
+# Power cycle a switch port (Integration API)
+python network_api.py power-cycle-port <device-uuid> <port-index>
 ```
 
 ## Network Configuration
@@ -119,23 +116,86 @@ python network_api.py dpi-stats --json
 ### List Networks
 
 ```bash
-# All WiFi networks (SSIDs)
-python network_api.py wifis
-
-# All networks (LAN, VLAN, WiFi)
+# All networks/VLANs
 python network_api.py networks
-
-# JSON output
-python network_api.py wifis --json
+python network_api.py networks --limit 100
 python network_api.py networks --json
 ```
 
-## Port Forwarding
-
-### Manage Rules
+### Network CRUD (Integration API)
 
 ```bash
-# List all port forwarding rules
+# Network details
+python network_api.py network-detail <network-uuid>
+
+# Network references (clients, devices using this network)
+python network_api.py network-references <network-uuid>
+
+# Create network
+python network_api.py create-network "IoT" --vlan 30
+python network_api.py create-network "Guest" --vlan 40 --management GATEWAY
+
+# Update network
+python network_api.py update-network <uuid> --name "New Name"
+python network_api.py update-network <uuid> --vlan 50
+
+# Delete network
+python network_api.py delete-network <uuid>
+```
+
+## WiFi Management
+
+### List WiFi Broadcasts
+
+```bash
+python network_api.py wifis
+python network_api.py wifis --json
+```
+
+### WiFi CRUD (Integration API)
+
+```bash
+# WiFi details
+python network_api.py wifi-detail <wifi-uuid>
+
+# Create WiFi
+python network_api.py create-wifi "Guest WiFi" --security WPA2
+
+# Update WiFi
+python network_api.py update-wifi <uuid> --name "New SSID"
+python network_api.py update-wifi <uuid> --enabled false
+
+# Delete WiFi
+python network_api.py delete-wifi <uuid>
+```
+
+## Network Statistics (Legacy API)
+
+### Site Health
+
+```bash
+python network_api.py health
+python network_api.py health --json
+```
+
+### System Info
+
+```bash
+python network_api.py sysinfo
+python network_api.py sysinfo --json
+```
+
+### DPI Statistics
+
+```bash
+python network_api.py dpi-stats
+python network_api.py dpi-stats --json
+```
+
+## Port Forwarding (Legacy API)
+
+```bash
+# List rules
 python network_api.py port-forwards
 python network_api.py port-forwards --json
 
@@ -143,207 +203,113 @@ python network_api.py port-forwards --json
 python network_api.py create-port-forward "Web Server" 80 192.168.1.100 8080
 python network_api.py create-port-forward "SSH" 22 192.168.1.50 22 --proto tcp
 
-# Delete rule (use ID from list command)
+# Delete rule
 python network_api.py delete-port-forward <rule-id>
 ```
 
-**Protocols:** `tcp`, `udp`, `tcp_udp` (default)
-
-## Firewall Management
-
-### Firewall Rules
+## Firewall Management (Legacy API)
 
 ```bash
-# List all firewall rules
+# List firewall rules
 python network_api.py firewall-rules
-
-# JSON output
 python network_api.py firewall-rules --json
-```
 
-**Output includes:**
-- Rule name
-- Enabled status
-- Action (accept/drop/reject)
-- Ruleset
-- Source/destination
-- Protocol and ports
-
-### Firewall Groups
-
-```bash
-# List firewall groups (IP groups, port groups)
+# List firewall groups
 python network_api.py firewall-groups
-
-# JSON output
 python network_api.py firewall-groups --json
 ```
 
 ## Output Formats
 
-All commands support two output formats:
+All commands support `--json` flag for machine-readable output. Default is human-readable with icons.
 
-### Human-Readable (Default)
-- Formatted with icons and structure
-- Best for interactive terminal use
-- Grouped by category
+### Pagination Defaults
 
-### JSON (`--json` flag)
-- Machine-readable structured data
-- For scripting and automation
-- Preserves all fields from API
+Integration API commands use pagination with these defaults:
+- `--limit 50` (results per page)
+- `--offset 0` (starting position)
+
+To retrieve all results, increase `--limit` or iterate with `--offset`. Legacy API returns all results (no pagination).
 
 ## Common Workflows
 
-### Find and Disconnect a Client
+### Monitor Device Health
 
 ```bash
-# 1. List all clients
-python network_api.py clients
-
-# 2. Find target by name/IP
-python network_api.py clients | grep "suspicious"
-
-# 3. Disconnect
-python network_api.py kick aa:bb:cc:dd:ee:ff
-
-# 4. Or block permanently
-python network_api.py block aa:bb:cc:dd:ee:ff
-```
-
-### Monitor Network Health
-
-```bash
-# Check overall health
-python network_api.py health
-
-# List all devices and their status
+# 1. List all devices
 python network_api.py devices
 
-# Count active clients
-python network_api.py clients | grep -c "📡\|📶"
+# 2. Get device UUID from the list
+# 3. Check stats
+python network_api.py device-stats <uuid>
 ```
 
-### Bulk Operations
+### Troubleshoot Client
 
 ```bash
-# Block multiple clients from file
-for mac in $(cat blocked_macs.txt); do
-  python network_api.py block $mac
-done
+# 1. Find client
+python network_api.py clients
+python network_api.py clients --json | jq '.[] | select(.name | contains("iPhone"))'
 
-# Restart all devices (one at a time with delay)
-python network_api.py devices --json | jq -r '.[].mac' | while read mac; do
-  python network_api.py restart-device $mac
-  sleep 30
-done
+# 2. Get details (Integration API)
+python network_api.py client-detail <uuid>
+
+# 3. Force reconnect (Legacy API)
+python network_api.py kick aa:bb:cc:dd:ee:ff
 ```
 
-### Export Network Configuration
+### Setup New VLAN with WiFi
 
 ```bash
-# Export all configuration as JSON
-python network_api.py networks --json > networks.json
-python network_api.py wifis --json > wifis.json
-python network_api.py port-forwards --json > port-forwards.json
-python network_api.py firewall-rules --json > firewall-rules.json
+# 1. Create network
+python network_api.py create-network "IoT Devices" --vlan 30
+
+# 2. Create WiFi broadcast for this network
+python network_api.py create-wifi "IoT WiFi" --security WPA2
+
+# 3. Verify
+python network_api.py networks --json
+python network_api.py wifis --json
 ```
 
 ## Site Management
 
-By default, commands operate on the `default` site. To use a different site:
-
 ```bash
-# Specify site with --site flag
+# Specify site
 python network_api.py clients --site office
 python network_api.py devices --site office
 
 # Or set in environment
 export UNIFI_SITE=office
-python network_api.py clients
 ```
 
-## Troubleshooting
-
-### Cannot Connect
-
-```bash
-# 1. Test connectivity to host
-ping $UNIFI_HOST
-
-# 2. Test HTTPS port
-curl -k https://$UNIFI_HOST:443
-curl -k https://$UNIFI_HOST:8443
-
-# 3. Detect controller type
-python network_api.py detect
-```
-
-### Authentication Issues
-
-```bash
-# Verify credentials are set
-echo "Host: $UNIFI_HOST"
-echo "Username: $UNIFI_USERNAME"
-echo "Password: [set: $(test -n "$UNIFI_PASSWORD" && echo yes || echo no)]"
-
-# Check .env file location
-ls -la .env
-ls -la ../.env
-```
-
-### SSL Certificate Errors
-
-```bash
-# Set in .env
-UNIFI_VERIFY_SSL=false
-```
-
-### Session Issues
-
-Session cache stored at: `~/.cache/homelab/unifi_session_<host>.pkl`
-
-```bash
-# Clear session cache if experiencing issues
-rm ~/.cache/homelab/unifi_session_*.pkl
-```
-
-## Integration with Other Tools
-
-### Use with jq for JSON Processing
-
-```bash
-# Get IPs of all wireless clients
-python network_api.py clients --json | jq -r '.[] | select(.essid) | .ip'
-
-# Count clients per SSID
-python network_api.py clients --json | jq -r '.[].essid' | sort | uniq -c
-
-# Get offline devices
-python network_api.py devices --json | jq '.[] | select(.state==0) | .name'
-```
-
-### Use with Python Import
-
-The script can also be imported as a module:
+## Python Module Usage
 
 ```python
 from network_api import execute
 
-# Get clients
-clients = execute("clients", {"all": False})
-
-# Kick a client
-execute("kick", {"mac": "aa:bb:cc:dd:ee:ff"})
-
-# Get devices
+# Dual-mode: uses Integration API when available
+clients = execute("clients", {"limit": "100"})
 devices = execute("devices", {})
+
+# Integration API only
+info = execute("info", {})
+stats = execute("device-stats", {"id": "device-uuid"})
+
+# Legacy API only
+health = execute("health", {})
+execute("kick", {"mac": "aa:bb:cc:dd:ee:ff"})
 ```
 
-## Notes
+## Integration with jq
 
-- **Rate Limiting**: The API has session caching (~1.5h) to avoid rate limits
-- **Session Sharing**: Network and Protect APIs share the same session cache
-- **Auto-Reconnect**: Session expiry is handled automatically
-- **Controller Detection**: Automatically detects UCG/UDM vs Standard Controller
-- **SSL Verification**: Disabled by default for self-signed certificates
+```bash
+# Get all online devices (Integration API format)
+python network_api.py devices --json | jq '.[] | select(.state=="ONLINE") | .name'
+
+# Get wireless clients (Integration API format)
+python network_api.py clients --json | jq '.[] | select(.type=="WIRELESS") | {name, ipAddress}'
+
+# Get all VLANs
+python network_api.py networks --json | jq '.[] | {name, vlanId}'
+```
