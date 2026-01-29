@@ -757,6 +757,254 @@ class ProtectDualAPI:
 
 
 # ---------------------------------------------------------------------------
+# Human-readable formatting (used by agent pipeline)
+# ---------------------------------------------------------------------------
+
+_TYPE_ICONS = {
+    "motion": "🏃",
+    "smartDetectZone": "🔍",
+    "smartAudioDetect": "🔊",
+    "ring": "🔔",
+    "sensorMotion": "📡",
+    "sensorContact": "🚪",
+    "access": "🔑",
+}
+
+_SMART_TYPES = {
+    "person": "Person",
+    "vehicle": "Fahrzeug",
+    "animal": "Tier",
+    "package": "Paket",
+    "licensePlate": "Kennzeichen",
+    "face": "Gesicht",
+    "alrmSpeak": "Sprechen",
+    "alrmSmoke": "Rauchmelder",
+    "alrmCmonx": "CO-Melder",
+    "alrmBark": "Bellen",
+    "alrmCry": "Weinen",
+    "alrmSiren": "Sirene",
+    "alrmGlass": "Glasbruch",
+    "alrmBabyCry": "Baby weint",
+}
+
+
+def format_agent_output(action: str, data: Any) -> Optional[str]:
+    """Format raw data into human-readable text for Telegram/agent output.
+
+    Called by skill_executor when available, producing compact text
+    instead of raw JSON that would overwhelm the LLM formatter.
+
+    Args:
+        action: The action that produced the data (e.g. "events", "cameras")
+        data: Raw Python data returned by execute()
+
+    Returns:
+        Formatted string, or None if no formatter available (falls back to JSON)
+    """
+    if action == "events":
+        return _format_events(data)
+    elif action == "detections":
+        return _format_detections(data)
+    elif action == "cameras":
+        return _format_cameras(data)
+    elif action == "sensors":
+        return _format_sensors(data)
+    elif action == "lights":
+        return _format_lights(data)
+    elif action == "nvr":
+        return _format_nvr(data)
+    return None
+
+
+def _format_events(events: list) -> str:
+    """Format events list into human-readable text."""
+    if not events:
+        return "Keine Ereignisse gefunden."
+
+    # Resolve camera names
+    try:
+        api = ProtectDualAPI()
+        cameras = {c["id"]: c.get("name", "Unbekannt") for c in api.get_cameras()}
+    except Exception:
+        cameras = {}
+
+    # Group by camera (or "System" for non-camera events)
+    by_camera: dict[str, list] = {}
+    for e in events:
+        cam_id = e.get("camera")
+        if cam_id:
+            cam_name = cameras.get(cam_id, "Unbekannt")
+        else:
+            cam_name = "System"
+        by_camera.setdefault(cam_name, []).append(e)
+
+    lines = [f"📹 Kamera-Ereignisse ({len(events)} Einträge)\n"]
+
+    for cam_name, cam_events in by_camera.items():
+        lines.append(f"{cam_name} ({len(cam_events)} Ereignisse)")
+
+        for e in cam_events[:10]:
+            ts = datetime.fromtimestamp(e["start"] / 1000)
+            time_str = ts.strftime("%d.%m. %H:%M")
+            event_type = e.get("type", "unknown")
+            icon = _TYPE_ICONS.get(event_type, "📷")
+
+            if event_type in ("smartDetectZone", "smartAudioDetect"):
+                detected = e.get("smartDetectTypes", [])
+                detected_str = ", ".join(_SMART_TYPES.get(d, d) for d in detected)
+                lines.append(f"  {icon} {time_str} - {detected_str}")
+            elif event_type == "access":
+                desc = e.get("description", {})
+                msg_raw = desc.get("messageRaw", "")
+                # Strip template keys like {userLink}
+                msg = re.sub(r"\{(\w+)\}", lambda m: _resolve_msg_key(m, e), msg_raw) if msg_raw else "Zugriff"
+                lines.append(f"  {icon} {time_str} - {msg}")
+            else:
+                lines.append(f"  {icon} {time_str} - {event_type}")
+
+        if len(cam_events) > 10:
+            lines.append(f"  ... und {len(cam_events) - 10} weitere")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _resolve_msg_key(match: re.Match, event: dict) -> str:
+    """Resolve template keys in event messageRaw (e.g. {userLink})."""
+    key = match.group(1)
+    msg_keys = event.get("description", {}).get("messageKeys", [])
+    if isinstance(msg_keys, list):
+        for mk in msg_keys:
+            if mk.get("key") == key:
+                return mk.get("text", key)
+    return key
+
+
+def _format_detections(detections: list) -> str:
+    """Format detections list into human-readable text."""
+    if not detections:
+        return "Keine Erkennungen gefunden."
+
+    plates = [d for d in detections if d.get("plate")]
+    faces = [d for d in detections if d.get("type") == "face"]
+    persons = [d for d in detections if d.get("type") == "person" and "plate" not in d]
+
+    lines = [f"🔍 Erkennungen ({len(detections)} Einträge)\n"]
+
+    if plates:
+        lines.append(f"Kennzeichen ({len(plates)})")
+        for d in plates[:10]:
+            lines.append(f"  🚗 {d.get('time', '?')} - {d.get('plate', '?')} ({d.get('vehicle_type', '?')}, {d.get('color', '?')}, {d.get('confidence', '?')}%)")
+        if len(plates) > 10:
+            lines.append(f"  ... und {len(plates) - 10} weitere")
+        lines.append("")
+
+    if faces:
+        lines.append(f"Gesichter ({len(faces)})")
+        for d in faces[:10]:
+            mask = "mit Maske" if d.get("has_mask") else ""
+            lines.append(f"  👤 {d.get('time', '?')} - {d.get('confidence', '?')}% {mask}")
+        if len(faces) > 10:
+            lines.append(f"  ... und {len(faces) - 10} weitere")
+        lines.append("")
+
+    if persons:
+        lines.append(f"Personen: {len(persons)} Erkennungen")
+
+    return "\n".join(lines).strip()
+
+
+def _format_cameras(cameras: list) -> str:
+    """Format cameras list into human-readable text."""
+    if not cameras:
+        return "Keine Kameras gefunden."
+
+    lines = [f"📹 Kameras ({len(cameras)} Geräte)\n"]
+    for cam in cameras:
+        name = cam.get("name", "Unbekannt")
+        state = cam.get("state", "unknown")
+        icon = "🟢" if state == "CONNECTED" else "🔴"
+        model = cam.get("modelKey", cam.get("type", "Unbekannt"))
+
+        smart = cam.get("featureFlags", {}).get("smartDetectTypes", [])
+        smart_str = f" | Smart: {', '.join(smart)}" if smart else ""
+        lines.append(f"{icon} {name} ({model}{smart_str})")
+
+    return "\n".join(lines).strip()
+
+
+def _format_sensors(sensors: list) -> str:
+    """Format sensors list into human-readable text."""
+    if not sensors:
+        return "Keine Sensoren gefunden."
+
+    lines = [f"📡 Sensoren ({len(sensors)})\n"]
+    for s in sensors:
+        name = s.get("name", "Unbekannt")
+        state = s.get("state", "unknown")
+        icon = "🟢" if state == "CONNECTED" else "🔴"
+        stats = s.get("stats", {})
+        temp = stats.get("temperature", {}).get("value")
+        humidity = stats.get("humidity", {}).get("value")
+
+        info = []
+        if temp is not None:
+            info.append(f"{temp}°C")
+        if humidity is not None:
+            info.append(f"{humidity}%")
+        info_str = f" ({', '.join(info)})" if info else ""
+        lines.append(f"{icon} {name}{info_str}")
+
+    return "\n".join(lines).strip()
+
+
+def _format_lights(lights: list) -> str:
+    """Format lights list into human-readable text."""
+    if not lights:
+        return "Keine Lichter gefunden."
+
+    lines = [f"💡 Lichter ({len(lights)})\n"]
+    for light in lights:
+        name = light.get("name", "Unbekannt")
+        is_on = light.get("isLightOn", False)
+        icon = "💡" if is_on else "⚫"
+        state = light.get("state", "unknown")
+        online = "🟢" if state == "CONNECTED" else "🔴"
+        lines.append(f"{online} {icon} {name}")
+
+    return "\n".join(lines).strip()
+
+
+def _format_nvr(nvr: dict) -> str:
+    """Format NVR info into human-readable text."""
+    lines = ["🖥️ NVR Status\n"]
+    lines.append(f"  Name: {nvr.get('name', 'Unbekannt')}")
+
+    version = nvr.get("version", nvr.get("applicationVersion", "Unbekannt"))
+    if version != "Unbekannt":
+        lines.append(f"  Version: {version}")
+
+    uptime_ms = nvr.get("uptime", 0)
+    if uptime_ms:
+        days = uptime_ms // 86_400_000
+        hours = (uptime_ms % 86_400_000) // 3_600_000
+        lines.append(f"  Uptime: {days} Tage, {hours} Stunden")
+
+    storage = nvr.get("storageInfo", {})
+    used_gb = storage.get("usedSpace", 0) / (1024**3)
+    total_gb = storage.get("totalSpace", 0) / (1024**3)
+    if total_gb > 0:
+        pct = (used_gb / total_gb) * 100
+        lines.append(f"  Speicher: {used_gb:.0f} GB / {total_gb:.0f} GB ({pct:.0f}%)")
+
+    device_count = nvr.get("deviceCount", {})
+    if isinstance(device_count, dict) and device_count.get("cameras"):
+        lines.append(f"  Kameras: {device_count['cameras']}")
+
+    return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------
 # Programmatic API (execute function)
 # ---------------------------------------------------------------------------
 

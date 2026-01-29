@@ -9,7 +9,7 @@ from typing import Optional
 from .config import Settings
 from .models import IntentResult, SkillExecutionResult, is_admin_required
 from .skill_loader import SkillCommand
-from .skill_importer import get_execute_fn
+from .skill_importer import get_execute_fn, load_skill_module
 from .tool_registry import get_registry
 from .error_approval import request_error_fix_approval
 
@@ -102,7 +102,7 @@ async def execute_skill(
     execute_fn = get_execute_fn(script_to_use)
 
     if execute_fn:
-        return await _execute_direct(execute_fn, intent, skill_name, action_normalized, settings)
+        return await _execute_direct(execute_fn, intent, skill_name, action_normalized, settings, script_to_use)
 
     return SkillExecutionResult(
         success=False,
@@ -119,11 +119,14 @@ async def _execute_direct(
     skill_name: str,
     action: str,
     settings: Settings,
+    script_path=None,
 ) -> SkillExecutionResult:
     """Execute skill via direct Python import.
 
     Handles both sync and async execute() functions.
     Sync functions run in a thread pool to avoid blocking the event loop.
+    If the skill module provides format_output(action, data), it is used
+    to produce human-readable text instead of raw JSON.
     """
     try:
         if inspect.iscoroutinefunction(execute_fn):
@@ -142,15 +145,19 @@ async def _execute_direct(
                 timeout=30.0,
             )
 
-        # Serialize result to JSON string for response_formatter compatibility
-        if isinstance(result, (dict, list)):
-            output = json.dumps(result, indent=2, default=str)
-        elif isinstance(result, bytes):
-            output = f"Binary data ({len(result)} bytes)"
-        elif result is not None:
-            output = str(result)
-        else:
-            output = ""
+        # Try skill-level format_output() for human-readable text
+        output = _try_format_output(script_path, action, result)
+
+        if output is None:
+            # Fallback: serialize to JSON for response_formatter
+            if isinstance(result, (dict, list)):
+                output = json.dumps(result, indent=2, default=str)
+            elif isinstance(result, bytes):
+                output = f"Binary data ({len(result)} bytes)"
+            elif result is not None:
+                output = str(result)
+            else:
+                output = ""
 
         # Pre-truncate to ~2 chars/token of context to leave room for prompt
         max_output = settings.lm_studio_context_size * 2
@@ -215,6 +222,29 @@ async def _execute_direct(
             skill=skill_name,
             action=intent.action,
         )
+
+
+def _try_format_output(script_path, action: str, data) -> str | None:
+    """Try to use the skill's format_agent_output() for human-readable text.
+
+    Skills can export format_agent_output(action, data) -> str|None to
+    provide compact, human-readable output instead of raw JSON. This
+    prevents large JSON payloads from overwhelming the LLM formatter.
+
+    Returns formatted string, or None if no formatter available.
+    """
+    if script_path is None:
+        return None
+    try:
+        module = load_skill_module(script_path)
+        if module and hasattr(module, "format_agent_output"):
+            formatted = module.format_agent_output(action, data)
+            if formatted is not None:
+                logger.info(f"Used skill format_agent_output() for {action}")
+                return formatted
+    except Exception as e:
+        logger.debug(f"format_agent_output() failed for {action}: {e}")
+    return None
 
 
 def format_skill_output(output: str, max_chars: int = 100000) -> str:
