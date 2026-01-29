@@ -98,14 +98,12 @@ class PiHoleAPI:
         except:
             pass
 
-        print(f"Error: Cannot connect to Pi-hole at {self.host}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Cannot connect to Pi-hole at {self.host}")
 
     def _login_v6(self) -> bool:
         """Login to v6 API and get session ID."""
         if not self.password:
-            print("Error: PIHOLE_PASSWORD required for authentication", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("PIHOLE_PASSWORD required for authentication")
 
         try:
             response = requests.post(
@@ -131,7 +129,7 @@ class PiHoleAPI:
         """Make v6 API request."""
         if auth and not self.session_id:
             if not self._login_v6():
-                sys.exit(1)
+                raise RuntimeError("Pi-hole v6 login failed")
 
         url = f"{self.base_url}/api{endpoint}"
         headers = {}
@@ -158,11 +156,11 @@ class PiHoleAPI:
                 if auth:
                     self._login_v6()
                     return self._request_v6(method, endpoint, data, auth)
-            print(f"Error: {response.status_code} - {response.text}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"API error: {response.status_code} - {response.text}") from e
+        except RuntimeError:
+            raise
         except Exception as e:
-            print(f"Request error: {e}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"Request error: {e}") from e
 
     def _request_v5(self, params: dict) -> Any:
         """Make v5 API request."""
@@ -179,8 +177,7 @@ class PiHoleAPI:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            print(f"Request error: {e}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"Request error: {e}") from e
 
     # Public API methods
     def get_summary(self) -> dict:
@@ -253,8 +250,7 @@ class PiHoleAPI:
                 {"domain": domain, "kind": "block", "comment": comment},
             )
         else:
-            print("Blocklist management requires web interface in v5", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("Blocklist management requires web interface in v5")
 
     def add_to_allowlist(self, domain: str, comment: str = "") -> dict:
         """Add domain to allowlist."""
@@ -265,24 +261,21 @@ class PiHoleAPI:
                 {"domain": domain, "kind": "allow", "comment": comment},
             )
         else:
-            print("Allowlist management requires web interface in v5", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("Allowlist management requires web interface in v5")
 
     def get_lists(self) -> dict:
         """Get all lists."""
         if self.api_version == "v6":
             return self._request_v6("GET", "/lists")
         else:
-            print("List management via API requires v6", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("List management via API requires v6")
 
     def update_gravity(self) -> dict:
         """Update gravity (pull blocklists)."""
         if self.api_version == "v6":
             return self._request_v6("POST", "/gravity")
         else:
-            print("Gravity update via API requires v6", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("Gravity update via API requires v6")
 
     def get_info(self) -> dict:
         """Get Pi-hole version and system info."""

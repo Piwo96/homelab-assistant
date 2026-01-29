@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -50,8 +51,7 @@ class ProtectAPI(UniFiAPI):
             response.raise_for_status()
             return response.json() if response.text else {}
         except Exception as e:
-            print(f"Protect API error: {e}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"Protect API error: {e}") from e
 
     def get_cameras(self):
         """Get all cameras."""
@@ -97,14 +97,72 @@ class ProtectAPI(UniFiAPI):
 
         return events
 
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """Normalize a camera name for fuzzy comparison.
+
+        Strips underscores, hyphens, apostrophes and extra whitespace,
+        then lowercases so that 'Mailas_Zimmer', 'Maila's Zimmer',
+        'mailas-zimmer' and 'Mailas Zimmer' all match.
+        """
+        name = name.lower()
+        name = re.sub(r"[_\-'`´']", " ", name)
+        return " ".join(name.split())  # collapse whitespace
+
     def resolve_camera_id(self, camera_ref: str) -> Optional[str]:
-        """Resolve camera name to ID. Returns ID if already an ID."""
+        """Resolve camera name to ID with fuzzy matching.
+
+        Matching priority:
+        1. Exact ID match
+        2. Exact name match (case-insensitive)
+        3. Normalized name match (ignoring underscores, hyphens, apostrophes)
+        4. Substring match (camera_ref contained in name or vice versa)
+        5. difflib close match (typo tolerance)
+        """
+        from difflib import get_close_matches
+
         cameras = self.get_cameras()
+        ref_normalized = self._normalize_name(camera_ref)
+
+        # Build lookup structures
+        id_map = {}        # id -> id
+        exact_map = {}     # lower name -> id
+        norm_map = {}      # normalized name -> id
+        name_list = []     # all normalized names for difflib
+
         for cam in cameras:
-            if cam.get("id") == camera_ref or cam.get("name", "").lower() == camera_ref.lower():
-                return cam.get("id")
-        
-        # Camera not found - show available cameras
+            cam_id = cam.get("id", "")
+            cam_name = cam.get("name", "")
+
+            id_map[cam_id] = cam_id
+            exact_map[cam_name.lower()] = cam_id
+            norm = self._normalize_name(cam_name)
+            norm_map[norm] = cam_id
+            name_list.append(norm)
+
+        # 1. Exact ID
+        if camera_ref in id_map:
+            return camera_ref
+
+        # 2. Exact name (case-insensitive)
+        if camera_ref.lower() in exact_map:
+            return exact_map[camera_ref.lower()]
+
+        # 3. Normalized name
+        if ref_normalized in norm_map:
+            return norm_map[ref_normalized]
+
+        # 4. Substring match (either direction)
+        for norm, cam_id in norm_map.items():
+            if ref_normalized in norm or norm in ref_normalized:
+                return cam_id
+
+        # 5. difflib fuzzy match
+        close = get_close_matches(ref_normalized, name_list, n=1, cutoff=0.6)
+        if close:
+            return norm_map[close[0]]
+
+        # Not found - return None with available cameras for error context
         available = [cam.get("name", "Unnamed") for cam in cameras]
         print(f"Camera not found: {camera_ref}", file=sys.stderr)
         print(f"Available cameras: {', '.join(available)}", file=sys.stderr)

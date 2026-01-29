@@ -59,8 +59,7 @@ class DashboardAPI:
         self.ssl = os.environ.get("HOMEASSISTANT_SSL", "false").lower() == "true"
 
         if not self.token:
-            print("Error: HOMEASSISTANT_TOKEN required", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("HOMEASSISTANT_TOKEN required")
 
         self.host = self.host.replace("http://", "").replace("https://", "")
         protocol = "wss" if self.ssl else "ws"

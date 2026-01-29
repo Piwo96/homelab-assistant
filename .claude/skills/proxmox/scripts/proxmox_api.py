@@ -67,9 +67,7 @@ class ProxmoxAPI:
         self.verify_ssl = verify_ssl if verify_ssl is not None else verify_env == "true"
 
         if not self.token_id or not self.token_secret:
-            print("Error: PROXMOX_TOKEN_ID and PROXMOX_TOKEN_SECRET required", file=sys.stderr)
-            print("Set via environment variables or .env file", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("PROXMOX_TOKEN_ID and PROXMOX_TOKEN_SECRET required")
 
         self.base_url = f"https://{self.host}:{self.port}/api2/json"
         self.headers = {
@@ -90,13 +88,14 @@ class ProxmoxAPI:
             )
             response.raise_for_status()
             return response.json().get("data", {})
-        except requests.exceptions.ConnectionError:
-            print(f"Error: Cannot connect to {self.host}:{self.port}", file=sys.stderr)
-            sys.exit(1)
+        except requests.exceptions.ConnectionError as e:
+            raise RuntimeError(f"Cannot connect to {self.host}:{self.port}") from e
         except requests.exceptions.HTTPError as e:
-            error_msg = response.json().get("errors", str(e))
-            print(f"Error: {response.status_code} - {error_msg}", file=sys.stderr)
-            sys.exit(1)
+            try:
+                error_msg = response.json().get("errors", str(e))
+            except Exception:
+                error_msg = str(e)
+            raise RuntimeError(f"API error: {response.status_code} - {error_msg}") from e
 
     def get(self, endpoint: str) -> Any:
         return self._request("GET", endpoint)
@@ -126,8 +125,7 @@ class ProxmoxAPI:
         """
         nodes = self.get_nodes()
         if not nodes:
-            print("Error: No nodes found in cluster", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("No nodes found in cluster")
         # Return first node (usually the only one in single-node setups)
         return nodes[0].get("node")
 
@@ -269,14 +267,14 @@ def execute(action: str, args: dict) -> Any:
         # Try VM first, then container
         try:
             return api.get_vm_status(args["node"], int(args["vmid"]))
-        except SystemExit:
+        except RuntimeError:
             return api.get_container_status(args["node"], int(args["vmid"]))
     elif action in ("start", "stop", "shutdown", "reboot"):
         vmid = int(args["vmid"])
         # Try VM first, then container
         try:
             return api.vm_action(args["node"], vmid, action)
-        except SystemExit:
+        except RuntimeError:
             return api.container_action(args["node"], vmid, action)
     elif action == "storage":
         return api.get_storage(args.get("node"))
@@ -553,7 +551,7 @@ def main():
         try:
             status = api.get_vm_status(args.node, args.vmid)
             vm_type = "VM"
-        except SystemExit:
+        except RuntimeError:
             status = api.get_container_status(args.node, args.vmid)
             vm_type = "Container"
 
@@ -580,7 +578,7 @@ def main():
         try:
             result = api.vm_action(args.node, args.vmid, args.command)
             print(f"VM {args.vmid}: {args.command} initiated")
-        except SystemExit:
+        except RuntimeError:
             result = api.container_action(args.node, args.vmid, args.command)
             print(f"Container {args.vmid}: {args.command} initiated")
         return

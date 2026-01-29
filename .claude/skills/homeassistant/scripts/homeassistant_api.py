@@ -68,9 +68,7 @@ class HomeAssistantAPI:
         self.verify_ssl = verify_ssl if verify_ssl is not None else verify_env == "true"
 
         if not self.token:
-            print("Error: HOMEASSISTANT_TOKEN required", file=sys.stderr)
-            print("Create a Long-Lived Access Token in HA UI → Profile → Security", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("HOMEASSISTANT_TOKEN required")
 
         # Remove http/https prefix
         self.host = self.host.replace("http://", "").replace("https://", "")
@@ -104,15 +102,15 @@ class HomeAssistantAPI:
             return {}
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 401:
-                print("Error: Unauthorized. Check your access token.", file=sys.stderr)
+                raise RuntimeError("Unauthorized. Check your access token.") from e
             elif e.response.status_code == 404:
-                print(f"Error: Not found: {endpoint}", file=sys.stderr)
+                raise RuntimeError(f"Not found: {endpoint}") from e
             else:
-                print(f"HTTP Error: {e}", file=sys.stderr)
-            sys.exit(1)
+                raise RuntimeError(f"HTTP Error: {e}") from e
+        except RuntimeError:
+            raise
         except Exception as e:
-            print(f"API error: {e}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"API error: {e}") from e
 
     # System & Config
     def get_status(self) -> dict:

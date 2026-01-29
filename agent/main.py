@@ -364,8 +364,6 @@ async def process_natural_language(
                 "skill updates", "skill-updates", "neue features",
                 "fehlerbehebung", "github sync", "error tracking",
                 "können wir automatisch", "durch die selbstverbesserung",
-                "alles bestens hier",
-                "was kann ich für dich tun",
             ]
             response_lower = intent.description.lower()
             is_bad_response = any(kw in response_lower for kw in bad_keywords)

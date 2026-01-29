@@ -69,8 +69,7 @@ class UniFiAPI:
         self.verify_ssl = verify_ssl if verify_ssl is not None else verify_env == "true"
 
         if not self.username or not self.password:
-            print("Error: UNIFI_USERNAME and UNIFI_PASSWORD required", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("UNIFI_USERNAME and UNIFI_PASSWORD required")
 
         # Remove http/https prefix
         self.host = self.host.replace("http://", "").replace("https://", "")
@@ -118,8 +117,7 @@ class UniFiAPI:
         except:
             pass
 
-        print(f"Error: Cannot connect to UniFi Controller at {self.host}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Cannot connect to UniFi Controller at {self.host}")
 
     def _save_session(self):
         """Save session cookies and CSRF token to cache file."""
@@ -207,11 +205,11 @@ class UniFiAPI:
 
                 return True
             else:
-                print(f"Login failed: {response.status_code}", file=sys.stderr)
-                sys.exit(1)
+                raise RuntimeError(f"Login failed: {response.status_code}")
+        except RuntimeError:
+            raise
         except Exception as e:
-            print(f"Login error: {e}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"Login error: {e}") from e
 
     def _request(self, method: str, endpoint: str, data: dict = None) -> Any:
         """Make API request."""
@@ -240,11 +238,11 @@ class UniFiAPI:
                 # Session expired, retry login
                 self._login()
                 return self._request(method, endpoint, data)
-            print(f"Error: {response.status_code} - {response.text}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"API error: {response.status_code} - {response.text}") from e
+        except RuntimeError:
+            raise
         except Exception as e:
-            print(f"Request error: {e}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"Request error: {e}") from e
 
     def get(self, endpoint: str) -> Any:
         return self._request("GET", endpoint)
