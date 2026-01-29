@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     lm_studio_url: str
     lm_studio_model: str = ""  # Model ID (optional - LM Studio uses loaded model if empty)
     lm_studio_timeout: int = 120  # 2 Min - sufficient for instruct models
+    lm_studio_context_size: int = 120000  # Context window in tokens (set in LM Studio server config)
 
     # Gaming PC (for Wake-on-LAN) - must be set in .env
     gaming_pc_ip: str

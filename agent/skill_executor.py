@@ -152,9 +152,11 @@ async def _execute_direct(
         else:
             output = ""
 
+        # Pre-truncate to ~2 chars/token of context to leave room for prompt
+        max_output = settings.lm_studio_context_size * 2
         return SkillExecutionResult(
             success=True,
-            output=format_skill_output(output),
+            output=format_skill_output(output, max_chars=max_output),
             skill=skill_name,
             action=intent.action,
         )
@@ -215,14 +217,15 @@ async def _execute_direct(
         )
 
 
-def format_skill_output(output: str) -> str:
+def format_skill_output(output: str, max_chars: int = 100000) -> str:
     """Truncate very large outputs for LLM context limits.
 
-    Qwen3 context is ~32K tokens (~120K chars). We limit to 100K chars
-    to leave room for the formatting prompt and output tokens.
+    Args:
+        output: Raw output string
+        max_chars: Maximum allowed characters (derived from context size)
     """
-    if len(output) > 100000:
-        return output[:99950] + "\n\n... (gekürzt)"
+    if len(output) > max_chars:
+        return output[:max_chars - 50] + "\n\n... (gekürzt)"
     return output.strip()
 
 

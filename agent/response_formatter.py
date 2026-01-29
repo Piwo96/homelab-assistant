@@ -77,9 +77,10 @@ async def format_response(
     await ensure_lm_studio_available(settings)
 
     # Progressive truncation: try with decreasing output sizes.
-    # Qwen3-4B supports 32K context (~96K chars) but may be loaded
-    # with less in LM Studio. Start generous, reduce on context errors.
-    output_limits = [80000, 20000, 6000, 1500]
+    # Calculate limits from configured context size (~3 chars/token,
+    # reserve 30% for system prompt, tools, and response tokens).
+    usable_chars = int(settings.lm_studio_context_size * 3 * 0.7)
+    output_limits = [usable_chars, usable_chars // 4, usable_chars // 16, 1500]
 
     for attempt, output_limit in enumerate(output_limits):
         truncated = raw_output[:output_limit]
