@@ -163,6 +163,143 @@ Warning: NVR storage nearly full
 2. UNVR: Dedicated NVR device
 3. Base paths may differ - check API.md
 
+## Script Errors
+
+### AttributeError on Events/Detections
+```
+AttributeError: 'str' object has no attribute 'get'
+```
+**Cause**: API returned empty response as `{}` instead of expected list `[]`. When iterating over a dict, Python yields string keys, and calling `.get()` on strings fails.
+**Root Issue**: `_protect_request()` returns `response.json() if response.text else {}`, meaning empty responses return dict instead of list.
+**Solution**: Script now validates response types in `get_events()`, `get_cameras()`, and `get_detections()` before iterating. Non-list responses gracefully return empty lists.
+**Pattern**: Always validate API response types before iteration when expecting lists - REST APIs may return dicts for errors/empty responses.
+
+### NVR Uptime Shows Wrong Value
+```
+Example: Shows "30401 Tage" instead of "30 Tage"
+```
+**Cause**: Protect API returns `uptime` field in milliseconds, not seconds. Dividing by 86400 (seconds/day) instead of 86_400_000 (ms/day) produces values 1000x too large.
+**Solution**: Always divide uptime by 86,400,000 to convert ms → days. Similarly for hours: divide by 3,600,000.
+**Pattern**: UniFi APIs commonly use milliseconds for time durations - always verify units in API responses.
+
+## Integration API v1 Issues
+
+### Invalid API Key
+```
+RuntimeError: Protect Integration API: Invalid API key (401)
+```
+**Cause**: API key is invalid, expired, or not set.
+**Solution**:
+1. Check `PROTECT_API_KEY` in `.env`
+2. Regenerate key: UniFi OS > Protect > Settings > Integration API
+3. Ensure key has no extra whitespace
+
+### Feature Requires Legacy API
+```
+RuntimeError: 'events' requires Legacy API (UNIFI_USERNAME + UNIFI_PASSWORD)
+```
+**Cause**: Events/detections are only available via the internal Legacy API. The official Integration API v1 has no REST endpoint for historical events - only WebSocket subscription (`GET /v1/subscribe/events`).
+**Solution**:
+1. Add `UNIFI_USERNAME` and `UNIFI_PASSWORD` to `.env`
+2. Use a LOCAL admin account (not Ubiquiti cloud)
+3. Both credentials together enable Dual mode (recommended)
+
+> **Technical Note**: The Integration API v1 provides events exclusively through WebSocket streaming at `/proxy/protect/integration/v1/subscribe/events`. For querying historical events by time range, camera, or type, the Legacy API REST endpoint `/proxy/protect/api/events` must be used. This is why Dual mode (both credential types) is recommended for full functionality.
+
+### Feature Requires Integration API
+```
+RuntimeError: 'ptz' requires Integration API v1 (PROTECT_API_KEY)
+```
+**Cause**: PTZ, chimes, RTSPS streams, viewers, liveviews, and alarm features require the Integration API v1.
+**Solution**:
+1. Add `PROTECT_API_KEY` to `.env`
+2. Get key: UniFi OS > Protect > Settings > Integration API
+
+### API Mode Detection
+Run `protect_api.py detect` to see current API mode:
+- **dual**: Both APIs available (recommended)
+- **integration**: Only Integration API (no events/detections)
+- **legacy**: Only Legacy API (no new features like PTZ, chimes)
+
+## API Architecture Patterns
+
+### ProtectDualAPI Facade
+The `ProtectDualAPI` class implements a facade pattern that automatically routes requests to the correct API:
+- **Integration API v1** (primary): Official API with API key auth (`X-API-Key` header)
+- **Legacy API** (fallback): Internal API with cookie-based session auth
+
+**Routing logic:**
+- If operation supported by Integration API → use Integration API
+- If operation only in Legacy API (events, detections) → use Legacy API
+- Payloads automatically transformed between API formats
+
+**Pattern benefits:**
+1. Single interface for both APIs
+2. Graceful fallback for missing credentials
+3. Automatic payload translation (light control, NVR endpoints, snapshots)
+4. Clear error messages when required credentials missing
+
+### Why Two APIs?
+
+| Limitation | Impact | Mitigation |
+|------------|--------|------------|
+| Integration v1 has NO REST events endpoint | Cannot query historical events by time/camera/type | Keep Legacy API for `GET /events` |
+| Legacy API lacks new features | No PTZ, chimes, RTSPS, alarm support | Use Integration API for modern features |
+| Different auth mechanisms | API key vs username/password | `ProtectDualAPI` handles both transparently |
+
+**Best practice**: Configure BOTH credential types (Dual mode) for full feature coverage.
+
+## Migration from v1.x to v2.0
+
+### Light Control Payload Changed
+**Before (Legacy)**: `{"lightOnSettings": {"isLedForceOn": true}}`
+**After (Integration)**: `{"isLightForceEnabled": true}`
+**Impact**: Handled automatically by `ProtectDualAPI`. No user action needed.
+
+### Snapshot Parameters Changed
+**Before (Legacy)**: `?w=1920&h=1080&q=80`
+**After (Integration)**: `?highQuality=true`
+**Impact**: `--width` and `--height` CLI flags only work with Legacy API. Integration API uses `highQuality` boolean.
+
+### NVR Endpoint Changed
+**Before (Legacy)**: `GET /nvr` (singular)
+**After (Integration)**: `GET /nvrs` (plural, returns object not list)
+**Impact**: Handled automatically by `ProtectDualAPI.get_nvr()`.
+
+### Authentication Headers Changed
+**Before (Legacy)**: Cookie-based session (`POST /api/auth/login` → session cookie + CSRF token)
+**After (Integration)**: API key header (`X-API-Key: your-api-key`)
+**Impact**: `ProtectDualAPI` maintains separate sessions for each API type.
+
+### Enhanced Response Data
+**Integration API v1 returns richer fields:**
+- **Cameras**: `featureFlags`, `smartDetectSettings`, `osdSettings`, `ledSettings`, `lcdMessage`
+- **Sensors**: `stats` (light/temp/humidity), `leak`, `alarm`, `tampering` data
+- **Lights**: `lightModeSettings`, `lightDeviceSettings`, motion detection state
+
+**Benefit**: More granular control and status information without extra API calls.
+
+## CLI Script Issues
+
+### --json Flag Not Working After Subcommand
+```
+Example: `protect_api.py cameras --json` returns error
+```
+**Cause**: When using argparse with subcommands, flags on the parent parser only apply BEFORE the subcommand (e.g., `--json cameras`). The parser stops processing parent flags once it encounters the subcommand name.
+**Solution**: Add global flags to both parent parser AND each subparser using `parents=[json_parent]`. This allows flags to work in both positions: `--json cameras` AND `cameras --json`.
+**Pattern**: For flags that should work anywhere in the command, define them in a parent parser and pass via `parents=` to all subparsers.
+
+### --last Duration Only Accepts Hours
+```
+Example: `--last 7d` or `--last 30m` returns error
+```
+**Cause**: Original implementation only parsed "h" suffix for hours.
+**Solution**: Script now supports `_parse_duration()` helper that handles:
+- **d** suffix: days (e.g., `--last 7d` = 7 days)
+- **h** suffix: hours (e.g., `--last 24h` = 24 hours)
+- **m** suffix: minutes (e.g., `--last 30m` = 30 minutes)
+**Pattern**: Duration parsing should support common time units (d/h/m) with simple suffix detection for CLI ergonomics.
+
 ---
 
 ## Adding New Issues

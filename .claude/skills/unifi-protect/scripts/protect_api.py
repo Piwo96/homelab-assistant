@@ -2,73 +2,394 @@
 """
 UniFi Protect API Client
 
-Camera and NVR management for UniFi Protect.
-Uses same authentication as UniFi Controller.
+Camera, NVR, sensor, light, chime, and PTZ management for UniFi Protect.
+Supports official Integration API v1 (API key) and Legacy API (session auth).
 
 Usage:
     python protect_api.py cameras
     python protect_api.py snapshot <camera-id>
     python protect_api.py events --last 24h --camera Einfahrt
     python protect_api.py detections --last 6h --camera Einfahrt
+    python protect_api.py chimes
+    python protect_api.py ptz-goto <camera> <slot>
 """
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-# Reuse UniFi API client
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "unifi-network" / "scripts"))
 try:
-    from network_api import UniFiAPI, load_env
+    import requests
+    from requests.packages.urllib3.exceptions import InsecureRequestWarning
+    requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 except ImportError:
-    print("Error: Cannot import UniFi API. Ensure unifi_api.py exists.", file=sys.stderr)
+    print("Error: 'requests' library required. Install with: pip install requests", file=sys.stderr)
     sys.exit(1)
 
 
-class ProtectAPI(UniFiAPI):
-    """UniFi Protect API client extending UniFi API."""
+def load_env():
+    """Load environment variables from .env file if present."""
+    env_paths = [
+        Path.cwd() / ".env",
+        Path.cwd().parent / ".env",
+        Path(__file__).parent.parent.parent.parent.parent / ".env",
+    ]
+    for env_path in env_paths:
+        if env_path.exists():
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, value = line.split("=", 1)
+                        os.environ.setdefault(key.strip(), value.strip())
+            break
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Override base URL for Protect
-        self.protect_base = f"{self.base_url.replace('/proxy/network', '')}/proxy/protect/api"
 
-    def _protect_request(self, method: str, endpoint: str, data: dict = None):
-        """Make Protect API request."""
-        url = f"{self.protect_base}{endpoint}"
-        headers = {}
-        if self.csrf_token and method in ["POST", "PUT", "DELETE", "PATCH"]:
-            headers["X-CSRF-Token"] = self.csrf_token
+# Lazy import for Legacy API parent class (only needed for events fallback)
+_UniFiAPI = None
+
+
+def _get_unifi_api_class():
+    """Lazy-load UniFiAPI from network_api.py (only for Legacy fallback)."""
+    global _UniFiAPI
+    if _UniFiAPI is None:
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "unifi-network" / "scripts"))
+        from network_api import UniFiAPI
+        _UniFiAPI = UniFiAPI
+    return _UniFiAPI
+
+
+# ---------------------------------------------------------------------------
+# Integration API v1 (official, API key auth)
+# ---------------------------------------------------------------------------
+
+class ProtectIntegrationAPI:
+    """UniFi Protect Integration API v1 client.
+
+    Official REST API with API key authentication.
+    Base URL: https://{host}/proxy/protect/integration/v1
+    Auth: X-API-Key header
+    """
+
+    def __init__(self, host: str = None, api_key: str = None, verify_ssl: bool = None):
+        load_env()
+
+        self.host = (host
+                     or os.environ.get("PROTECT_HOST")
+                     or os.environ.get("UNIFI_HOST", "unifi.local"))
+        self.api_key = api_key or os.environ.get("PROTECT_API_KEY")
+
+        verify_env = os.environ.get(
+            "PROTECT_VERIFY_SSL",
+            os.environ.get("UNIFI_VERIFY_SSL", "false"),
+        ).lower()
+        self.verify_ssl = verify_ssl if verify_ssl is not None else verify_env == "true"
+
+        if not self.api_key:
+            raise RuntimeError("PROTECT_API_KEY required for Protect Integration API v1")
+
+        self.host = self.host.replace("http://", "").replace("https://", "")
+        self.base_url = f"https://{self.host}/proxy/protect/integration/v1"
+
+        self.session = requests.Session()
+        self.session.verify = self.verify_ssl
+        self.session.headers.update({
+            "X-API-Key": self.api_key,
+            "Accept": "application/json",
+        })
+
+    def _request(self, method: str, endpoint: str, data: dict = None,
+                 params: dict = None) -> Any:
+        """Make Integration API v1 request."""
+        url = f"{self.base_url}{endpoint}"
+        kwargs: dict[str, Any] = {"timeout": 30}
+        if data is not None:
+            kwargs["json"] = data
+        if params:
+            kwargs["params"] = params
 
         try:
-            response = self.session.request(
+            response = self.session.request(method, url, **kwargs)
+            response.raise_for_status()
+            if response.status_code == 204:
+                return {}
+            if not response.text:
+                return {}
+            content_type = response.headers.get("content-type", "")
+            if "image" in content_type or "octet-stream" in content_type:
+                return response.content
+            return response.json()
+        except requests.exceptions.HTTPError:
+            status = response.status_code
+            try:
+                err = response.json()
+                msg = err.get("error", err.get("message", response.text))
+            except Exception:
+                msg = response.text
+            if status == 401:
+                raise RuntimeError(f"Protect Integration API: Invalid API key (401)")
+            elif status == 403:
+                raise RuntimeError(f"Protect Integration API: Forbidden (403)")
+            elif status == 404:
+                raise RuntimeError(f"Protect Integration API: Not found (404) - {endpoint}")
+            elif status == 429:
+                raise RuntimeError("Protect Integration API: Rate limit exceeded (429)")
+            else:
+                raise RuntimeError(f"Protect Integration API error {status}: {msg}")
+        except requests.exceptions.ConnectionError:
+            raise RuntimeError(f"Cannot connect to Protect Integration API at {self.base_url}")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Protect Integration API request error: {e}") from e
+
+    # --- Meta ---
+
+    def get_meta_info(self) -> dict:
+        """GET /v1/meta/info - Application version info."""
+        return self._request("GET", "/meta/info")
+
+    # --- Cameras ---
+
+    def get_cameras(self) -> list:
+        """GET /v1/cameras - List all cameras."""
+        result = self._request("GET", "/cameras")
+        return result if isinstance(result, list) else []
+
+    def get_camera(self, camera_id: str) -> dict:
+        """GET /v1/cameras/{id} - Camera details."""
+        return self._request("GET", f"/cameras/{camera_id}")
+
+    def update_camera(self, camera_id: str, settings: dict) -> dict:
+        """PATCH /v1/cameras/{id} - Update camera settings."""
+        return self._request("PATCH", f"/cameras/{camera_id}", data=settings)
+
+    def get_snapshot(self, camera_id: str, high_quality: bool = True) -> bytes:
+        """GET /v1/cameras/{id}/snapshot - Get camera snapshot."""
+        params = {}
+        if high_quality:
+            params["highQuality"] = "true"
+        url = f"{self.base_url}/cameras/{camera_id}/snapshot"
+        response = self.session.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        return response.content
+
+    # --- PTZ ---
+
+    def ptz_goto(self, camera_id: str, slot: int) -> dict:
+        """POST /v1/cameras/{id}/ptz/goto/{slot} - Move PTZ to preset."""
+        return self._request("POST", f"/cameras/{camera_id}/ptz/goto/{slot}")
+
+    def ptz_patrol_start(self, camera_id: str, slot: int) -> dict:
+        """POST /v1/cameras/{id}/ptz/patrol/start/{slot} - Start PTZ patrol."""
+        return self._request("POST", f"/cameras/{camera_id}/ptz/patrol/start/{slot}")
+
+    def ptz_patrol_stop(self, camera_id: str) -> dict:
+        """POST /v1/cameras/{id}/ptz/patrol/stop - Stop PTZ patrol."""
+        return self._request("POST", f"/cameras/{camera_id}/ptz/patrol/stop")
+
+    # --- RTSPS Streams ---
+
+    def create_rtsps_stream(self, camera_id: str, qualities: list = None) -> dict:
+        """POST /v1/cameras/{id}/rtsps-stream - Create RTSPS streams."""
+        data = {"qualities": qualities or ["high"]}
+        return self._request("POST", f"/cameras/{camera_id}/rtsps-stream", data=data)
+
+    def get_rtsps_streams(self, camera_id: str) -> dict:
+        """GET /v1/cameras/{id}/rtsps-stream - Get existing streams."""
+        return self._request("GET", f"/cameras/{camera_id}/rtsps-stream")
+
+    def delete_rtsps_stream(self, camera_id: str, qualities: list = None) -> dict:
+        """DELETE /v1/cameras/{id}/rtsps-stream - Delete streams."""
+        params = {}
+        if qualities:
+            params["qualities"] = ",".join(qualities)
+        return self._request("DELETE", f"/cameras/{camera_id}/rtsps-stream", params=params)
+
+    # --- Talkback (API only) ---
+
+    def create_talkback_session(self, camera_id: str) -> dict:
+        """POST /v1/cameras/{id}/talkback-session - Create talkback session."""
+        return self._request("POST", f"/cameras/{camera_id}/talkback-session")
+
+    # --- NVR ---
+
+    def get_nvrs(self) -> Any:
+        """GET /v1/nvrs - NVR details (returns object, not list)."""
+        return self._request("GET", "/nvrs")
+
+    # --- Sensors ---
+
+    def get_sensors(self) -> list:
+        """GET /v1/sensors - List all sensors."""
+        result = self._request("GET", "/sensors")
+        return result if isinstance(result, list) else []
+
+    def get_sensor(self, sensor_id: str) -> dict:
+        """GET /v1/sensors/{id} - Sensor details."""
+        return self._request("GET", f"/sensors/{sensor_id}")
+
+    def update_sensor(self, sensor_id: str, settings: dict) -> dict:
+        """PATCH /v1/sensors/{id} - Update sensor settings."""
+        return self._request("PATCH", f"/sensors/{sensor_id}", data=settings)
+
+    # --- Lights ---
+
+    def get_lights(self) -> list:
+        """GET /v1/lights - List all lights."""
+        result = self._request("GET", "/lights")
+        return result if isinstance(result, list) else []
+
+    def get_light(self, light_id: str) -> dict:
+        """GET /v1/lights/{id} - Light details."""
+        return self._request("GET", f"/lights/{light_id}")
+
+    def control_light(self, light_id: str, on: bool) -> dict:
+        """PATCH /v1/lights/{id} - Turn light on/off."""
+        return self._request("PATCH", f"/lights/{light_id}",
+                             data={"isLightForceEnabled": on})
+
+    def update_light(self, light_id: str, settings: dict) -> dict:
+        """PATCH /v1/lights/{id} - Update light settings."""
+        return self._request("PATCH", f"/lights/{light_id}", data=settings)
+
+    # --- Chimes ---
+
+    def get_chimes(self) -> list:
+        """GET /v1/chimes - List all chimes."""
+        result = self._request("GET", "/chimes")
+        return result if isinstance(result, list) else []
+
+    def get_chime(self, chime_id: str) -> dict:
+        """GET /v1/chimes/{id} - Chime details."""
+        return self._request("GET", f"/chimes/{chime_id}")
+
+    def update_chime(self, chime_id: str, settings: dict) -> dict:
+        """PATCH /v1/chimes/{id} - Update chime settings."""
+        return self._request("PATCH", f"/chimes/{chime_id}", data=settings)
+
+    # --- Viewers ---
+
+    def get_viewers(self) -> list:
+        """GET /v1/viewers - List all viewers."""
+        result = self._request("GET", "/viewers")
+        return result if isinstance(result, list) else []
+
+    def get_viewer(self, viewer_id: str) -> dict:
+        """GET /v1/viewers/{id} - Viewer details."""
+        return self._request("GET", f"/viewers/{viewer_id}")
+
+    def update_viewer(self, viewer_id: str, settings: dict) -> dict:
+        """PATCH /v1/viewers/{id} - Update viewer settings."""
+        return self._request("PATCH", f"/viewers/{viewer_id}", data=settings)
+
+    # --- Liveviews ---
+
+    def get_liveviews(self) -> list:
+        """GET /v1/liveviews - List all live views."""
+        result = self._request("GET", "/liveviews")
+        return result if isinstance(result, list) else []
+
+    def get_liveview(self, liveview_id: str) -> dict:
+        """GET /v1/liveviews/{id} - Live view details."""
+        return self._request("GET", f"/liveviews/{liveview_id}")
+
+    def create_liveview(self, config: dict) -> dict:
+        """POST /v1/liveviews - Create a new live view."""
+        return self._request("POST", "/liveviews", data=config)
+
+    def update_liveview(self, liveview_id: str, settings: dict) -> dict:
+        """PATCH /v1/liveviews/{id} - Update live view configuration."""
+        return self._request("PATCH", f"/liveviews/{liveview_id}", data=settings)
+
+    # --- Alarm ---
+
+    def trigger_alarm(self, webhook_id: str) -> dict:
+        """POST /v1/alarm-manager/webhook/{id} - Trigger alarm webhook."""
+        return self._request("POST", f"/alarm-manager/webhook/{webhook_id}")
+
+    # --- Files (API only) ---
+
+    def get_files(self, file_type: str) -> list:
+        """GET /v1/files/{fileType} - List device asset files."""
+        result = self._request("GET", f"/files/{file_type}")
+        return result if isinstance(result, list) else []
+
+
+# ---------------------------------------------------------------------------
+# Legacy API (internal, session/cookie auth) - for events/detections
+# ---------------------------------------------------------------------------
+
+class ProtectLegacyAPI:
+    """UniFi Protect Legacy API client (internal API, session auth).
+
+    Used as fallback for events/detections which are not available
+    in the official Integration API v1.
+
+    Base URL: https://{host}/proxy/protect/api
+    Auth: Cookie-based session + CSRF token (via UniFiAPI parent)
+    """
+
+    def __init__(self, host: str = None, username: str = None,
+                 password: str = None, verify_ssl: bool = None):
+        UniFiAPI = _get_unifi_api_class()
+        load_env()
+
+        _host = (host
+                 or os.environ.get("PROTECT_HOST")
+                 or os.environ.get("UNIFI_HOST", "unifi.local"))
+        _username = username or os.environ.get("UNIFI_USERNAME")
+        _password = password or os.environ.get("UNIFI_PASSWORD")
+
+        verify_env = os.environ.get(
+            "PROTECT_VERIFY_SSL",
+            os.environ.get("UNIFI_VERIFY_SSL", "false"),
+        ).lower()
+        _verify = verify_ssl if verify_ssl is not None else verify_env == "true"
+
+        # Initialize parent UniFiAPI for session management
+        self._api = UniFiAPI(
+            host=_host, username=_username,
+            password=_password, verify_ssl=_verify,
+        )
+        self.protect_base = f"{self._api.base_url.replace('/proxy/network', '')}/proxy/protect/api"
+        self.controller_type = self._api.controller_type
+
+    def _protect_request(self, method: str, endpoint: str, data: dict = None):
+        """Make Protect Legacy API request."""
+        url = f"{self.protect_base}{endpoint}"
+        headers = {}
+        if self._api.csrf_token and method in ["POST", "PUT", "DELETE", "PATCH"]:
+            headers["X-CSRF-Token"] = self._api.csrf_token
+
+        try:
+            response = self._api.session.request(
                 method, url, headers=headers, json=data, timeout=30
             )
             response.raise_for_status()
             return response.json() if response.text else {}
         except Exception as e:
-            raise RuntimeError(f"Protect API error: {e}") from e
+            raise RuntimeError(f"Protect Legacy API error: {e}") from e
 
-    def get_cameras(self):
+    def get_cameras(self) -> list:
         """Get all cameras."""
         result = self._protect_request("GET", "/cameras")
-        if isinstance(result, list):
-            return result
-        return []
+        return result if isinstance(result, list) else []
 
-    def get_camera(self, camera_id: str):
+    def get_camera(self, camera_id: str) -> dict:
         """Get camera details."""
         return self._protect_request("GET", f"/cameras/{camera_id}")
 
-    def update_camera(self, camera_id: str, settings: dict):
+    def update_camera(self, camera_id: str, settings: dict) -> dict:
         """Update camera settings."""
         return self._protect_request("PATCH", f"/cameras/{camera_id}", settings)
 
-    def get_snapshot(self, camera_id: str, width: int = None, height: int = None):
+    def get_snapshot(self, camera_id: str, width: int = None, height: int = None) -> bytes:
         """Get camera snapshot (returns binary data)."""
         params = []
         if width:
@@ -78,10 +399,11 @@ class ProtectAPI(UniFiAPI):
         query = f"?{'&'.join(params)}" if params else ""
 
         url = f"{self.protect_base}/cameras/{camera_id}/snapshot{query}"
-        response = self.session.get(url, timeout=10)
+        response = self._api.session.get(url, timeout=10)
         return response.content
 
-    def get_events(self, start: int = None, end: int = None, types: list = None, camera_id: str = None):
+    def get_events(self, start: int = None, end: int = None,
+                   types: list = None, camera_id: str = None) -> list:
         """Get events, optionally filtered by camera."""
         params = []
         if start:
@@ -94,7 +416,6 @@ class ProtectAPI(UniFiAPI):
 
         result = self._protect_request("GET", f"/events{query}")
 
-        # Ensure we have a list (API may return dict on error or empty response)
         if isinstance(result, list):
             events = result
         elif isinstance(result, dict) and "data" in result and isinstance(result["data"], list):
@@ -102,23 +423,280 @@ class ProtectAPI(UniFiAPI):
         else:
             return []
 
-        # Filter by camera if specified
         if camera_id:
             events = [e for e in events if isinstance(e, dict) and e.get("camera") == camera_id]
 
         return events
 
+    def get_nvr(self) -> dict:
+        """Get NVR information."""
+        return self._protect_request("GET", "/nvr")
+
+    def get_sensors(self) -> list:
+        """Get all sensors."""
+        result = self._protect_request("GET", "/sensors")
+        return result if isinstance(result, list) else []
+
+    def get_lights(self) -> list:
+        """Get all lights."""
+        result = self._protect_request("GET", "/lights")
+        return result if isinstance(result, list) else []
+
+    def control_light(self, light_id: str, on: bool) -> dict:
+        """Turn light on/off (legacy payload)."""
+        return self._protect_request("PATCH", f"/lights/{light_id}",
+                                     {"lightOnSettings": {"isLedForceOn": on}})
+
+
+# Backward compatibility alias
+ProtectAPI = ProtectLegacyAPI
+
+
+# ---------------------------------------------------------------------------
+# Dual API facade (Integration primary, Legacy fallback for events)
+# ---------------------------------------------------------------------------
+
+class ProtectDualAPI:
+    """Dual-API facade: Integration API v1 (primary) + Legacy (fallback for events).
+
+    Credential routing:
+    - PROTECT_API_KEY only                     -> Integration only (no events)
+    - UNIFI_USERNAME + UNIFI_PASSWORD only      -> Legacy only (current behavior)
+    - Both                                      -> Integration primary, Legacy for events
+    """
+
+    def __init__(self, host: str = None, username: str = None, password: str = None,
+                 api_key: str = None, verify_ssl: bool = None):
+        load_env()
+
+        self.host = (host
+                     or os.environ.get("PROTECT_HOST")
+                     or os.environ.get("UNIFI_HOST", "unifi.local"))
+        _api_key = api_key or os.environ.get("PROTECT_API_KEY")
+        _username = username or os.environ.get("UNIFI_USERNAME")
+        _password = password or os.environ.get("UNIFI_PASSWORD")
+
+        verify_env = os.environ.get(
+            "PROTECT_VERIFY_SSL",
+            os.environ.get("UNIFI_VERIFY_SSL", "false"),
+        ).lower()
+        _verify = verify_ssl if verify_ssl is not None else verify_env == "true"
+
+        self._integration: Optional[ProtectIntegrationAPI] = None
+        self._legacy: Optional[ProtectLegacyAPI] = None
+
+        if _api_key:
+            self._integration = ProtectIntegrationAPI(
+                host=self.host, api_key=_api_key, verify_ssl=_verify)
+
+        if _username and _password:
+            self._legacy = ProtectLegacyAPI(
+                host=self.host, username=_username,
+                password=_password, verify_ssl=_verify)
+
+        if not self._integration and not self._legacy:
+            raise RuntimeError(
+                "No Protect credentials configured. Set either:\n"
+                "  PROTECT_API_KEY (Integration API v1) or\n"
+                "  UNIFI_USERNAME + UNIFI_PASSWORD (Legacy API) or\n"
+                "  Both (Dual mode - recommended)")
+
+        if self._integration and self._legacy:
+            self.api_mode = "dual"
+        elif self._integration:
+            self.api_mode = "integration"
+        else:
+            self.api_mode = "legacy"
+
+    @property
+    def has_integration(self) -> bool:
+        return self._integration is not None
+
+    @property
+    def has_legacy(self) -> bool:
+        return self._legacy is not None
+
+    def _require_legacy(self, feature: str) -> ProtectLegacyAPI:
+        if not self._legacy:
+            raise RuntimeError(
+                f"'{feature}' requires Legacy API (UNIFI_USERNAME + UNIFI_PASSWORD). "
+                f"Events/Detections are not available in the Integration API v1.")
+        return self._legacy
+
+    def _require_integration(self, feature: str) -> ProtectIntegrationAPI:
+        if not self._integration:
+            raise RuntimeError(
+                f"'{feature}' requires Integration API v1 (PROTECT_API_KEY)")
+        return self._integration
+
+    # --- Dual-routed (prefer Integration) ---
+
+    def get_cameras(self) -> list:
+        if self.has_integration:
+            return self._integration.get_cameras()
+        return self._legacy.get_cameras()
+
+    def get_camera(self, camera_id: str) -> dict:
+        if self.has_integration:
+            return self._integration.get_camera(camera_id)
+        return self._legacy.get_camera(camera_id)
+
+    def update_camera(self, camera_id: str, settings: dict) -> dict:
+        if self.has_integration:
+            return self._integration.update_camera(camera_id, settings)
+        return self._legacy.update_camera(camera_id, settings)
+
+    def get_snapshot(self, camera_id: str, width: int = None, height: int = None,
+                     high_quality: bool = True) -> bytes:
+        if self.has_integration:
+            return self._integration.get_snapshot(camera_id, high_quality)
+        return self._legacy.get_snapshot(camera_id, width, height)
+
+    def get_nvr(self) -> dict:
+        """Route to nvrs (Integration) or nvr (Legacy)."""
+        if self.has_integration:
+            result = self._integration.get_nvrs()
+            if isinstance(result, list):
+                return result[0] if result else {}
+            return result if isinstance(result, dict) else {}
+        return self._legacy.get_nvr()
+
+    def get_sensors(self) -> list:
+        if self.has_integration:
+            return self._integration.get_sensors()
+        return self._legacy.get_sensors()
+
+    def get_lights(self) -> list:
+        if self.has_integration:
+            return self._integration.get_lights()
+        return self._legacy.get_lights()
+
+    def control_light(self, light_id: str, on: bool) -> dict:
+        if self.has_integration:
+            return self._integration.control_light(light_id, on)
+        return self._legacy.control_light(light_id, on)
+
+    # --- Legacy-only (events not in Integration API) ---
+
+    def get_events(self, start: int = None, end: int = None,
+                   types: list = None, camera_id: str = None) -> list:
+        return self._require_legacy("events").get_events(start, end, types, camera_id)
+
+    def get_detections(self, start: int = None, end: int = None,
+                       camera_id: str = None, detection_type: str = None) -> list:
+        """Get smart detections (license plates, faces, vehicles, persons)."""
+        legacy = self._require_legacy("detections")
+        events = legacy.get_events(start, end, types=["smartDetectZone"], camera_id=camera_id)
+        detections = []
+
+        for event in events:
+            if not isinstance(event, dict) or "start" not in event:
+                continue
+            ts = datetime.fromtimestamp(event["start"] / 1000)
+            metadata = event.get("metadata", {})
+            thumbnails = metadata.get("detectedThumbnails", [])
+
+            for thumb in thumbnails:
+                det_type = thumb.get("type")
+
+                if detection_type:
+                    if detection_type == "plate" and det_type != "vehicle":
+                        continue
+                    if detection_type == "face" and det_type != "face":
+                        continue
+                    if detection_type == "vehicle" and det_type != "vehicle":
+                        continue
+                    if detection_type == "person" and det_type != "person":
+                        continue
+
+                detection = {
+                    "time": ts.strftime("%Y-%m-%d %H:%M"),
+                    "type": det_type,
+                    "confidence": thumb.get("confidence", 0),
+                }
+
+                if det_type == "vehicle" and thumb.get("name"):
+                    detection["plate"] = thumb.get("name")
+                    attrs = thumb.get("attributes", {})
+                    detection["vehicle_type"] = attrs.get("vehicleType", {}).get("val", "unknown")
+                    detection["color"] = attrs.get("color", {}).get("val", "unknown")
+                    detections.append(detection)
+                elif det_type == "face":
+                    attrs = thumb.get("attributes", {})
+                    detection["has_mask"] = attrs.get("faceMask", {}).get("val") == "mask"
+                    detections.append(detection)
+                elif det_type == "person" and detection_type in (None, "person"):
+                    detections.append(detection)
+
+        return detections
+
+    # --- Integration-only (new features) ---
+
+    def get_meta_info(self) -> dict:
+        return self._require_integration("meta").get_meta_info()
+
+    def get_chimes(self) -> list:
+        return self._require_integration("chimes").get_chimes()
+
+    def get_chime(self, chime_id: str) -> dict:
+        return self._require_integration("chime").get_chime(chime_id)
+
+    def update_chime(self, chime_id: str, settings: dict) -> dict:
+        return self._require_integration("chime").update_chime(chime_id, settings)
+
+    def ptz_goto(self, camera_id: str, slot: int) -> dict:
+        return self._require_integration("ptz").ptz_goto(camera_id, slot)
+
+    def ptz_patrol_start(self, camera_id: str, slot: int) -> dict:
+        return self._require_integration("ptz").ptz_patrol_start(camera_id, slot)
+
+    def ptz_patrol_stop(self, camera_id: str) -> dict:
+        return self._require_integration("ptz").ptz_patrol_stop(camera_id)
+
+    def create_rtsps_stream(self, camera_id: str, qualities: list = None) -> dict:
+        return self._require_integration("rtsps").create_rtsps_stream(camera_id, qualities)
+
+    def get_rtsps_streams(self, camera_id: str) -> dict:
+        return self._require_integration("rtsps").get_rtsps_streams(camera_id)
+
+    def delete_rtsps_stream(self, camera_id: str, qualities: list = None) -> dict:
+        return self._require_integration("rtsps").delete_rtsps_stream(camera_id, qualities)
+
+    def get_viewers(self) -> list:
+        return self._require_integration("viewers").get_viewers()
+
+    def get_viewer(self, viewer_id: str) -> dict:
+        return self._require_integration("viewer").get_viewer(viewer_id)
+
+    def get_liveviews(self) -> list:
+        return self._require_integration("liveviews").get_liveviews()
+
+    def get_liveview(self, liveview_id: str) -> dict:
+        return self._require_integration("liveview").get_liveview(liveview_id)
+
+    def trigger_alarm(self, webhook_id: str) -> dict:
+        return self._require_integration("alarm").trigger_alarm(webhook_id)
+
+    def get_sensor(self, sensor_id: str) -> dict:
+        return self._require_integration("sensor").get_sensor(sensor_id)
+
+    def update_sensor(self, sensor_id: str, settings: dict) -> dict:
+        return self._require_integration("sensor").update_sensor(sensor_id, settings)
+
+    def get_light(self, light_id: str) -> dict:
+        return self._require_integration("light").get_light(light_id)
+
+    def update_light(self, light_id: str, settings: dict) -> dict:
+        return self._require_integration("light").update_light(light_id, settings)
+
+    # --- Fuzzy camera name matching ---
+
     @staticmethod
     def _normalize_name(name: str) -> str:
-        """Normalize a camera name for fuzzy comparison.
-
-        Strips underscores, hyphens, apostrophes and extra whitespace,
-        then lowercases so that 'Mailas_Zimmer', 'Maila's Zimmer',
-        'mailas-zimmer' and 'Mailas Zimmer' all match.
-        """
+        """Normalize a camera name for fuzzy comparison."""
         name = name.lower()
-        name = re.sub(r"[_\-'`´']", " ", name)
-        return " ".join(name.split())  # collapse whitespace
+        name = re.sub(r"[_\-'`\u00b4\u2019]", " ", name)
+        return " ".join(name.split())
 
     def resolve_camera_id(self, camera_ref: str) -> Optional[str]:
         """Resolve camera name to ID with fuzzy matching.
@@ -135,11 +713,10 @@ class ProtectAPI(UniFiAPI):
         cameras = self.get_cameras()
         ref_normalized = self._normalize_name(camera_ref)
 
-        # Build lookup structures
-        id_map = {}        # id -> id
-        exact_map = {}     # lower name -> id
-        norm_map = {}      # normalized name -> id
-        name_list = []     # all normalized names for difflib
+        id_map = {}
+        exact_map = {}
+        norm_map = {}
+        name_list = []
 
         for cam in cameras:
             cam_id = cam.get("id", "")
@@ -173,93 +750,17 @@ class ProtectAPI(UniFiAPI):
         if close:
             return norm_map[close[0]]
 
-        # Not found - return None with available cameras for error context
         available = [cam.get("name", "Unnamed") for cam in cameras]
         print(f"Camera not found: {camera_ref}", file=sys.stderr)
         print(f"Available cameras: {', '.join(available)}", file=sys.stderr)
         return None
 
-    def get_detections(self, start: int = None, end: int = None, camera_id: str = None,
-                       detection_type: str = None) -> list:
-        """Get smart detections (license plates, faces, vehicles, persons).
 
-        Args:
-            start: Start timestamp in ms
-            end: End timestamp in ms
-            camera_id: Filter by camera ID
-            detection_type: Filter by type (plate, face, vehicle, person)
+# ---------------------------------------------------------------------------
+# Programmatic API (execute function)
+# ---------------------------------------------------------------------------
 
-        Returns:
-            List of detection dicts with time, type, details
-        """
-        events = self.get_events(start, end, types=["smartDetectZone"], camera_id=camera_id)
-        detections = []
-
-        for event in events:
-            if not isinstance(event, dict) or "start" not in event:
-                continue
-            ts = datetime.fromtimestamp(event["start"] / 1000)
-            metadata = event.get("metadata", {})
-            thumbnails = metadata.get("detectedThumbnails", [])
-
-            for thumb in thumbnails:
-                det_type = thumb.get("type")
-
-                # Skip if filtering by type and doesn't match
-                if detection_type:
-                    if detection_type == "plate" and det_type != "vehicle":
-                        continue
-                    if detection_type == "face" and det_type != "face":
-                        continue
-                    if detection_type == "vehicle" and det_type != "vehicle":
-                        continue
-                    if detection_type == "person" and det_type != "person":
-                        continue
-
-                detection = {
-                    "time": ts.strftime("%Y-%m-%d %H:%M"),
-                    "type": det_type,
-                    "confidence": thumb.get("confidence", 0),
-                }
-
-                # Extract license plate info
-                if det_type == "vehicle" and thumb.get("name"):
-                    detection["plate"] = thumb.get("name")
-                    attrs = thumb.get("attributes", {})
-                    detection["vehicle_type"] = attrs.get("vehicleType", {}).get("val", "unknown")
-                    detection["color"] = attrs.get("color", {}).get("val", "unknown")
-                    detections.append(detection)
-
-                # Extract face info
-                elif det_type == "face":
-                    attrs = thumb.get("attributes", {})
-                    detection["has_mask"] = attrs.get("faceMask", {}).get("val") == "mask"
-                    detections.append(detection)
-
-                # Extract person (only if not filtering for plates/faces)
-                elif det_type == "person" and detection_type in (None, "person"):
-                    detections.append(detection)
-
-        return detections
-
-    def get_nvr(self):
-        """Get NVR information."""
-        return self._protect_request("GET", "/nvr")
-
-    def get_sensors(self):
-        """Get all sensors."""
-        return self._protect_request("GET", "/sensors")
-
-    def get_lights(self):
-        """Get all lights."""
-        return self._protect_request("GET", "/lights")
-
-    def control_light(self, light_id: str, on: bool):
-        """Turn light on/off."""
-        return self._protect_request("PATCH", f"/lights/{light_id}", {"lightOnSettings": {"isLedForceOn": on}})
-
-
-def execute(action: str, args: dict):
+def execute(action: str, args: dict) -> Any:
     """Execute a UniFi Protect action directly (no CLI).
 
     Args:
@@ -273,18 +774,22 @@ def execute(action: str, args: dict):
         ValueError: Unknown action
         KeyError: Missing required argument
     """
-    api = ProtectAPI()
+    api = ProtectDualAPI()
 
+    # --- Camera commands ---
     if action == "cameras":
         return api.get_cameras()
     elif action == "camera":
         return api.get_camera(args["id"])
     elif action == "snapshot":
-        data = api.get_snapshot(args["id"], args.get("width"), args.get("height"))
+        data = api.get_snapshot(args["id"], args.get("width"), args.get("height"),
+                                high_quality=args.get("high_quality", True))
         output = args.get("output") or f"snapshot_{args['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         with open(output, "wb") as f:
             f.write(data)
         return {"file": output, "size": len(data)}
+
+    # --- Event commands (Legacy API) ---
     elif action == "events":
         hours = int(args.get("last", "24h").replace("h", ""))
         end = int(datetime.now().timestamp() * 1000)
@@ -297,8 +802,7 @@ def execute(action: str, args: dict):
                 raise ValueError(f"Camera not found: {args['camera']}")
         events = api.get_events(start, end, types, camera_id)
         limit = int(args["limit"]) if args.get("limit") else 20
-        events = events[:limit]
-        return events
+        return events[:limit]
     elif action == "detections":
         hours = int(args.get("last", "6h").replace("h", ""))
         end = int(datetime.now().timestamp() * 1000)
@@ -310,8 +814,9 @@ def execute(action: str, args: dict):
                 raise ValueError(f"Camera not found: {args['camera']}")
         detections = api.get_detections(start, end, camera_id, args.get("type"))
         limit = int(args["limit"]) if args.get("limit") else 20
-        detections = detections[:limit]
-        return detections
+        return detections[:limit]
+
+    # --- Device commands ---
     elif action == "nvr":
         return api.get_nvr()
     elif action == "sensors":
@@ -322,52 +827,152 @@ def execute(action: str, args: dict):
         return api.control_light(args["id"], True)
     elif action == "light-off":
         return api.control_light(args["id"], False)
+
+    # --- New Integration API commands ---
+    elif action == "meta":
+        return api.get_meta_info()
+    elif action == "chimes":
+        return api.get_chimes()
+    elif action == "chime":
+        return api.get_chime(args["id"])
+    elif action == "ptz-goto":
+        camera_id = api.resolve_camera_id(args["camera"]) if not args.get("camera", "").startswith("6") else args["camera"]
+        if args.get("camera") and not camera_id:
+            camera_id = api.resolve_camera_id(args["camera"])
+        if not camera_id:
+            raise ValueError(f"Camera not found: {args.get('camera')}")
+        return api.ptz_goto(camera_id, int(args["slot"]))
+    elif action == "ptz-patrol-start":
+        camera_id = api.resolve_camera_id(args["camera"])
+        if not camera_id:
+            raise ValueError(f"Camera not found: {args['camera']}")
+        return api.ptz_patrol_start(camera_id, int(args["slot"]))
+    elif action == "ptz-patrol-stop":
+        camera_id = api.resolve_camera_id(args["camera"])
+        if not camera_id:
+            raise ValueError(f"Camera not found: {args['camera']}")
+        return api.ptz_patrol_stop(camera_id)
+    elif action == "rtsps-stream":
+        return api.create_rtsps_stream(args["id"])
+    elif action == "rtsps-streams":
+        return api.get_rtsps_streams(args["id"])
+    elif action == "rtsps-stream-delete":
+        return api.delete_rtsps_stream(args["id"])
+    elif action == "viewers":
+        return api.get_viewers()
+    elif action == "liveviews":
+        return api.get_liveviews()
+    elif action == "alarm":
+        return api.trigger_alarm(args["id"])
+    elif action == "detect":
+        return {"api_mode": api.api_mode,
+                "has_integration": api.has_integration,
+                "has_legacy": api.has_legacy}
     else:
         raise ValueError(f"Unknown action: {action}")
 
 
+# ---------------------------------------------------------------------------
+# CLI (main function)
+# ---------------------------------------------------------------------------
+
+def _parse_duration(duration_str: str) -> int:
+    """Parse duration string like '24h', '7d', '30m' into hours."""
+    s = duration_str.strip().lower()
+    if s.endswith("d"):
+        return int(s[:-1]) * 24
+    elif s.endswith("m"):
+        return max(1, int(s[:-1]) // 60)
+    else:
+        return int(s.rstrip("h"))
+
+
 def main():
-    parser = argparse.ArgumentParser(description="UniFi Protect API Client")
-    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    # Shared parent parser so --json works before or after subcommand
+    json_parent = argparse.ArgumentParser(add_help=False)
+    json_parent.add_argument("--json", action="store_true", help="Output as JSON")
+
+    parser = argparse.ArgumentParser(description="UniFi Protect API Client", parents=[json_parent])
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
+    _p = lambda *a, **kw: subparsers.add_parser(*a, parents=[json_parent], **kw)
 
-    # Cameras
-    subparsers.add_parser("cameras", help="List all cameras")
+    # --- Info ---
+    _p("detect", help="Show API mode and connection status")
+    _p("meta", help="Application version info")
 
-    camera = subparsers.add_parser("camera", help="Get camera details")
+    # --- Cameras ---
+    _p("cameras", help="List all cameras")
+
+    camera = _p("camera", help="Get camera details")
     camera.add_argument("id", help="Camera ID")
 
-    snapshot = subparsers.add_parser("snapshot", help="Get camera snapshot")
+    snapshot = _p("snapshot", help="Get camera snapshot")
     snapshot.add_argument("id", help="Camera ID")
     snapshot.add_argument("--output", "-o", help="Output file (default: snapshot.jpg)")
-    snapshot.add_argument("--width", type=int, help="Width")
-    snapshot.add_argument("--height", type=int, help="Height")
+    snapshot.add_argument("--width", type=int, help="Width (legacy API)")
+    snapshot.add_argument("--height", type=int, help="Height (legacy API)")
 
-    # Events
-    events = subparsers.add_parser("events", help="List events")
+    # --- Events ---
+    events = _p("events", help="List events (requires Legacy API)")
     events.add_argument("--last", help="Last N hours (e.g., 24h, 1h)", default="24h")
     events.add_argument("--types", help="Event types (comma-separated: motion,ring)")
     events.add_argument("--camera", help="Filter by camera name or ID")
     events.add_argument("--limit", type=int, help="Limit number of events returned")
 
-    # Smart Detections
-    detections = subparsers.add_parser("detections", help="List smart detections (plates, faces, vehicles)")
+    # --- Smart Detections ---
+    detections = _p("detections", help="Smart detections (requires Legacy API)")
     detections.add_argument("--last", help="Last N hours (e.g., 24h, 1h)", default="6h")
     detections.add_argument("--camera", help="Filter by camera name or ID")
     detections.add_argument("--type", choices=["plate", "face", "vehicle", "person"],
                             help="Filter by detection type")
 
-    # Devices
-    subparsers.add_parser("nvr", help="NVR information")
-    subparsers.add_parser("sensors", help="List sensors")
-    subparsers.add_parser("lights", help="List lights")
+    # --- Devices ---
+    _p("nvr", help="NVR information")
+    _p("sensors", help="List sensors")
+    _p("lights", help="List lights")
 
-    light_on = subparsers.add_parser("light-on", help="Turn light on")
+    light_on = _p("light-on", help="Turn light on")
     light_on.add_argument("id", help="Light ID")
 
-    light_off = subparsers.add_parser("light-off", help="Turn light off")
+    light_off = _p("light-off", help="Turn light off")
     light_off.add_argument("id", help="Light ID")
+
+    # --- Chimes ---
+    _p("chimes", help="List chimes/doorbells")
+
+    chime = _p("chime", help="Get chime details")
+    chime.add_argument("id", help="Chime ID")
+
+    # --- PTZ ---
+    ptz_goto = _p("ptz-goto", help="Move PTZ camera to preset")
+    ptz_goto.add_argument("camera", help="Camera name or ID")
+    ptz_goto.add_argument("slot", type=int, help="Preset slot (0-4)")
+
+    ptz_start = _p("ptz-patrol-start", help="Start PTZ patrol")
+    ptz_start.add_argument("camera", help="Camera name or ID")
+    ptz_start.add_argument("slot", type=int, help="Patrol slot (0-4)")
+
+    ptz_stop = _p("ptz-patrol-stop", help="Stop PTZ patrol")
+    ptz_stop.add_argument("camera", help="Camera name or ID")
+
+    # --- RTSPS Streams ---
+    rtsps = _p("rtsps-stream", help="Create RTSPS stream")
+    rtsps.add_argument("id", help="Camera ID")
+
+    rtsps_list = _p("rtsps-streams", help="Get RTSPS streams")
+    rtsps_list.add_argument("id", help="Camera ID")
+
+    rtsps_del = _p("rtsps-stream-delete", help="Delete RTSPS stream")
+    rtsps_del.add_argument("id", help="Camera ID")
+
+    # --- Viewers & Liveviews ---
+    _p("viewers", help="List viewers")
+    _p("liveviews", help="List live views")
+
+    # --- Alarm ---
+    alarm = _p("alarm", help="Trigger alarm webhook")
+    alarm.add_argument("id", help="Webhook ID")
 
     args = parser.parse_args()
 
@@ -375,12 +980,35 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    api = ProtectAPI()
-    print(f"Connected to Protect ({api.controller_type})", file=sys.stderr)
+    api = ProtectDualAPI()
+    mode_label = {
+        "dual": "Dual (Integration + Legacy)",
+        "integration": "Integration API v1",
+        "legacy": "Legacy API",
+    }
+    print(f"Connected to Protect ({mode_label.get(api.api_mode, api.api_mode)})", file=sys.stderr)
 
     result = None
 
-    if args.command == "cameras":
+    # --- detect ---
+    if args.command == "detect":
+        print(f"API Mode: {api.api_mode}")
+        print(f"Integration API: {'Ja' if api.has_integration else 'Nein'}")
+        print(f"Legacy API: {'Ja' if api.has_legacy else 'Nein'}")
+        return
+
+    # --- meta ---
+    elif args.command == "meta":
+        info = api.get_meta_info()
+        if args.json:
+            result = info
+        else:
+            print("ℹ️  **Protect Info**\n")
+            print(f"   Version: {info.get('applicationVersion', 'Unbekannt')}")
+            return
+
+    # --- cameras ---
+    elif args.command == "cameras":
         cameras = api.get_cameras()
         if args.json:
             result = cameras
@@ -393,26 +1021,22 @@ def main():
             for cam in cameras:
                 name = cam.get("name", "Unbekannt")
                 state = cam.get("state", "unknown")
-                is_recording = cam.get("isRecording", False)
                 is_connected = state == "CONNECTED"
-
                 status_icon = "🟢" if is_connected else "🔴"
-                rec_icon = "⏺️" if is_recording else ""
 
-                # Get resolution
-                channels = cam.get("channels", [])
-                resolution = ""
-                if channels:
-                    ch = channels[0]
-                    resolution = f"{ch.get('width', '?')}x{ch.get('height', '?')}"
+                print(f"{status_icon} **{name}**")
+                print(f"   ID: {cam.get('id', '?')}")
+                print(f"   Modell: {cam.get('modelKey', cam.get('type', 'Unbekannt'))}")
 
-                print(f"{status_icon} **{name}** {rec_icon}")
-                print(f"   Modell: {cam.get('type', 'Unbekannt')}")
-                if resolution:
-                    print(f"   Auflösung: {resolution}")
+                # Show smart detect types if available
+                features = cam.get("featureFlags", {})
+                smart_types = features.get("smartDetectTypes", [])
+                if smart_types:
+                    print(f"   Smart-Erkennung: {', '.join(smart_types)}")
                 print()
             return
 
+    # --- camera ---
     elif args.command == "camera":
         cam = api.get_camera(args.id)
         if args.json:
@@ -425,12 +1049,39 @@ def main():
 
             print(f"{status_icon} **{name}**")
             print(f"   ID: {cam.get('id')}")
-            print(f"   Modell: {cam.get('type', 'Unbekannt')}")
+            print(f"   Modell: {cam.get('modelKey', cam.get('type', 'Unbekannt'))}")
             print(f"   Status: {state}")
-            print(f"   Aufnahme: {'Ja' if cam.get('isRecording') else 'Nein'}")
+            print(f"   MAC: {cam.get('mac', 'Unbekannt')}")
             print(f"   Mikrofon: {'An' if cam.get('isMicEnabled') else 'Aus'}")
-            print(f"   IP: {cam.get('host', 'Unbekannt')}")
+            print(f"   Video-Modus: {cam.get('videoMode', 'default')}")
+            print(f"   HDR: {cam.get('hdrType', 'unbekannt')}")
+
+            # Smart detection settings
+            smart = cam.get("smartDetectSettings", {})
+            obj_types = smart.get("objectTypes", [])
+            audio_types = smart.get("audioTypes", [])
+            if obj_types:
+                print(f"   Smart-Objekte: {', '.join(obj_types)}")
+            if audio_types:
+                print(f"   Smart-Audio: {', '.join(audio_types)}")
+
+            # Feature flags
+            features = cam.get("featureFlags", {})
+            if features:
+                caps = []
+                if features.get("hasMic"):
+                    caps.append("Mikrofon")
+                if features.get("hasSpeaker"):
+                    caps.append("Lautsprecher")
+                if features.get("hasHdr"):
+                    caps.append("HDR")
+                if features.get("hasLedStatus"):
+                    caps.append("Status-LED")
+                if caps:
+                    print(f"   Features: {', '.join(caps)}")
             return
+
+    # --- snapshot ---
     elif args.command == "snapshot":
         data = api.get_snapshot(args.id, args.width, args.height)
         output = args.output or f"snapshot_{args.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
@@ -438,8 +1089,10 @@ def main():
             f.write(data)
         print(f"Snapshot saved to {output}")
         return
+
+    # --- events ---
     elif args.command == "events":
-        hours = int(args.last.replace("h", ""))
+        hours = _parse_duration(args.last)
         end = int(datetime.now().timestamp() * 1000)
         start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
         types = args.types.split(",") if args.types else None
@@ -448,19 +1101,18 @@ def main():
             print(f"Camera not found: {args.camera}", file=sys.stderr)
             sys.exit(1)
         events = api.get_events(start, end, types, camera_id)
+        if args.limit and args.limit > 0:
+            events = events[:args.limit]
 
         if args.json:
             result = events
         else:
-            # Pretty print events
             if not events:
                 print(f"Keine Ereignisse in den letzten {hours} Stunden.")
                 return
 
-            # Build camera ID to name mapping
             cameras = {c["id"]: c.get("name", "Unknown") for c in api.get_cameras()}
 
-            # Event type icons
             type_icons = {
                 "motion": "🏃",
                 "smartDetectZone": "🔍",
@@ -469,7 +1121,6 @@ def main():
                 "sensorContact": "🚪",
             }
 
-            # Smart detect type translations
             smart_types = {
                 "person": "Person",
                 "vehicle": "Fahrzeug",
@@ -479,9 +1130,9 @@ def main():
                 "face": "Gesicht",
             }
 
-            print(f"📹 **Kamera-Ereignisse** (letzte {hours}h)\n")
+            duration_label = f"{hours // 24}d" if hours >= 24 and hours % 24 == 0 else f"{hours}h"
+            print(f"📹 **Kamera-Ereignisse** (letzte {duration_label})\n")
 
-            # Group events by camera
             by_camera = {}
             for e in events:
                 cam_id = e.get("camera")
@@ -493,14 +1144,12 @@ def main():
             for cam_name, cam_events in by_camera.items():
                 print(f"**{cam_name}** ({len(cam_events)} Ereignisse)")
 
-                # Show last 5 events per camera
                 for e in cam_events[:5]:
                     ts = datetime.fromtimestamp(e["start"] / 1000)
                     time_str = ts.strftime("%H:%M")
                     event_type = e.get("type", "unknown")
                     icon = type_icons.get(event_type, "📷")
 
-                    # For smart detections, show what was detected
                     if event_type == "smartDetectZone":
                         detected = e.get("smartDetectTypes", [])
                         detected_str = ", ".join(smart_types.get(d, d) for d in detected)
@@ -511,10 +1160,11 @@ def main():
                 if len(cam_events) > 5:
                     print(f"  ... und {len(cam_events) - 5} weitere")
                 print()
-
             return
+
+    # --- detections ---
     elif args.command == "detections":
-        hours = int(args.last.replace("h", ""))
+        hours = _parse_duration(args.last)
         end = int(datetime.now().timestamp() * 1000)
         start = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
         camera_id = api.resolve_camera_id(args.camera) if args.camera else None
@@ -526,12 +1176,10 @@ def main():
         if args.json:
             result = detections
         else:
-            # Pretty print detections
             if not detections:
                 print("No detections found.")
                 return
 
-            # Group by type for display
             plates = [d for d in detections if d.get("plate")]
             faces = [d for d in detections if d.get("type") == "face"]
             persons = [d for d in detections if d.get("type") == "person" and "plate" not in d]
@@ -556,17 +1204,27 @@ def main():
                 print(f"Found {len(persons)} person detections (use --type person for details)")
 
             return
+
+    # --- nvr ---
     elif args.command == "nvr":
         nvr = api.get_nvr()
         if args.json:
             result = nvr
         else:
-            print("🖥️ **NVR Status**\n")
+            print("🖥️  **NVR Status**\n")
             print(f"   Name: {nvr.get('name', 'Unbekannt')}")
-            print(f"   Version: {nvr.get('version', 'Unbekannt')}")
-            print(f"   Uptime: {nvr.get('uptime', 0) // 86400} Tage")
+            # Integration API returns applicationVersion via meta, legacy returns version
+            version = nvr.get("version", nvr.get("applicationVersion", "Unbekannt"))
+            if version != "Unbekannt":
+                print(f"   Version: {version}")
 
-            # Storage info
+            # Legacy API has more detail
+            uptime_ms = nvr.get("uptime", 0)
+            if uptime_ms:
+                days = uptime_ms // 86_400_000
+                hours = (uptime_ms % 86_400_000) // 3_600_000
+                print(f"   Uptime: {days} Tage, {hours} Stunden")
+
             storage = nvr.get("storageInfo", {})
             used_gb = storage.get("usedSpace", 0) / (1024**3)
             total_gb = storage.get("totalSpace", 0) / (1024**3)
@@ -574,10 +1232,17 @@ def main():
                 pct = (used_gb / total_gb) * 100
                 print(f"   Speicher: {used_gb:.0f} GB / {total_gb:.0f} GB ({pct:.0f}%)")
 
-            # Recording stats
-            print(f"   Kameras: {nvr.get('deviceCount', {}).get('cameras', 0)}")
+            device_count = nvr.get("deviceCount", {})
+            if isinstance(device_count, dict) and device_count.get("cameras"):
+                print(f"   Kameras: {device_count['cameras']}")
+
+            # Doorbell settings (Integration API)
+            doorbell = nvr.get("doorbellSettings", {})
+            if doorbell.get("defaultMessageText"):
+                print(f"   Klingel-Text: {doorbell['defaultMessageText']}")
             return
 
+    # --- sensors ---
     elif args.command == "sensors":
         sensors = api.get_sensors()
         if args.json:
@@ -590,19 +1255,58 @@ def main():
             print(f"📡 **Sensoren** ({len(sensors)} Geräte)\n")
             for sensor in sensors:
                 name = sensor.get("name", "Unbekannt")
-                is_open = sensor.get("isOpened", False)
-                battery = sensor.get("batteryStatus", {}).get("percentage", 0)
                 state = sensor.get("state", "unknown")
-
                 status_icon = "🟢" if state == "CONNECTED" else "🔴"
-                open_icon = "🚪" if is_open else "🔒"
 
-                print(f"{status_icon} **{name}** {open_icon}")
-                print(f"   Status: {'Offen' if is_open else 'Geschlossen'}")
-                print(f"   Batterie: {battery}%")
+                print(f"{status_icon} **{name}**")
+                print(f"   ID: {sensor.get('id', '?')}")
+                print(f"   Typ: {sensor.get('mountType', 'Unbekannt')}")
+
+                # Open/closed status
+                is_open = sensor.get("isOpened")
+                if is_open is not None:
+                    print(f"   Status: {'Offen' if is_open else 'Geschlossen'}")
+
+                # Battery
+                battery = sensor.get("batteryStatus", {})
+                pct = battery.get("percentage")
+                if pct is not None:
+                    print(f"   Batterie: {pct}%")
+                elif battery.get("isLow"):
+                    print(f"   Batterie: Niedrig!")
+
+                # Stats (Integration API provides richer data)
+                stats = sensor.get("stats", {})
+                temp = stats.get("temperature", {})
+                if temp.get("value") is not None:
+                    print(f"   Temperatur: {temp['value']}°C")
+                humidity = stats.get("humidity", {})
+                if humidity.get("value") is not None:
+                    print(f"   Feuchtigkeit: {humidity['value']}%")
+                light = stats.get("light", {})
+                if light.get("value") is not None:
+                    print(f"   Licht: {light['value']} lux")
+
+                # Motion
+                if sensor.get("isMotionDetected"):
+                    print(f"   Bewegung: Erkannt!")
+
+                # Leak
+                if sensor.get("leakDetectedAt"):
+                    print(f"   Leck: Erkannt!")
+
+                # Alarm
+                if sensor.get("alarmTriggeredAt"):
+                    print(f"   Alarm: Ausgelöst!")
+
+                # Tampering
+                if sensor.get("tamperingDetectedAt"):
+                    print(f"   Manipulation: Erkannt!")
+
                 print()
             return
 
+    # --- lights ---
     elif args.command == "lights":
         lights = api.get_lights()
         if args.json:
@@ -617,22 +1321,195 @@ def main():
                 name = light.get("name", "Unbekannt")
                 is_on = light.get("isLightOn", False)
                 state = light.get("state", "unknown")
-
                 status_icon = "🟢" if state == "CONNECTED" else "🔴"
                 light_icon = "💡" if is_on else "🌑"
 
                 print(f"{status_icon} **{name}** {light_icon}")
+                print(f"   ID: {light.get('id', '?')}")
                 print(f"   Status: {'An' if is_on else 'Aus'}")
+
+                # Integration API provides more detail
+                if light.get("isDark") is not None:
+                    print(f"   Dunkel: {'Ja' if light['isDark'] else 'Nein'}")
+                if light.get("isPirMotionDetected"):
+                    print(f"   Bewegung: Erkannt!")
+                if light.get("isLightForceEnabled"):
+                    print(f"   Manuell aktiviert: Ja")
+
+                # Mode settings
+                mode = light.get("lightModeSettings", {})
+                if mode.get("mode"):
+                    print(f"   Modus: {mode['mode']}")
+
                 print()
             return
 
+    # --- light-on ---
     elif args.command == "light-on":
         api.control_light(args.id, True)
         print(f"💡 Licht eingeschaltet")
         return
+
+    # --- light-off ---
     elif args.command == "light-off":
         api.control_light(args.id, False)
         print(f"🌑 Licht ausgeschaltet")
+        return
+
+    # --- chimes ---
+    elif args.command == "chimes":
+        chimes = api.get_chimes()
+        if args.json:
+            result = chimes
+        else:
+            if not chimes:
+                print("Keine Klingeln gefunden.")
+                return
+
+            print(f"🔔 **Klingeln** ({len(chimes)} Geräte)\n")
+            for chime in chimes:
+                name = chime.get("name", "Unbekannt")
+                state = chime.get("state", "unknown")
+                status_icon = "🟢" if state == "CONNECTED" else "🔴"
+
+                print(f"{status_icon} **{name}**")
+                print(f"   ID: {chime.get('id', '?')}")
+                print(f"   MAC: {chime.get('mac', '?')}")
+
+                camera_ids = chime.get("cameraIds", [])
+                if camera_ids:
+                    print(f"   Kameras: {len(camera_ids)} verknüpft")
+
+                ring_settings = chime.get("ringSettings", [])
+                if ring_settings:
+                    for rs in ring_settings:
+                        vol = rs.get("volume", "?")
+                        repeat = rs.get("repeatTimes", "?")
+                        print(f"   Lautstärke: {vol}, Wiederholungen: {repeat}")
+                print()
+            return
+
+    # --- chime ---
+    elif args.command == "chime":
+        chime = api.get_chime(args.id)
+        if args.json:
+            result = chime
+        else:
+            print(json.dumps(chime, indent=2))
+            return
+
+    # --- PTZ ---
+    elif args.command == "ptz-goto":
+        camera_id = api.resolve_camera_id(args.camera)
+        if not camera_id:
+            sys.exit(1)
+        api.ptz_goto(camera_id, args.slot)
+        print(f"🎯 PTZ-Kamera zu Preset {args.slot} bewegt")
+        return
+
+    elif args.command == "ptz-patrol-start":
+        camera_id = api.resolve_camera_id(args.camera)
+        if not camera_id:
+            sys.exit(1)
+        api.ptz_patrol_start(camera_id, args.slot)
+        print(f"🔄 PTZ-Patrol {args.slot} gestartet")
+        return
+
+    elif args.command == "ptz-patrol-stop":
+        camera_id = api.resolve_camera_id(args.camera)
+        if not camera_id:
+            sys.exit(1)
+        api.ptz_patrol_stop(camera_id)
+        print(f"⏹️  PTZ-Patrol gestoppt")
+        return
+
+    # --- RTSPS Streams ---
+    elif args.command == "rtsps-stream":
+        streams = api.create_rtsps_stream(args.id)
+        if args.json:
+            result = streams
+        else:
+            print("🎥 **RTSPS Streams erstellt**\n")
+            for quality, url in streams.items():
+                if url:
+                    print(f"   {quality}: {url}")
+            return
+
+    elif args.command == "rtsps-streams":
+        streams = api.get_rtsps_streams(args.id)
+        if args.json:
+            result = streams
+        else:
+            print("🎥 **RTSPS Streams**\n")
+            for quality, url in streams.items():
+                status = url if url else "nicht aktiv"
+                print(f"   {quality}: {status}")
+            return
+
+    elif args.command == "rtsps-stream-delete":
+        api.delete_rtsps_stream(args.id)
+        print(f"🗑️  RTSPS Stream gelöscht")
+        return
+
+    # --- Viewers ---
+    elif args.command == "viewers":
+        viewers = api.get_viewers()
+        if args.json:
+            result = viewers
+        else:
+            if not viewers:
+                print("Keine Viewer gefunden.")
+                return
+
+            print(f"📺 **Viewer** ({len(viewers)} Geräte)\n")
+            for viewer in viewers:
+                name = viewer.get("name", "Unbekannt")
+                state = viewer.get("state", "unknown")
+                status_icon = "🟢" if state == "CONNECTED" else "🔴"
+
+                print(f"{status_icon} **{name}**")
+                print(f"   ID: {viewer.get('id', '?')}")
+                print(f"   Modell: {viewer.get('modelKey', '?')}")
+                print(f"   Stream-Limit: {viewer.get('streamLimit', '?')}")
+                print()
+            return
+
+    # --- Liveviews ---
+    elif args.command == "liveviews":
+        liveviews = api.get_liveviews()
+        if args.json:
+            result = liveviews
+        else:
+            if not liveviews:
+                print("Keine Live-Views gefunden.")
+                return
+
+            print(f"📺 **Live-Views** ({len(liveviews)} Views)\n")
+            for lv in liveviews:
+                name = lv.get("name", "Unbekannt")
+                is_default = lv.get("isDefault", False)
+                is_global = lv.get("isGlobal", False)
+                layout = lv.get("layout", 0)
+
+                default_tag = " (Standard)" if is_default else ""
+                global_tag = " [Global]" if is_global else ""
+
+                print(f"   **{name}**{default_tag}{global_tag}")
+                print(f"   ID: {lv.get('id', '?')}")
+                print(f"   Layout: {layout} Slots")
+
+                slots = lv.get("slots", [])
+                for i, slot in enumerate(slots):
+                    cam_count = len(slot.get("cameras", []))
+                    cycle = slot.get("cycleMode", "none")
+                    print(f"   Slot {i}: {cam_count} Kamera(s), Zyklus: {cycle}")
+                print()
+            return
+
+    # --- Alarm ---
+    elif args.command == "alarm":
+        api.trigger_alarm(args.id)
+        print(f"🚨 Alarm ausgelöst (Webhook: {args.id})")
         return
 
     if result:
