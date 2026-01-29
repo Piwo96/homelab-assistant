@@ -104,7 +104,13 @@ INFRASTRUCTURE_SKILLS: Dict[str, set] = {
         "network-detail", "network-references", "wifi-detail",
     },
     "unifi-protect": {
-        "cameras", "camera", "snapshot", "events", "detections", "lights",
+        "cameras", "camera", "snapshot", "events", "detections",
+        "lights", "light-on", "light-off", "nvr", "sensors",
+        # Integration API v1
+        "detect", "meta", "chimes", "chime",
+        "ptz-goto", "ptz-patrol-start", "ptz-patrol-stop",
+        "rtsps-stream", "rtsps-streams", "rtsps-stream-delete",
+        "viewers", "liveviews", "alarm",
     },
 }
 
