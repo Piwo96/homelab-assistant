@@ -1077,6 +1077,12 @@ def execute(action: str, args: dict) -> Any:
             logger.info("events: resolved camera '%s' -> %s", args["camera"], camera_id)
         logger.info("events: filters types=%s, camera_id=%s", types, camera_id)
         events = api.get_events(start, end, types, camera_id)
+        # Fallback: if types filter yields 0 results, retry without it.
+        # LLM often hallucates invalid types (e.g. "person", "car") that the
+        # Protect API doesn't recognise, causing empty responses.
+        if not events and types:
+            logger.info("events: 0 results with types=%s, retrying without types filter", types)
+            events = api.get_events(start, end, None, camera_id)
         limit = limit_override or (int(args["limit"]) if args.get("limit") else 20)
         logger.info("events: found %d events (returning max %d)", len(events), limit)
         return events[:limit]
