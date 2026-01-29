@@ -336,7 +336,14 @@ def execute(action: str, args: dict) -> Any:
     elif action == "top-clients":
         return api.get_top_clients(int(args.get("count", 10)))
     elif action == "queries":
-        return api.get_queries(domain=args.get("domain"), client=args.get("client"))
+        result = api.get_queries(domain=args.get("domain"), client=args.get("client"))
+        limit = int(args["limit"]) if args.get("limit") else 50
+        # Pi-hole queries can be wrapped in {"data": [...]} or be a raw list
+        if isinstance(result, dict) and "data" in result and isinstance(result["data"], list):
+            result["data"] = result["data"][:limit]
+        elif isinstance(result, list):
+            result = result[:limit]
+        return result
     elif action == "block":
         return api.add_to_blocklist(args["domain"], args.get("comment", ""))
     elif action == "allow":

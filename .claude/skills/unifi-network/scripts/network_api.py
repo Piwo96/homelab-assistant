@@ -393,7 +393,9 @@ def execute(action: str, args: dict) -> Any:
     elif action == "sysinfo":
         return api.get_sysinfo()
     elif action == "clients":
-        return api.get_clients(active_only=not args.get("all", False))
+        clients = api.get_clients(active_only=not args.get("all", False))
+        limit = int(args["limit"]) if args.get("limit") else 50
+        return clients[:limit]
     elif action == "kick":
         return api.kick_client(args["mac"])
     elif action == "block":

@@ -289,7 +289,8 @@ def execute(action: str, args: dict) -> Any:
             states = [s for s in states if s["state"] == args["state"]]
         if args.get("area"):
             states = [s for s in states if s.get("attributes", {}).get("area_id") == args["area"]]
-        return states
+        limit = int(args["limit"]) if args.get("limit") else 50
+        return states[:limit]
     elif action == "get-state":
         return api.get_state(args["entity_id"])
     elif action in ("turn-on", "turn_on"):
@@ -314,7 +315,9 @@ def execute(action: str, args: dict) -> Any:
             data.update(extra)
         return api.call_service(args["domain"], args["service"], data)
     elif action == "list-automations":
-        return api.list_automations()
+        automations = api.list_automations()
+        limit = int(args["limit"]) if args.get("limit") else 50
+        return automations[:limit]
     elif action == "trigger":
         return api.trigger_automation(args["automation_id"])
     elif action == "enable":
@@ -324,11 +327,15 @@ def execute(action: str, args: dict) -> Any:
     elif action == "reload-automations":
         return api.reload_automations()
     elif action == "list-scenes":
-        return api.list_scenes()
+        scenes = api.list_scenes()
+        limit = int(args["limit"]) if args.get("limit") else 50
+        return scenes[:limit]
     elif action == "activate-scene":
         return api.activate_scene(args["scene_id"])
     elif action == "list-scripts":
-        return api.list_scripts()
+        scripts = api.list_scripts()
+        limit = int(args["limit"]) if args.get("limit") else 50
+        return scripts[:limit]
     elif action == "run-script":
         return api.run_script(args["script_id"])
     elif action == "stop-script":
@@ -336,11 +343,19 @@ def execute(action: str, args: dict) -> Any:
     elif action == "history":
         hours = int(args.get("hours", 24))
         start_time = datetime.now() - timedelta(hours=hours)
-        return api.get_history(args.get("entity_id"), start_time)
+        result = api.get_history(args.get("entity_id"), start_time)
+        limit = int(args["limit"]) if args.get("limit") else 50
+        if isinstance(result, list):
+            return result[:limit]
+        return result
     elif action == "logbook":
         hours = int(args.get("hours", 1))
         start_time = datetime.now() - timedelta(hours=hours)
-        return api.get_logbook(start_time)
+        result = api.get_logbook(start_time)
+        limit = int(args["limit"]) if args.get("limit") else 50
+        if isinstance(result, list):
+            return result[:limit]
+        return result
     else:
         raise ValueError(f"Unknown action: {action}")
 
