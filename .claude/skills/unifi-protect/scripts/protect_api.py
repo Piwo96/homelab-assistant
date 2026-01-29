@@ -421,10 +421,10 @@ class ProtectLegacyAPI:
 
         if isinstance(result, list):
             events = result
-            logger.debug("get_events: API returned list with %d items", len(events))
+            logger.info("get_events: API returned list with %d items", len(events))
         elif isinstance(result, dict) and "data" in result and isinstance(result["data"], list):
             events = result["data"]
-            logger.debug("get_events: API returned dict with data list (%d items)", len(events))
+            logger.info("get_events: API returned dict with data list (%d items)", len(events))
         else:
             logger.warning(
                 "get_events: unexpected response type=%s, keys=%s, preview=%s",
@@ -437,7 +437,7 @@ class ProtectLegacyAPI:
         if camera_id:
             before = len(events)
             events = [e for e in events if isinstance(e, dict) and e.get("camera") == camera_id]
-            logger.debug("get_events: filtered by camera %s: %d -> %d", camera_id, before, len(events))
+            logger.info("get_events: filtered by camera %s: %d -> %d", camera_id, before, len(events))
 
         return events
 
@@ -1055,12 +1055,13 @@ def execute(action: str, args: dict) -> Any:
     elif action == "events":
         last_raw = args.get("last", "24h")
         last_str = str(last_raw)
-        # LLM may pass a bare integer (e.g. 1) meaning "the last N events",
-        # not "last N hours". Detect bare integers and use them as limit instead.
-        if re.fullmatch(r"\d+", last_str) and int(last_str) < 24:
-            limit_override = int(last_str)
+        # LLM passes last=1 for "die letzte Aufzeichnung" meaning "the most
+        # recent event", not "last 1 hour".  Only override for exactly 1;
+        # higher bare integers (e.g. 3 for "letzten 3 Stunden") are valid hours.
+        if last_str == "1":
+            limit_override = 1
             hours = 24  # default window
-            logger.info("events: bare integer last=%s -> limit=%d, window=24h", last_str, limit_override)
+            logger.info("events: last=1 -> limit=1, window=24h")
         else:
             limit_override = None
             hours = _parse_duration(last_str)
@@ -1073,6 +1074,8 @@ def execute(action: str, args: dict) -> Any:
             camera_id = api.resolve_camera_id(args["camera"])
             if not camera_id:
                 raise ValueError(f"Camera not found: {args['camera']}")
+            logger.info("events: resolved camera '%s' -> %s", args["camera"], camera_id)
+        logger.info("events: filters types=%s, camera_id=%s", types, camera_id)
         events = api.get_events(start, end, types, camera_id)
         limit = limit_override or (int(args["limit"]) if args.get("limit") else 20)
         logger.info("events: found %d events (returning max %d)", len(events), limit)
