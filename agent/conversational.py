@@ -18,14 +18,60 @@ logger = logging.getLogger(__name__)
 _FOLLOWUP_PATTERNS = [
     re.compile(p, re.IGNORECASE)
     for p in [
-        # Topic continuation: "Und was war in der Einfahrt?"
-        r"^und\s+(was|wer|wie|wo|welche|wann)",
-        r"^und\s+(im|in|bei|der|die|das|den|dem)\s+",
-        # Asking about a different target: "Was ist mit dem Garten?"
-        r"^was ist mit\s+",
-        r"^wie sieht.?s (im|in|bei|am)\s+",
-        # Same question, different target: "Im Garten?", "In der Einfahrt?"
-        r"^(im|in|bei|am|an der|an dem|vor der|vor dem)\s+\w+(\s+\w+)?\??\s*$",
+        # Understanding issues
+    r"versteh.*nicht",
+    r"nicht verstanden",
+    r"was mein(st|t) du",
+    r"wie mein(st|t) du das",
+    r"erklär.*genauer",
+    r"erklär.*nochmal",
+    r"erklär.*bitte",
+    r"kannst du.*erklären",
+    r"was bedeutet das",
+    r"was heißt das",
+    r"was soll das heißen",
+    # References to previous message
+    r"^das\s",  # "Das verstehe ich nicht"
+    r"^die(se)?\s",  # "Diese Antwort..."
+    r"^der\s",
+    r"damit\b",  # "Was meinst du damit"
+    r"davon\b",  # "Was meinst du davon"
+    # Simple follow-ups
+    r"^warum\??$",
+    r"^wieso\??$",
+    r"^und\s+(jetzt|dann|weiter)",
+    r"mehr dazu",
+    r"mehr details",
+    r"genauer bitte",
+    # Requests for clarification
+    r"nochmal bitte",
+    r"sag.*nochmal",
+    r"wiederhol",
+    # Confirmations/negations that need context
+    r"^ja,?\s+aber",
+    r"^nein,?\s+ich",
+    r"^ok(ay)?,?\s+aber",
+    # Action requests after acknowledgment - these need previous context!
+    # "Okay schieß mal los", "Okay mach mal", "Ja zeig mal", etc.
+    r"^ok(ay)?,?\s*(schieß|mach|leg|fang|zeig|erklär|sag)",
+    r"^ja,?\s*(schieß|mach|leg|fang|zeig|erklär|sag)",
+    r"^klar,?\s*(schieß|mach|leg|fang|zeig|erklär|sag)",
+    r"schieß\s*(mal\s*)?los",
+    r"leg\s*(mal\s*)?los",
+    r"fang\s*(mal\s*)?an",
+    r"mach\s*(mal\s*)?weiter",
+    r"zeig\s*(mal\s*)?her",
+    # Refinements/corrections - user wants to narrow down previous response
+    r"^ich wollte nur",  # "Ich wollte nur den Garten"
+    r"^ich meinte nur",  # "Ich meinte nur die Einfahrt"
+    r"^nur (den|die|das|im|in|am|an)\b",  # "Nur den Garten", "Nur im Wohnzimmer"
+    r"^zeig.*nur",  # "Zeig mir nur..."
+    r"^ich brauch.*nur",  # "Ich brauche nur..."
+    r"^nicht alles",  # "Nicht alles, nur..."
+    r"^ich.*nicht (alle|alles)",  # "Ich wollte nicht alle"
+    r"^filter.*auf",  # "Filter auf Garten"
+    r"^nur (garten|einfahrt|wohnzimmer|küche|flur|schlafzimmer|bad|keller|garage)",
+    r"^(garten|einfahrt|wohnzimmer|küche|flur|schlafzimmer|bad|keller|garage) nur",
     ]
 ]
 
