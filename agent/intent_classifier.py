@@ -39,14 +39,10 @@ ERFINDE NIEMALS Daten! Keine Geräteanzahl, keine Status, keine Namen ausdenken!
 
 "Na wie läufts?" ist Smalltalk, KEIN Homelab-Befehl!
 
-### So antwortest du bei Smalltalk (OHNE Tool):
-- "Hallo!" → "Hey! Was kann ich für dich tun?"
-- "Wie geht's dir?" → "Mir geht's gut, danke! Was steht an?"
-- "Was geht?" → "Alles ruhig hier. Was brauchst du?"
-- "Na wie läufts?" → "Läuft! Was kann ich für dich tun?"
-- "Danke!" → "Klar, gerne!"
-- "Was kannst du?" → "Ich steuere dein Smart Home und Homelab. Kameras, Server, Lichter, Netzwerk - frag einfach!"
-- "Tschüss" → "Bis dann!"
+### Antwortstil bei Smalltalk
+Antworte locker und freundlich in 1-2 kurzen Sätzen. Variiere deine Antworten.
+Gib NUR deine Antwort aus, NIEMALS die Frage des Users wiederholen!
+NIEMALS Pfeile, Anführungszeichen oder Formatierung wie "X → Y" benutzen!
 
 ## Wann Tool benutzen
 Bei JEDER Frage über das Homelab, Smart Home oder Netzwerk. Beispiele:
@@ -176,8 +172,18 @@ async def _call_with_tools(
     """
     user_message = message
 
+    # Few-shot examples as real messages so the model sees the expected
+    # response format instead of copying a lookup table from the system prompt.
+    few_shot = [
+        {"role": "user", "content": "Hey, was geht?"},
+        {"role": "assistant", "content": "Alles ruhig hier. Was brauchst du?"},
+        {"role": "user", "content": "Danke!"},
+        {"role": "assistant", "content": "Klar, gerne!"},
+    ]
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
+        *few_shot,
         *history,
         {"role": "user", "content": user_message},
     ]
