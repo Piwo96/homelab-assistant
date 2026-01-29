@@ -863,6 +863,203 @@ class UniFiDualAPI:
         return self._require_legacy("firewall-groups").get_firewall_groups()
 
 
+# ---------------------------------------------------------------------------
+# Human-readable formatting (used by agent pipeline)
+# ---------------------------------------------------------------------------
+
+
+def format_agent_output(action: str, data: Any) -> Optional[str]:
+    """Format raw data into human-readable text for Telegram/agent output.
+
+    Called by skill_executor when available, producing compact text
+    instead of raw JSON that would overwhelm the LLM formatter.
+
+    Args:
+        action: The action that produced the data (e.g. "clients", "devices")
+        data: Raw Python data returned by execute()
+
+    Returns:
+        Formatted string, or None if no formatter available (falls back to JSON)
+    """
+    if action == "clients":
+        return _format_clients(data)
+    elif action == "devices":
+        return _format_devices(data)
+    elif action == "networks":
+        return _format_networks(data)
+    elif action == "wifis":
+        return _format_wifis(data)
+    elif action == "health":
+        return _format_health(data)
+    elif action == "port-forwards":
+        return _format_port_forwards(data)
+    elif action == "firewall-rules":
+        return _format_firewall_rules(data)
+    return None
+
+
+def _format_clients(clients: list) -> str:
+    """Format clients list into human-readable text."""
+    if not clients:
+        return "Keine Clients gefunden."
+
+    # Detect API source from field names
+    is_integration = bool(clients[0].get("type") in ("WIRED", "WIRELESS", "VPN"))
+
+    if is_integration:
+        wired = [c for c in clients if c.get("type") == "WIRED"]
+        wireless = [c for c in clients if c.get("type") == "WIRELESS"]
+        vpn = [c for c in clients if c.get("type") == "VPN"]
+    else:
+        wired = [c for c in clients if not c.get("essid")]
+        wireless = [c for c in clients if c.get("essid")]
+        vpn = []
+
+    lines = [f"Netzwerk-Clients ({len(clients)} Geräte)\n"]
+
+    for label, group, icon in [("Kabelgebunden", wired, "📡"), ("WLAN", wireless, "📶"), ("VPN", vpn, "🔒")]:
+        if not group:
+            continue
+        lines.append(f"{label} ({len(group)})")
+        for c in group[:15]:
+            if is_integration:
+                name = c.get("name", c.get("macAddress", "?"))
+                ip = c.get("ipAddress", "?")
+            else:
+                name = c.get("name") or c.get("hostname") or c.get("mac", "?")
+                ip = c.get("ip", "?")
+            lines.append(f"  {icon} {name} ({ip})")
+        if len(group) > 15:
+            lines.append(f"  ... und {len(group) - 15} weitere")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _format_devices(devices: list) -> str:
+    """Format devices list into human-readable text."""
+    if not devices:
+        return "Keine Geräte gefunden."
+
+    is_integration = isinstance(devices[0].get("state"), str)
+
+    lines = [f"Netzwerk-Geräte ({len(devices)} Geräte)\n"]
+    for dev in devices:
+        if is_integration:
+            name = dev.get("name", dev.get("macAddress", "?"))
+            model = dev.get("model", "?")
+            state = dev.get("state", "?")
+            icon = "🟢" if state == "ONLINE" else "🔴"
+            features = dev.get("features", [])
+            if "accessPoint" in features:
+                t = "📡"
+            elif "switching" in features:
+                t = "🔀"
+            elif "gateway" in features:
+                t = "🌐"
+            else:
+                t = "📦"
+            ip = dev.get("ipAddress", "?")
+            lines.append(f"{icon} {t} {name} ({model}) - {ip}")
+        else:
+            name = dev.get("name", dev.get("mac", "?"))
+            model = dev.get("model", "?")
+            state = dev.get("state", 0)
+            icon = "🟢" if state == 1 else "🔴"
+            dev_type = dev.get("type", "unknown")
+            type_icons = {"ugw": "🌐", "usw": "🔀", "uap": "📡"}
+            t = type_icons.get(dev_type, "📦")
+            lines.append(f"{icon} {t} {name} ({model})")
+
+    return "\n".join(lines).strip()
+
+
+def _format_networks(networks: list) -> str:
+    """Format networks list into human-readable text."""
+    if not networks:
+        return "Keine Netzwerke gefunden."
+
+    lines = [f"Netzwerke ({len(networks)})\n"]
+    for net in networks:
+        name = net.get("name", "?")
+        vlan = net.get("vlanId", net.get("vlan", ""))
+        enabled = net.get("enabled", True)
+        icon = "🟢" if enabled else "⚫"
+        vlan_str = f" (VLAN {vlan})" if vlan else ""
+        lines.append(f"{icon} {name}{vlan_str}")
+
+    return "\n".join(lines).strip()
+
+
+def _format_wifis(wifis: list) -> str:
+    """Format WiFi broadcasts list into human-readable text."""
+    if not wifis:
+        return "Keine WLANs gefunden."
+
+    lines = [f"WLAN-Netzwerke ({len(wifis)})\n"]
+    for wifi in wifis:
+        name = wifi.get("name", "?")
+        enabled = wifi.get("enabled", False)
+        icon = "🟢" if enabled else "⚫"
+        sec_config = wifi.get("securityConfiguration", {})
+        security = sec_config.get("type", wifi.get("security", "?")) if isinstance(sec_config, dict) else wifi.get("security", "?")
+        lines.append(f"{icon} {name} ({security})")
+
+    return "\n".join(lines).strip()
+
+
+def _format_health(health: list) -> str:
+    """Format health data into human-readable text."""
+    if not health:
+        return "Keine Gesundheitsdaten."
+
+    lines = ["Netzwerk-Gesundheit\n"]
+    for item in health:
+        subsystem = item.get("subsystem", "?")
+        status = item.get("status", "unknown")
+        icon = "🟢" if status == "ok" else "🟡" if status == "warning" else "🔴"
+        lines.append(f"{icon} {subsystem}: {status}")
+
+    return "\n".join(lines).strip()
+
+
+def _format_port_forwards(rules: list) -> str:
+    """Format port forwarding rules into human-readable text."""
+    if not rules:
+        return "Keine Port-Forwarding-Regeln."
+
+    lines = [f"Port-Forwarding ({len(rules)} Regeln)\n"]
+    for r in rules:
+        name = r.get("name", "?")
+        enabled = r.get("enabled", True)
+        icon = "🟢" if enabled else "⚫"
+        dst_port = r.get("dst_port", "?")
+        fwd_ip = r.get("fwd", "?")
+        fwd_port = r.get("fwd_port", "?")
+        proto = r.get("proto", "tcp_udp")
+        lines.append(f"{icon} {name}: :{dst_port} -> {fwd_ip}:{fwd_port} ({proto})")
+
+    return "\n".join(lines).strip()
+
+
+def _format_firewall_rules(rules: list) -> str:
+    """Format firewall rules into human-readable text."""
+    if not rules:
+        return "Keine Firewall-Regeln."
+
+    lines = [f"Firewall-Regeln ({len(rules)})\n"]
+    for rule in rules:
+        name = rule.get("name", "?")
+        enabled = rule.get("enabled", True)
+        action = rule.get("action", "?")
+        icon = "🟢" if enabled else "⚫"
+        action_icon = "✅" if action == "accept" else "🚫" if action in ("drop", "reject") else "❓"
+        ruleset = rule.get("ruleset", "?")
+        lines.append(f"{icon} {action_icon} {name} ({ruleset})")
+
+    return "\n".join(lines).strip()
+
+
 def format_output(data: Any, format_type: str = "table") -> str:
     """Format output for display."""
     if format_type == "json":
