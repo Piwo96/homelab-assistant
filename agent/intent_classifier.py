@@ -1,6 +1,9 @@
-"""Intent classification using LM Studio with dynamic tool-calling.
+"""Intent classification with semantic routing and LLM fallback.
 
-This module uses dynamic tool definitions from the skill registry.
+Two-stage classification:
+1. Semantic router (embedding similarity) - fast, no LLM needed for ~80% of requests
+2. LLM tool-calling fallback - for medium/low confidence or router failure
+
 Skills are automatically loaded from .claude/skills/ and converted
 to tool definitions for function calling.
 """
@@ -76,10 +79,11 @@ async def classify_intent(
     settings: Settings,
     history: List[Dict[str, str]] | None = None,
 ) -> IntentResult:
-    """Classify user message into structured intent using tool-calling.
+    """Classify user message into structured intent.
 
-    This function uses dynamic tool definitions loaded from the skill
-    registry. New skills are automatically recognized without code changes.
+    Uses a two-stage approach:
+    1. Semantic router (embedding similarity) - fast, no LLM needed
+    2. LLM tool-calling fallback - for medium/low confidence or router failure
 
     Args:
         message: User's natural language message
@@ -108,7 +112,149 @@ async def classify_intent(
             description="Keine Skills geladen. Bitte Skills in .claude/skills/ prüfen.",
         )
 
-    # Ensure LM Studio is available (wake Gaming PC if needed)
+    # --- STAGE 1: Semantic Router (fast, no LLM) ---
+    try:
+        from .semantic_router import route as semantic_route
+        from .arg_extractor import extract_args
+
+        match = await semantic_route(message, settings, registry.skills)
+
+        if match is not None:
+            logger.info(
+                f"Semantic match: skill={match.skill} "
+                f"({match.skill_similarity:.3f}), "
+                f"action={match.action} ({match.action_similarity:.3f}), "
+                f"top={match.top_skills[:3]}"
+            )
+
+            high = settings.semantic_router_high_threshold
+            action_thresh = settings.semantic_router_action_threshold
+            low = settings.semantic_router_low_threshold
+
+            # HIGH confidence: skip LLM entirely
+            if (
+                match.skill_similarity >= high
+                and match.action is not None
+                and match.action_similarity >= action_thresh
+            ):
+                args = extract_args(message, match.skill, match.action)
+                logger.info(
+                    f"Semantic router HIGH confidence -> direct route "
+                    f"to {match.skill}:{match.action}"
+                )
+                return IntentResult(
+                    skill=match.skill,
+                    action=match.action,
+                    args=args,
+                    confidence=match.skill_similarity,
+                    raw_response=f"semantic_router:direct:{match.skill_similarity:.3f}",
+                )
+
+            # MEDIUM confidence: narrow LLM to top skills
+            if match.skill_similarity >= low:
+                logger.info(
+                    f"Semantic router MEDIUM confidence -> "
+                    f"narrowing LLM to top skills"
+                )
+                return await _classify_with_narrowed_tools(
+                    message, settings, registry, match, history or []
+                )
+
+            # LOW confidence: likely smalltalk, send to LLM without tools
+            logger.info(
+                f"Semantic router LOW confidence ({match.skill_similarity:.3f}) "
+                f"-> LLM without tools (smalltalk)"
+            )
+            return await _classify_conversational(
+                message, settings, history or []
+            )
+
+    except Exception as e:
+        logger.warning(f"Semantic router error, falling back to LLM: {e}")
+
+    # --- STAGE 2: Full LLM fallback ---
+    return await _classify_with_llm(
+        message, settings, registry.get_tools_json(), history or []
+    )
+
+
+async def _classify_with_narrowed_tools(
+    message: str,
+    settings: Settings,
+    registry,
+    match,
+    history: List[Dict[str, str]],
+) -> IntentResult:
+    """Call LLM with only the top-matched skills as tools.
+
+    Reduces token usage and improves accuracy by giving the LLM
+    fewer, more relevant tools to choose from.
+    """
+    # Pick top 2 skills from semantic match
+    top_skill_names = [name for name, _ in match.top_skills[:2]]
+
+    # Build filtered tool list
+    narrowed_tools = []
+    for tool in registry.get_tools_json():
+        tool_name = tool["function"]["name"].replace("_", "-")
+        if tool_name in top_skill_names:
+            narrowed_tools.append(tool)
+
+    if not narrowed_tools:
+        narrowed_tools = registry.get_tools_json()
+
+    logger.info(
+        f"Narrowed LLM tools to {len(narrowed_tools)}: "
+        f"{[t['function']['name'] for t in narrowed_tools]}"
+    )
+
+    return await _classify_with_llm(message, settings, narrowed_tools, history)
+
+
+async def _classify_conversational(
+    message: str,
+    settings: Settings,
+    history: List[Dict[str, str]],
+) -> IntentResult:
+    """Send message to LLM without tools (conversational / smalltalk).
+
+    When the semantic router detects low similarity to all skills,
+    the message is likely smalltalk. Skip tool definitions to avoid
+    the LLM inventing tool calls for non-homelab questions.
+    """
+    if not await ensure_lm_studio_available(settings):
+        return IntentResult(
+            skill="error",
+            action="lm_studio_unavailable",
+            description="LM Studio ist nicht erreichbar.",
+        )
+
+    try:
+        response = await _call_with_tools(
+            message, settings, tools=[], history=history
+        )
+        return _parse_tool_call_response(response)
+
+    except Exception as e:
+        logger.error(f"Conversational LLM call failed: {e}")
+        return IntentResult(
+            skill="unknown",
+            action="",
+            description="Hmm, da bin ich gerade nicht sicher.",
+        )
+
+
+async def _classify_with_llm(
+    message: str,
+    settings: Settings,
+    tools: List[Dict[str, Any]],
+    history: List[Dict[str, str]],
+) -> IntentResult:
+    """Full LLM classification with tools (original behavior).
+
+    This is the fallback path when the semantic router is unavailable
+    or when medium confidence requires LLM confirmation.
+    """
     if not await ensure_lm_studio_available(settings):
         logger.error("LM Studio not available after wake attempt")
         return IntentResult(
@@ -118,13 +264,11 @@ async def classify_intent(
         )
 
     try:
-        response = await _call_with_tools(
-            message, settings, registry.get_tools_json(), history or []
-        )
+        response = await _call_with_tools(message, settings, tools, history)
         result = _parse_tool_call_response(response)
 
         logger.info(
-            f"Tool classification: skill={result.skill}, action={result.action}, "
+            f"LLM classification: skill={result.skill}, action={result.action}, "
             f"target={result.target}, confidence={result.confidence}"
         )
 
@@ -215,16 +359,19 @@ async def _call_with_tools(
     for attempt, max_tokens in enumerate(token_limits):
         payload = {
             "messages": messages,
-            "tools": tools,
-            "tool_choice": tool_choice,
             "temperature": 0.1,
             "max_tokens": max_tokens,
         }
 
+        # Only include tools if we have any (empty list = conversational mode)
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
+
         if model:
             payload["model"] = model
 
-        logger.info(f"LM Studio request - model: {model}, tools: {len(tools)}, tool_choice: {tool_choice}, max_tokens: {max_tokens}")
+        logger.info(f"LM Studio request - model: {model}, tools: {len(tools)}, tool_choice: {tool_choice if tools else 'none'}, max_tokens: {max_tokens}")
 
         async with httpx.AsyncClient(timeout=settings.lm_studio_timeout) as client:
             response = await client.post(

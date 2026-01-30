@@ -164,6 +164,9 @@ def get_registry(settings=None) -> ToolRegistry:
 def reload_registry(settings) -> ToolRegistry:
     """Force reload of the registry.
 
+    Also invalidates the semantic router cache so embeddings
+    are recomputed on the next request.
+
     Args:
         settings: Settings object with project_root
 
@@ -175,5 +178,12 @@ def reload_registry(settings) -> ToolRegistry:
     _registry = ToolRegistry()
     skills_path = settings.project_root / ".claude" / "skills"
     _registry.load_skills(skills_path)
+
+    # Invalidate semantic router so it re-embeds on next request
+    from .semantic_router import get_router
+    router = get_router()
+    router._ready = False
+    router.entries = []
+    logger.info("Semantic router invalidated after registry reload")
 
     return _registry

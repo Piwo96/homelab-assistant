@@ -161,6 +161,11 @@ async def lifespan(app: FastAPI):
         f"Loaded {len(registry.skills)} skills: {', '.join(registry.get_skill_names())}"
     )
 
+    # Initialize semantic router (loads cached embeddings or defers)
+    from .semantic_router import init_router
+    logger.info("Initializing semantic router...")
+    await init_router(registry.skills, settings)
+
     # Start background tasks
     background_tasks = []
 
@@ -202,7 +207,7 @@ async def health():
 
 @app.post("/reload-skills")
 async def reload_skills():
-    """Reload all skills from disk (for development/hot-reload)."""
+    """Reload all skills from disk and invalidate embedding cache."""
     settings = get_settings()
     registry = reload_registry(settings)
 
@@ -210,6 +215,24 @@ async def reload_skills():
         "status": "reloaded",
         "skills": registry.get_skill_names(),
         "tool_count": len(registry.tools),
+        "note": "Embeddings will be refreshed on next request",
+    }
+
+
+@app.post("/reload-embeddings")
+async def reload_embeddings():
+    """Force re-computation of semantic router embeddings."""
+    settings = get_settings()
+    registry = get_registry(settings)
+
+    from .semantic_router import refresh_embeddings, get_router
+    await refresh_embeddings(registry.skills, settings)
+
+    router = get_router()
+    return {
+        "status": "refreshed",
+        "entries": len(router.entries),
+        "ready": router._ready,
     }
 
 

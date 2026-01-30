@@ -19,9 +19,24 @@
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Intent Classification (intent_classifier.py)                        │
+│  Semantic Router (semantic_router.py) - FAST PRE-FILTER             │
+│  ├─ EmbeddingGemma-300M (LM Studio /v1/embeddings)                  │
+│  ├─ Cosine Similarity Matching (~50ms)                              │
+│  ├─ Cached Embeddings (data/embedding_cache.json)                   │
+│  └─ Deterministic Arg Extraction (arg_extractor.py)                 │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        ▼                      ▼                      ▼
+   HIGH (≥0.75)          MEDIUM (0.40-0.75)      LOW (<0.40)
+   Skip LLM              Narrow to top 2         Smalltalk
+        │                      │                      │
+        └──────────────────────┼──────────────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Intent Classification (intent_classifier.py) - LLM FALLBACK        │
 │  ├─ LM Studio (lokales LLM)                                          │
-│  ├─ Dynamic Tool Definitions                                         │
+│  ├─ Dynamic Tool Definitions (optional: filtered by semantic router)│
 │  └─ Conversation History Context                                     │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
@@ -57,6 +72,8 @@ Das System folgt einer strikten Schichtentrennung:
 homelab-assistant/
 ├── agent/                              # Core Agent
 │   ├── main.py                         # FastAPI + Webhook Handler
+│   ├── semantic_router.py              # Embedding-based Intent Pre-Filter
+│   ├── arg_extractor.py                # Deterministic Argument Extraction
 │   ├── intent_classifier.py            # LM Studio Intent Classification
 │   ├── skill_executor.py               # Skill Ausführung
 │   ├── tool_registry.py                # Dynamic Skill Registry
@@ -82,7 +99,8 @@ homelab-assistant/
 │   └── self-annealing/                 # Error Tracking
 │
 ├── data/                               # Runtime Data
-│   └── conversations.db                # SQLite Database
+│   ├── conversations.db                # SQLite Database
+│   └── embedding_cache.json            # Pre-computed Skill Embeddings
 │
 └── .env                                # Configuration
 ```
@@ -102,8 +120,44 @@ async def webhook(request: Request):
 
 ### 2. Intent Classification
 
+Intent classification happens in two stages for optimal performance:
+
+**2.1 Semantic Router (Fast Pre-Filter)**
+
 ```python
-# intent_classifier.py
+# semantic_router.py - ~50ms, embedding-based
+match = await route(message, settings, skills)
+
+if match.skill_similarity >= 0.75:
+    # HIGH confidence → skip LLM entirely
+    args = extract_args(message, match.skill)
+    return IntentResult(match.skill, match.action, args, "high")
+elif match.skill_similarity >= 0.40:
+    # MEDIUM → narrow LLM to top 2 skills
+    relevant_skills = [s for s, _ in match.top_skills[:2]]
+    return await classify_with_llm(message, relevant_skills)
+else:
+    # LOW (<0.40) → treat as smalltalk
+    return conversational_response()
+```
+
+**Why embedding-based routing?**
+- Small local LLMs (7B-14B) struggle with complex tool-calling (5+ tools, 15-30 actions each)
+- Embedding similarity with cosine distance is deterministic and fast (<1ms compute)
+- EmbeddingGemma-300M runs alongside chat model in LM Studio
+- Embeddings cached to disk, invalidated via SHA-256 hash of all skill metadata
+
+**Cache Strategy:**
+- Pre-computed embeddings for all skill intent_hints and command descriptions
+- Stored in `data/embedding_cache.json`
+- Cache key includes skill names, versions, hint texts, command descriptions
+- Any SKILL.md change triggers re-embedding automatically
+- Deferred initialization: computes on first LM Studio availability if not cached
+
+**2.2 LLM Classification (Fallback)**
+
+```python
+# intent_classifier.py - ~2-5s, full LLM reasoning
 async def classify_intent(message, history, registry):
     # 1. Build system prompt with skill examples
     # 2. Convert skills to OpenAI tool definitions
@@ -114,12 +168,20 @@ async def classify_intent(message, history, registry):
 **LM Studio erhält:**
 - System Prompt mit Skill-Beispielen
 - Conversation History (für Kontext)
-- Tool Definitions (dynamisch aus Registry)
+- Tool Definitions (dynamisch aus Registry, optional filtered by semantic router)
 - User Message
 
 **LM Studio antwortet mit:**
 - Tool Call: `{"skill": "proxmox", "action": "start", "args": {"vmid": 100}}`
 - Oder: Conversational Response (keine Tool-Nutzung)
+
+**Deterministic Argument Extraction:**
+- For HIGH confidence matches, regex patterns extract common args
+- Camera names (Protect): "Einfahrt", "Garten", "Grünstreifen", etc.
+- Room names (Home Assistant): "Wohnzimmer", "Küche", "Schlafzimmer", etc.
+- Time ranges: "last 24h", "letzte 2 stunden", "seit gestern"
+- VM/Container IDs: numeric patterns
+- Avoids LLM entirely for argument parsing on clear matches
 
 ### 3. Skill Execution
 
@@ -337,6 +399,7 @@ ADMIN_TELEGRAM_ID=123
 # LM Studio (lokal)
 LM_STUDIO_URL=http://192.168.178.50:1234
 LM_STUDIO_MODEL=  # optional, auto-detect
+EMBEDDING_MODEL=nomic-embed-text-v1.5  # or embeddinggemma-300m, auto-detect if not set
 
 # Wake-on-LAN
 GAMING_PC_IP=192.168.178.50
@@ -388,10 +451,24 @@ GIT_PULL_INTERVAL_MINUTES=5
 
 ## Key Design Decisions
 
-1. **Lokales LLM (LM Studio):** Keine Cloud-Abhängigkeit für Intent Classification
-2. **Dynamic Registry:** Neue Skills funktionieren sofort nach SKILL.md hinzufügen
-3. **Tool-Calling:** Strukturierte Outputs statt freiem Text
-4. **Search-Replace Edits:** Verhindert versehentlichen Code-Verlust
-5. **Approval Workflows:** Admin muss kritische Änderungen genehmigen
-6. **Conversation History:** Kontext für Follow-up Fragen
-7. **Auto-Generated Metadata:** Reduziert manuelle Arbeit bei neuen Skills
+1. **Semantic Router (Embedding-based Pre-Filter):**
+   - Small LLMs (7B-14B) struggle with complex tool-calling (5+ tools × 15-30 actions)
+   - Embedding similarity with EmbeddingGemma-300M provides fast (~50ms), deterministic routing
+   - Three confidence zones: HIGH (≥0.75) skips LLM, MEDIUM (0.40-0.75) narrows to top 2 skills, LOW (<0.40) treats as smalltalk
+   - Pure Python cosine similarity (<1ms for 256-768 dim vectors) - no numpy needed
+   - Cache invalidation via SHA-256 hash of skill metadata - any SKILL.md change triggers re-embedding
+   - Deterministic arg extraction via regex for camera names, time ranges, VM IDs on high-confidence matches
+
+2. **Lokales LLM (LM Studio):** Keine Cloud-Abhängigkeit für Intent Classification
+
+3. **Dynamic Registry:** Neue Skills funktionieren sofort nach SKILL.md hinzufügen
+
+4. **Tool-Calling:** Strukturierte Outputs statt freiem Text
+
+5. **Search-Replace Edits:** Verhindert versehentlichen Code-Verlust
+
+6. **Approval Workflows:** Admin muss kritische Änderungen genehmigen
+
+7. **Conversation History:** Kontext für Follow-up Fragen
+
+8. **Auto-Generated Metadata:** Reduziert manuelle Arbeit bei neuen Skills

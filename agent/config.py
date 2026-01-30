@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     lm_studio_timeout: int = 120  # 2 Min - sufficient for instruct models
     lm_studio_context_size: int = 120000  # Context window in tokens (set in LM Studio server config)
 
+    # Semantic Router (embedding-based intent classification)
+    embedding_model: str = "google/embedding-gemma-300m"  # Loaded alongside chat model in LM Studio
+    semantic_router_high_threshold: float = 0.75  # Skill similarity >= this skips LLM entirely
+    semantic_router_action_threshold: float = 0.70  # Action similarity >= this for direct routing
+    semantic_router_low_threshold: float = 0.40  # Below this = smalltalk (no tools)
+
     # Gaming PC (for Wake-on-LAN) - must be set in .env
     gaming_pc_ip: str
     gaming_pc_mac: str
