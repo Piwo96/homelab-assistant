@@ -28,6 +28,7 @@ intent_hints:
   - "Welche Personen oder Fahrzeuge wurden erkannt?"
   - "Starte den RTSP Live-Stream der Kamera"
   - "Löse den Kamera-Alarm aus"
+  - "Was waren die letzten Ereignisse im Zimmer?"
 ---
 
 # UniFi Protect Management
