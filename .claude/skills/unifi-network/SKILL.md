@@ -17,16 +17,16 @@ triggers:
   - /unifi
   - /network
 intent_hints:
-  - "Geräte im Netzwerk, LAN oder WLAN"
-  - "Welche Geräte sind online/verbunden"
-  - "Kabelgebundene oder drahtlose Geräte"
-  - "Netzwerk-Status, Router, Switch, Access Point"
-  - "Wer ist im WLAN, wie viele Clients"
-  - "Internet-Probleme, Netzwerk-Gesundheit"
-  - "Port-Forwarding, Firewall-Regeln"
-  - "Geräte-Statistiken, CPU, RAM, Uptime"
-  - "Netzwerk erstellen, VLAN konfigurieren"
-  - "WLAN erstellen, WiFi verwalten"
+  - "Welche Geräte sind im WLAN oder LAN verbunden?"
+  - "Zeig mir alle Netzwerk-Clients und ihre IP-Adressen"
+  - "Wie ist der Status von Router, Switch und Access Point?"
+  - "Wer ist gerade im WiFi-Netzwerk online?"
+  - "Gibt es Internetprobleme oder Netzwerkstörungen?"
+  - "Zeig mir die Firewall-Regeln und Port-Weiterleitungen"
+  - "Erstelle ein neues WLAN-Netzwerk oder VLAN"
+  - "Wie viele Clients sind mit dem UniFi-Netzwerk verbunden?"
+  - "Blockiere oder kicke ein Gerät aus dem Netzwerk"
+  - "Zeig mir die UniFi Netzwerk-Übersicht mit allen Geräten"
 ---
 
 # UniFi Network Management

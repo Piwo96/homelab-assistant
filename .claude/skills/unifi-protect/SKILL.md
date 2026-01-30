@@ -16,18 +16,18 @@ requires:
 triggers:
   - /protect
 intent_hints:
-  - "Kameras, Überwachung, Aufnahmen"
-  - "Was war vor der Tür, im Garten, in der Einfahrt"
-  - "Bewegungsereignisse, Personen erkannt"
-  - "Kennzeichen, Nummernschilder, Autos"
-  - "Letztes Ereignis, was ist passiert, Kameraereignis"
-  - "Kamera-Status, Snapshots, Bilder"
-  - "Flutlicht an/aus, Licht bei Kamera"
-  - "Zeig mir was passiert ist, letzte Bewegung, Aufzeichnung"
-  - "Klingel, Doorbell, Chime"
-  - "PTZ, Kamera drehen, Preset, Patrol"
-  - "RTSP Stream, Live-View, Viewer"
-  - "Alarm auslösen, Webhook"
+  - "Zeig mir die Überwachungskameras und ihren Status"
+  - "Was hat die Kamera in der Einfahrt aufgenommen?"
+  - "Welche Bewegungsereignisse gab es vor der Haustür?"
+  - "Wurde ein Kennzeichen oder Nummernschild erkannt?"
+  - "Wer hat an der Türklingel geklingelt?"
+  - "Mach einen Kamera-Snapshot vom Garten"
+  - "Schalte das Flutlicht der Überwachungskamera ein"
+  - "Zeig mir die letzte Aufnahme der Überwachungskamera"
+  - "Drehe die PTZ-Kamera zum Preset Terrasse"
+  - "Welche Personen oder Fahrzeuge wurden erkannt?"
+  - "Starte den RTSP Live-Stream der Kamera"
+  - "Löse den Kamera-Alarm aus"
 ---
 
 # UniFi Protect Management

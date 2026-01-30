@@ -29,9 +29,10 @@ class Settings(BaseSettings):
 
     # Semantic Router (embedding-based intent classification)
     embedding_model: str = "google/embedding-gemma-300m"  # Loaded alongside chat model in LM Studio
-    semantic_router_high_threshold: float = 0.75  # Skill similarity >= this skips LLM entirely
+    semantic_router_high_threshold: float = 0.82  # Skill similarity >= this skips LLM entirely
     semantic_router_action_threshold: float = 0.70  # Action similarity >= this for direct routing
-    semantic_router_low_threshold: float = 0.40  # Below this = smalltalk (no tools)
+    semantic_router_low_threshold: float = 0.55  # Below this = smalltalk (no tools)
+    semantic_router_skills: str = "unifi-protect,unifi-network"  # Comma-separated skills to embed (empty = all)
 
     # Gaming PC (for Wake-on-LAN) - must be set in .env
     gaming_pc_ip: str

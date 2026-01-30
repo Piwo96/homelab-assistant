@@ -74,6 +74,24 @@ def get_router() -> SemanticRouter:
     return _router
 
 
+def _filter_skills(
+    skills: Dict[str, SkillDefinition],
+    settings: Settings,
+) -> Dict[str, SkillDefinition]:
+    """Filter skills to only those configured for semantic routing."""
+    allowed = settings.semantic_router_skills.strip()
+    if not allowed:
+        return skills  # Empty = all skills
+
+    allowed_set = {s.strip() for s in allowed.split(",")}
+    filtered = {k: v for k, v in skills.items() if k in allowed_set}
+    logger.info(
+        f"Semantic router filtering: {len(filtered)}/{len(skills)} skills "
+        f"({', '.join(filtered.keys())})"
+    )
+    return filtered
+
+
 async def init_router(
     skills: Dict[str, SkillDefinition],
     settings: Settings,
@@ -88,6 +106,7 @@ async def init_router(
         skills: Loaded skill definitions from registry
         settings: Application settings
     """
+    skills = _filter_skills(skills, settings)
     router = get_router()
     cache_path = _get_cache_path(settings)
     current_key = _compute_cache_key(skills)
@@ -137,6 +156,7 @@ async def route(
     Returns:
         SemanticMatch with routing decision, or None if router unavailable
     """
+    skills = _filter_skills(skills, settings)
     router = get_router()
 
     # Deferred initialization: refresh if not ready and LM Studio is up
@@ -204,6 +224,7 @@ async def refresh_embeddings(
         skills: All loaded skill definitions
         settings: Application settings
     """
+    skills = _filter_skills(skills, settings)
     router = get_router()
     router._refreshing = True
 

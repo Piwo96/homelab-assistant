@@ -219,6 +219,62 @@ async def reload_skills():
     }
 
 
+@app.post("/test-intent")
+async def test_intent(request: Request):
+    """Test intent classification without Telegram auth (dev only)."""
+    body = await request.json()
+    message = body.get("message", "")
+    if not message:
+        return {"error": "message field required"}
+
+    settings = get_settings()
+    registry = get_registry(settings)
+
+    from .semantic_router import route as semantic_route
+    from .arg_extractor import extract_args
+
+    try:
+        match = await semantic_route(message, settings, registry.skills)
+    except Exception as e:
+        return {"message": message, "error": str(e)}
+
+    result = {"message": message, "match": None}
+    if match:
+        args = extract_args(message, match.skill, match.action)
+        runner_up = match.top_skills[1][1] if len(match.top_skills) > 1 else 0.0
+        gap = match.skill_similarity - runner_up
+        high = settings.semantic_router_high_threshold
+        action_thresh = settings.semantic_router_action_threshold
+        low = settings.semantic_router_low_threshold
+
+        is_high = (
+            match.skill_similarity >= high
+            and match.action_similarity >= action_thresh
+            and gap >= 0.15
+        )
+        zone = (
+            "HIGH" if is_high
+            else "MEDIUM" if match.skill_similarity >= low
+            else "LOW"
+        )
+
+        result["match"] = {
+            "skill": match.skill,
+            "action": match.action,
+            "skill_similarity": round(match.skill_similarity, 4),
+            "action_similarity": round(match.action_similarity, 4),
+            "gap": round(gap, 4),
+            "top_skills": [
+                {"skill": s, "score": round(sc, 4)}
+                for s, sc in match.top_skills[:5]
+            ],
+            "extracted_args": args,
+            "zone": zone,
+        }
+
+    return result
+
+
 @app.post("/reload-embeddings")
 async def reload_embeddings():
     """Force re-computation of semantic router embeddings."""

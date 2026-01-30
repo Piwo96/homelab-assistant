@@ -112,6 +112,9 @@ async def classify_intent(
             description="Keine Skills geladen. Bitte Skills in .claude/skills/ prüfen.",
         )
 
+    # Filter tools to only configured skills (reduces LLM token usage)
+    active_tools = _get_active_tools(registry, settings)
+
     # --- STAGE 1: Semantic Router (fast, no LLM) ---
     try:
         from .semantic_router import route as semantic_route
@@ -132,15 +135,25 @@ async def classify_intent(
             low = settings.semantic_router_low_threshold
 
             # HIGH confidence: skip LLM entirely
+            # Gap check: ensure clear separation from 2nd-best skill
+            # to avoid ambiguous direct routing (e.g. "Licht" matching
+            # both Protect floodlight and HA room lights)
+            runner_up_score = (
+                match.top_skills[1][1] if len(match.top_skills) > 1 else 0.0
+            )
+            gap = match.skill_similarity - runner_up_score
+
             if (
                 match.skill_similarity >= high
                 and match.action is not None
                 and match.action_similarity >= action_thresh
+                and gap >= 0.15
             ):
                 args = extract_args(message, match.skill, match.action)
                 logger.info(
                     f"Semantic router HIGH confidence -> direct route "
-                    f"to {match.skill}:{match.action}"
+                    f"to {match.skill}:{match.action} "
+                    f"(gap={gap:.3f} vs #{2}: {runner_up_score:.3f})"
                 )
                 return IntentResult(
                     skill=match.skill,
@@ -153,11 +166,12 @@ async def classify_intent(
             # MEDIUM confidence: narrow LLM to top skills
             if match.skill_similarity >= low:
                 logger.info(
-                    f"Semantic router MEDIUM confidence -> "
+                    f"Semantic router MEDIUM confidence (gap={gap:.3f}) -> "
                     f"narrowing LLM to top skills"
                 )
                 return await _classify_with_narrowed_tools(
-                    message, settings, registry, match, history or []
+                    message, settings, match, history or [],
+                    active_tools,
                 )
 
             # LOW confidence: likely smalltalk, send to LLM without tools
@@ -174,16 +188,43 @@ async def classify_intent(
 
     # --- STAGE 2: Full LLM fallback ---
     return await _classify_with_llm(
-        message, settings, registry.get_tools_json(), history or []
+        message, settings, active_tools, history or []
     )
+
+
+def _get_active_tools(registry, settings: Settings) -> List[Dict[str, Any]]:
+    """Get tools filtered to configured skills only.
+
+    Uses semantic_router_skills setting to limit which tools
+    are available to the LLM. Empty setting = all tools.
+    """
+    allowed = settings.semantic_router_skills.strip()
+    if not allowed:
+        return registry.get_tools_json()
+
+    allowed_set = {s.strip().replace("-", "_") for s in allowed.split(",")}
+    filtered = [
+        t for t in registry.get_tools_json()
+        if t["function"]["name"] in allowed_set
+    ]
+
+    if not filtered:
+        logger.warning("No tools matched active skills filter, using all tools")
+        return registry.get_tools_json()
+
+    logger.debug(
+        f"Active tools: {[t['function']['name'] for t in filtered]} "
+        f"({len(filtered)}/{len(registry.get_tools_json())})"
+    )
+    return filtered
 
 
 async def _classify_with_narrowed_tools(
     message: str,
     settings: Settings,
-    registry,
     match,
     history: List[Dict[str, str]],
+    active_tools: List[Dict[str, Any]],
 ) -> IntentResult:
     """Call LLM with only the top-matched skills as tools.
 
@@ -191,17 +232,16 @@ async def _classify_with_narrowed_tools(
     fewer, more relevant tools to choose from.
     """
     # Pick top 2 skills from semantic match
-    top_skill_names = [name for name, _ in match.top_skills[:2]]
+    top_skill_names = [name.replace("-", "_") for name, _ in match.top_skills[:2]]
 
-    # Build filtered tool list
-    narrowed_tools = []
-    for tool in registry.get_tools_json():
-        tool_name = tool["function"]["name"].replace("_", "-")
-        if tool_name in top_skill_names:
-            narrowed_tools.append(tool)
+    # Narrow from active tools (already filtered to configured skills)
+    narrowed_tools = [
+        t for t in active_tools
+        if t["function"]["name"] in top_skill_names
+    ]
 
     if not narrowed_tools:
-        narrowed_tools = registry.get_tools_json()
+        narrowed_tools = active_tools
 
     logger.info(
         f"Narrowed LLM tools to {len(narrowed_tools)}: "
