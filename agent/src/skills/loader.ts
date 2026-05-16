@@ -44,7 +44,7 @@ async function listScriptFiles(dir: string): Promise<string[]> {
 
 async function fetchHelpJson(scriptPath: string): Promise<HelpJsonScript> {
   const proc = Bun.spawn({
-    cmd: ['python', scriptPath, '--help-json'],
+    cmd: [process.env.PYTHON_BIN || 'python3', scriptPath, '--help-json'],
     stdout: 'pipe',
     stderr: 'pipe',
     cwd: dirname(scriptPath),

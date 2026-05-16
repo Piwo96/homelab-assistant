@@ -54,7 +54,7 @@ export async function runSkillCommand(
   const timeoutMs = options.timeoutMs ?? 30_000;
   const argv = buildArgv(command, args, positionalArgs);
   const proc = Bun.spawn({
-    cmd: ['python', scriptPath, ...argv],
+    cmd: [process.env.PYTHON_BIN || 'python3', scriptPath, ...argv],
     stdout: 'pipe',
     stderr: 'pipe',
   });
