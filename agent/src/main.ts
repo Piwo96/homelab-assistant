@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { loadEnv } from './config/env';
 import { openDb } from './memory/db';
 import { loadSkills } from './skills/loader';
@@ -9,11 +9,19 @@ import { buildGenerator } from './llm/generate';
 import { startServer } from './server';
 import { log } from './utils/logger';
 
+const REPO_ROOT = resolve(import.meta.dir, '../../');
+
+function resolveRepoPath(p: string): string {
+  return isAbsolute(p) ? p : resolve(REPO_ROOT, p);
+}
+
 async function main(): Promise<void> {
   const env = loadEnv();
-  const db = openDb(join(env.DATA_DIR, 'conversations.db'));
+  const dataDir = resolveRepoPath(env.DATA_DIR);
+  const skillsRoot = resolveRepoPath(env.SKILLS_ROOT);
+  const db = openDb(join(dataDir, 'conversations.db'));
 
-  const skills = await loadSkills(env.SKILLS_ROOT, ['homeassistant']);
+  const skills = await loadSkills(skillsRoot, ['homeassistant']);
   if (skills.length === 0) throw new Error('No skills loaded');
   const registry = new SkillRegistry();
   registry.replaceAll(skills);
@@ -26,7 +34,7 @@ async function main(): Promise<void> {
     commandDescriptions: s.tools.map(t => t.description),
   }));
   const cacheKey = await computeCacheKey(env.EMBEDDING_MODEL, cacheable);
-  const cachePath = join(env.DATA_DIR, 'embedding_cache.json');
+  const cachePath = join(dataDir, 'embedding_cache.json');
   let cache = await loadCache(cachePath);
   if (!cache || cache.key !== cacheKey) {
     log.info('embedding_cache_rebuild');
