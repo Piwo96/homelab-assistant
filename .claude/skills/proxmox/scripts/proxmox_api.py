@@ -322,6 +322,26 @@ class ProxmoxAPI:
             result["exitstatus"] = status.get("exitstatus")
         return result
 
+    def delete_lxc(self, node: str, vmid: int, force: bool = False,
+                   timeout: float = 120.0) -> dict:
+        """Shutdown then destroy an LXC container.
+
+        Args:
+            node: cluster node.
+            vmid: container ID.
+            force: if True, hard-stop instead of graceful shutdown when running.
+            timeout: max wait per phase (shutdown, destroy).
+        """
+        status = self.get(f"/nodes/{node}/lxc/{vmid}/status/current")
+        if status.get("status") == "running":
+            stop_action = "stop" if force else "shutdown"
+            upid = self.post(f"/nodes/{node}/lxc/{vmid}/status/{stop_action}")
+            self.wait_task(node, upid, timeout=timeout)
+
+        destroy_upid = self.delete(f"/nodes/{node}/lxc/{vmid}")
+        self.wait_task(node, destroy_upid, timeout=timeout)
+        return {"vmid": vmid, "deleted": True}
+
 
 def execute(action: str, args: dict) -> Any:
     """Execute a Proxmox action directly (no CLI).
@@ -433,6 +453,10 @@ def execute(action: str, args: dict) -> Any:
             nameserver=args.get("nameserver"),
             timeout=float(args.get("timeout", 600.0)),
         )
+    elif action == "delete-lxc":
+        return api.delete_lxc(args["node"], int(args["vmid"]),
+                              force=bool(args.get("force", False)),
+                              timeout=float(args.get("timeout", 120.0)))
     else:
         raise ValueError(f"Unknown action: {action}")
 
@@ -592,6 +616,14 @@ def main():
     create_lxc.add_argument("--timeout", type=float, default=600.0,
                             help="Max wait seconds for the create task")
 
+    # Delete LXC
+    delete_lxc = subparsers.add_parser("delete-lxc", help="Stop and destroy an LXC")
+    delete_lxc.add_argument("vmid", type=int, help="Container ID")
+    delete_lxc.add_argument("--node", help="Node name (auto-detected)")
+    delete_lxc.add_argument("--force", action="store_true",
+                            help="Hard-stop instead of graceful shutdown")
+    delete_lxc.add_argument("--timeout", type=float, default=120.0)
+
     args = parser.parse_args()
 
     if not args.command:
@@ -605,7 +637,7 @@ def main():
     # Auto-detect node for commands that support it
     commands_with_optional_node = ["node-status", "vms", "containers", "overview",
                                     "start", "stop", "shutdown", "reboot", "templates",
-                                    "wait-task", "create-lxc"]
+                                    "wait-task", "create-lxc", "delete-lxc"]
     if args.command in commands_with_optional_node:
         provided_node = getattr(args, "node", None)
         if not provided_node:
@@ -811,6 +843,9 @@ def main():
             "unprivileged": args.unprivileged, "start": args.start,
             "nameserver": args.nameserver, "timeout": args.timeout,
         })
+    elif args.command == "delete-lxc":
+        result = execute("delete-lxc", {"node": args.node, "vmid": args.vmid,
+                                         "force": args.force, "timeout": args.timeout})
 
     if result is not None:
         print(format_output(result, output_format))

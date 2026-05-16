@@ -216,3 +216,44 @@ def test_create_lxc_auto_vmid(monkeypatch):
     body = post_call.kwargs["data"]
     assert "ip=dhcp" in body["net0"]
     assert "gw=" not in body["net0"]
+
+
+def test_delete_lxc_graceful(monkeypatch):
+    """Shutdown then destroy, waiting for each task."""
+    api = proxmox_api.ProxmoxAPI()
+    upid_shutdown = "UPID:pve:fake:vzshutdown:200:"
+    upid_destroy = "UPID:pve:fake:vzdestroy:200:"
+    seq = [
+        # GET status (running)
+        _mock_response({"data": {"status": "running"}}),
+        # POST shutdown
+        _mock_response({"data": upid_shutdown}),
+        # wait_task → stopped/OK
+        _mock_response({"data": {"status": "stopped", "exitstatus": "OK"}}),
+        # DELETE → upid
+        _mock_response({"data": upid_destroy}),
+        # wait_task → stopped/OK
+        _mock_response({"data": {"status": "stopped", "exitstatus": "OK"}}),
+    ]
+    with patch("proxmox_api.requests.request", side_effect=seq):
+        with patch("proxmox_api.time.sleep"):
+            result = api.delete_lxc("pve", 200)
+    assert result["vmid"] == 200
+    assert result["deleted"] is True
+
+
+def test_delete_lxc_already_stopped(monkeypatch):
+    """Skip shutdown when container is already stopped."""
+    api = proxmox_api.ProxmoxAPI()
+    upid_destroy = "UPID:pve:fake:vzdestroy:200:"
+    seq = [
+        _mock_response({"data": {"status": "stopped"}}),
+        _mock_response({"data": upid_destroy}),
+        _mock_response({"data": {"status": "stopped", "exitstatus": "OK"}}),
+    ]
+    with patch("proxmox_api.requests.request", side_effect=seq) as mock_req:
+        with patch("proxmox_api.time.sleep"):
+            result = api.delete_lxc("pve", 200)
+    assert result["deleted"] is True
+    # Only 3 calls: status, DELETE, wait — no shutdown POST
+    assert mock_req.call_count == 3
