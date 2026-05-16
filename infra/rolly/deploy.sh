@@ -8,6 +8,16 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 PROXMOX_API="$REPO_ROOT/.claude/skills/proxmox/scripts/proxmox_api.py"
 
+# SSH identity: defaults to id_ed25519 (passphraseless or agent-loaded).
+# Override via SSH_KEY_PATH env var to point at a different public key
+# (private key path is derived by stripping .pub).
+SSH_PUB="${SSH_KEY_PATH:-$HOME/.ssh/id_ed25519.pub}"
+SSH_PRIV="${SSH_PUB%.pub}"
+SSH_BASE_OPTS=(-o StrictHostKeyChecking=accept-new
+               -o UserKnownHostsFile=/dev/null
+               -o BatchMode=yes -o ConnectTimeout=5
+               -o IdentitiesOnly=yes -i "$SSH_PRIV")
+
 log()  { printf "\n\033[1;34m▶ %s\033[0m\n" "$1"; }
 ok()   { printf "  \033[1;32m✓\033[0m %s\n" "$1"; }
 fail() { printf "  \033[1;31m✗\033[0m %s\n" "$1" >&2; exit 1; }
@@ -141,24 +151,20 @@ create_lxc_if_needed() {
 # --- 5b. Inject Mac's SSH key into the LXC via Proxmox host ---
 inject_ssh_key() {
     log "Installing SSH key in LXC via Proxmox host (pct push)"
-    local pubkey_path="${SSH_KEY_PATH:-$HOME/.ssh/id_rsa.pub}"
-    [ -f "$pubkey_path" ] || fail "SSH key not found: $pubkey_path"
-
-    local ssh_opts=(-o StrictHostKeyChecking=accept-new
-                    -o UserKnownHostsFile=/dev/null
-                    -o BatchMode=yes -o ConnectTimeout=5)
+    [ -f "$SSH_PUB" ] || fail "SSH key not found: $SSH_PUB"
+    [ -f "$SSH_PRIV" ] || fail "SSH private key not found: $SSH_PRIV"
 
     # Verify Proxmox-host SSH works (prerequisite: ssh-copy-id root@$PROXMOX_HOST done once)
-    ssh "${ssh_opts[@]}" "root@$PROXMOX_HOST" "echo ok" >/dev/null \
-        || fail "Cannot SSH to Proxmox host root@$PROXMOX_HOST. Run once: ssh-copy-id root@$PROXMOX_HOST"
+    ssh "${SSH_BASE_OPTS[@]}" "root@$PROXMOX_HOST" "echo ok" >/dev/null \
+        || fail "Cannot SSH to Proxmox host root@$PROXMOX_HOST with key $SSH_PRIV. Run once: ssh-copy-id -i $SSH_PUB root@$PROXMOX_HOST"
 
     # Wait briefly for the LXC to finish booting before pct exec works
     sleep 5
 
     # SCP key to Proxmox host, then pct push into LXC
-    scp "${ssh_opts[@]}" "$pubkey_path" "root@$PROXMOX_HOST:/tmp/rolly_authkey.pub" >/dev/null \
+    scp "${SSH_BASE_OPTS[@]}" "$SSH_PUB" "root@$PROXMOX_HOST:/tmp/rolly_authkey.pub" >/dev/null \
         || fail "scp to Proxmox host failed"
-    ssh "${ssh_opts[@]}" "root@$PROXMOX_HOST" "
+    ssh "${SSH_BASE_OPTS[@]}" "root@$PROXMOX_HOST" "
         set -e
         pct exec $VMID -- mkdir -p /root/.ssh
         pct push $VMID /tmp/rolly_authkey.pub /root/.ssh/authorized_keys
@@ -173,10 +179,7 @@ inject_ssh_key() {
 wait_for_ssh() {
     log "Waiting for SSH on $LXC_IP"
     for i in $(seq 1 40); do  # 40 × 3s = 2 min
-        if ssh -o ConnectTimeout=3 -o BatchMode=yes \
-               -o StrictHostKeyChecking=accept-new \
-               -o UserKnownHostsFile=/dev/null \
-               "root@$LXC_IP" "echo ok" >/dev/null 2>&1; then
+        if ssh "${SSH_BASE_OPTS[@]}" "root@$LXC_IP" "echo ok" >/dev/null 2>&1; then
             ok "SSH up after ${i} attempts"
             return
         fi
@@ -208,8 +211,7 @@ DUCKDNS_HOST=$DUCKDNS_HOST
 DUCKDNS_TOKEN=$DUCKDNS_TOKEN
 EOF
 
-    local ssh_opts=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes)
-    scp "${ssh_opts[@]}" \
+    scp "${SSH_BASE_OPTS[@]}" \
         "$tmpdir/.env" \
         "$SCRIPT_DIR/setup-lxc.sh" \
         "$SCRIPT_DIR/Caddyfile.tmpl" \
@@ -224,16 +226,14 @@ EOF
 # --- 8. Run setup in LXC ---
 run_setup() {
     log "Running setup-lxc.sh inside LXC (this is the long step)"
-    ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
-        "root@$LXC_IP" "bash /root/setup-lxc.sh"
+    ssh "${SSH_BASE_OPTS[@]}" "root@$LXC_IP" "bash /root/setup-lxc.sh"
     ok "Setup completed inside LXC"
 }
 
 # --- 9. End-to-end health checks ---
 health_checks() {
     log "End-to-end health checks"
-    ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
-        "root@$LXC_IP" "curl -fsS http://127.0.0.1:${PORT}/health" >/dev/null \
+    ssh "${SSH_BASE_OPTS[@]}" "root@$LXC_IP" "curl -fsS http://127.0.0.1:${PORT}/health" >/dev/null \
         || fail "Internal /health failed"
     ok "Internal /health OK"
 
