@@ -61,7 +61,9 @@ def test_list_templates_returns_vztmpl_only():
     assert len(templates) == 1
     assert templates[0]["volid"].startswith("local:vztmpl/")
     # Verify endpoint includes content=vztmpl filter (sent in URL query string)
+    method = mock_req.call_args.args[0]
     url = mock_req.call_args.args[1]
+    assert method == "GET"
     assert "content=vztmpl" in url
 
 
@@ -73,8 +75,12 @@ def test_templates_cli_dispatch(monkeypatch, capsys):
     ]
     monkeypatch.setattr(sys, "argv",
                         ["proxmox_api.py", "--json", "templates", "pve"])
-    with patch("proxmox_api.requests.request",
-               return_value=_mock_response({"data": sample_data})):
+    # main() validates the node by calling get_nodes() first, then runs list_templates()
+    responses = [
+        _mock_response({"data": [{"node": "pve"}]}),   # get_nodes() for node validation
+        _mock_response({"data": sample_data}),          # list_templates() actual call
+    ]
+    with patch("proxmox_api.requests.request", side_effect=responses):
         proxmox_api.main()
     out = capsys.readouterr().out
     assert "debian-12-standard" in out

@@ -198,7 +198,10 @@ class ProxmoxAPI:
         items = self.get(f"/nodes/{node}/storage/{storage}/content?content=vztmpl")
         if not isinstance(items, list):
             return []
-        return [it for it in items if str(it.get("volid", "")).startswith(f"{storage}:vztmpl/")]
+        return [
+            it for it in items
+            if str(it.get("volid", "")).startswith(f"{storage}:vztmpl/")
+        ]
 
     # Mount operations
     def add_mount_to_lxc(
