@@ -1,0 +1,24 @@
+[Unit]
+Description=Rolly Telegram Bot (Bun)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/rolly/agent
+EnvironmentFile=/opt/rolly/.env
+ExecStart=/root/.bun/bin/bun run src/main.ts
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+# Light hardening — LXC already isolates
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

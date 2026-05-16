@@ -1,0 +1,14 @@
+{
+    email letsencrypt-${DUCKDNS_HOST}@duckdns.org
+    # DNS-01 challenge via DuckDNS (no port 80 needed)
+    acme_dns duckdns ${DUCKDNS_TOKEN}
+}
+
+${DUCKDNS_HOST}:${PUBLIC_PORT} {
+    reverse_proxy 127.0.0.1:${PORT}
+    encode gzip
+    log {
+        output file /var/log/caddy/rolly.access.log
+        format console
+    }
+}
