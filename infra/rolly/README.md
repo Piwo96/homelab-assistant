@@ -52,10 +52,16 @@ The Mac's `~/.ssh/id_rsa.pub` is injected into the LXC for passwordless SSH. If 
 
 ## Deploy
 
+`deploy.sh` sources two files in order:
+1. The project's root `.env` (your existing skill credentials — `TELEGRAM_BOT_TOKEN`, `HOMEASSISTANT_*`, `PIHOLE_*`, `PROTECT_*`, `UNIFI_*`, `PROXMOX_*`, `LM_STUDIO_*`, `ADMIN_TELEGRAM_ID`, etc.)
+2. `infra/rolly/config.env` (deploy-specific: LXC sizing, DuckDNS token, public port)
+
+You only need to fill `config.env` — your existing skill credentials in the root `.env` are reused automatically.
+
 ```bash
 cd infra/rolly
 cp config.env.example config.env
-# Edit config.env with your real values (see comments in the file)
+# Edit config.env — only DUCKDNS_TOKEN is missing on a fresh checkout
 ./deploy.sh
 ```
 

@@ -14,7 +14,17 @@ fail() { printf "  \033[1;31m✗\033[0m %s\n" "$1" >&2; exit 1; }
 
 # --- 1. Load + validate config ---
 load_config() {
-    log "Loading infra/rolly/config.env"
+    log "Loading config"
+    # Step A: source the project's root .env (skill creds — HOMEASSISTANT_*,
+    # PIHOLE_*, PROTECT_*, UNIFI_*, PROXMOX_*, TELEGRAM_*, LM_STUDIO_*, etc.)
+    [ -f "$REPO_ROOT/.env" ] || fail "Missing $REPO_ROOT/.env (skill credentials)"
+    set -a
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/.env"
+    set +a
+    ok "Loaded $REPO_ROOT/.env"
+
+    # Step B: source infra/rolly/config.env (deploy-specific settings)
     [ -f "$SCRIPT_DIR/config.env" ] || fail "Missing $SCRIPT_DIR/config.env (copy from config.env.example)"
     set -a
     # shellcheck disable=SC1091
@@ -26,12 +36,12 @@ load_config() {
                     LXC_CORES LXC_MEMORY_MB LXC_DISK_GB LXC_STORAGE LXC_TEMPLATE_PREFIX
                     DUCKDNS_HOST DUCKDNS_TOKEN PUBLIC_PORT
                     TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS ADMIN_TELEGRAM_ID
-                    LM_STUDIO_URL HA_URL HA_TOKEN PORT)
+                    LM_STUDIO_URL LM_STUDIO_MODEL)
     for v in "${required[@]}"; do
         [ -n "${!v:-}" ] || fail "Missing required variable: $v"
     done
 
-    # Generate missing secrets
+    # Generate missing secrets if absent from either env file
     if [ -z "${TELEGRAM_WEBHOOK_SECRET:-}" ]; then
         TELEGRAM_WEBHOOK_SECRET=$(openssl rand -hex 32)
         ok "Generated TELEGRAM_WEBHOOK_SECRET"
@@ -40,6 +50,7 @@ load_config() {
         INTERNAL_NOTIFY_TOKEN=$(openssl rand -hex 32)
         ok "Generated INTERNAL_NOTIFY_TOKEN"
     fi
+    PORT="${PORT:-8080}"
 
     LXC_IP="${LXC_IP_CIDR%%/*}"  # strip CIDR for SSH target
     ok "Config validated. Target IP: $LXC_IP"
@@ -127,29 +138,22 @@ upload_artifacts() {
     local tmpdir
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
-    # Build the .env from current shell env (only the agent-relevant vars)
-    cat > "$tmpdir/.env" <<EOF
-TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
+    # The LXC's .env = the project's root .env (skill creds in their native names:
+    # HOMEASSISTANT_*, PIHOLE_*, PROTECT_*, UNIFI_*, PROXMOX_*, LM_STUDIO_*,
+    # TELEGRAM_*) plus the deploy-specific additions below.
+    install -m 600 /dev/null "$tmpdir/.env"
+    cp "$REPO_ROOT/.env" "$tmpdir/.env"
+    chmod 600 "$tmpdir/.env"
+    cat >> "$tmpdir/.env" <<EOF
+
+# --- Added by infra/rolly/deploy.sh ---
 TELEGRAM_WEBHOOK_SECRET=$TELEGRAM_WEBHOOK_SECRET
-TELEGRAM_ALLOWED_USERS=$TELEGRAM_ALLOWED_USERS
-ADMIN_TELEGRAM_ID=$ADMIN_TELEGRAM_ID
-LM_STUDIO_URL=$LM_STUDIO_URL
-LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-gemma-4-e4b}
-EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
-HA_URL=$HA_URL
-HA_TOKEN=$HA_TOKEN
-GAMING_PC_IP=${GAMING_PC_IP:-}
-GAMING_PC_MAC=${GAMING_PC_MAC:-}
 INTERNAL_NOTIFY_TOKEN=$INTERNAL_NOTIFY_TOKEN
 PORT=$PORT
 PUBLIC_PORT=$PUBLIC_PORT
 DUCKDNS_HOST=$DUCKDNS_HOST
 DUCKDNS_TOKEN=$DUCKDNS_TOKEN
-PROXMOX_HOST=$PROXMOX_HOST
-PROXMOX_TOKEN_ID=$PROXMOX_TOKEN_ID
-PROXMOX_TOKEN_SECRET=$PROXMOX_TOKEN_SECRET
 EOF
-    chmod 600 "$tmpdir/.env"
 
     local ssh_opts=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes)
     scp "${ssh_opts[@]}" \
