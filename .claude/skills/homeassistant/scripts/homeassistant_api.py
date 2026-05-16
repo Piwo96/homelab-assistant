@@ -289,6 +289,11 @@ def execute(action: str, args: dict) -> Any:
             states = [s for s in states if s["state"] == args["state"]]
         if args.get("area"):
             states = [s for s in states if s.get("attributes", {}).get("area_id") == args["area"]]
+        if args.get("name"):
+            states = [
+                s for s in states
+                if _name_matches(args["name"], s["entity_id"], s.get("attributes", {}).get("friendly_name") or "")
+            ]
         limit = int(args["limit"]) if args.get("limit") else 50
         return states[:limit]
     elif action == "get-state":
@@ -360,6 +365,34 @@ def execute(action: str, args: dict) -> Any:
         raise ValueError(f"Unknown action: {action}")
 
 
+def _name_matches(needle: str, *texts: str) -> bool:
+    """Fuzzy substring/prefix match used by the `entities --name` filter.
+
+    Strategy (case-insensitive, applied across the union of all provided texts
+    with underscores treated as word separators):
+      1. Plain substring match against the haystack (handles 'wandleuchten'
+         finding 'Wandleuchten Schlafzimmer').
+      2. Word-prefix match: any prefix of the needle ≥3 chars matches the
+         start of any word in the haystack. This handles German compounds:
+         'esszimmer' (needle) → tries prefixes 'esszi', 'essz', 'ess' → 'ess'
+         matches words 'ess' and 'essen' in HA's naming.
+    """
+    if not needle:
+        return False
+    n = needle.lower()
+    haystack = " ".join(texts).lower().replace("_", " ")
+    if n in haystack:
+        return True
+    if len(n) >= 3:
+        words = haystack.split()
+        for length in range(min(len(n), 8), 2, -1):
+            prefix = n[:length]
+            for w in words:
+                if w.startswith(prefix):
+                    return True
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -402,16 +435,21 @@ def main():
     entities = subparsers.add_parser(
         "entities",
         help=(
-            "List Home Assistant entities, optionally filtered by domain / state / area. "
-            "Use for discovery: 'welche Lampen gibt es', 'zeig mir alle Sensoren im Wohnzimmer', "
-            "'welche Geräte sind gerade an', 'liste mir die Rollos'. "
-            "Filter --domain by HA domain (light, switch, sensor, cover for rollos/jalousien, "
-            "climate for heating, media_player, binary_sensor, scene, automation, script)."
+            "List/discover Home Assistant entities. Filter by domain, state, area, and/or name. "
+            "DISCOVERY STRATEGY when the user names a room or thing but you don't know the exact "
+            "entity_id: try --name with a substring of what the user said (e.g. 'esszimmer', "
+            "'wohnzimmer', 'küche', 'lampe'). --name matches case-insensitive on BOTH entity_id "
+            "and friendly_name, so it catches 'light.esszimmer_decke', 'Esszimmerlampe', "
+            "'Wandleuchten Schlafzimmer', etc. Use this BEFORE turn-on/turn-off when you only "
+            "know the room or a partial name — discover the entity_id, then call turn-on/off "
+            "with the exact id. Combine filters as needed (e.g. --domain light --name esszimmer). "
+            "If --area returns nothing, fall back to --name with the same word."
         ),
     )
-    entities.add_argument("--domain", help="HA domain filter: light, switch, sensor, cover, climate, media_player, ...")
+    entities.add_argument("--domain", help="HA domain filter: light, switch, sensor, cover (rollos/jalousien), climate (heating), media_player, scene, automation, script, ...")
     entities.add_argument("--state", help="State filter: on, off, home, away, unavailable, ...")
-    entities.add_argument("--area", help="Area / room filter, e.g. Wohnzimmer, Küche, Schlafzimmer")
+    entities.add_argument("--area", help="Exact area_id filter (e.g. wohnzimmer, kueche). Strict — if HA doesn't have this area, returns []")
+    entities.add_argument("--name", help="Case-insensitive substring matched against entity_id AND friendly_name. Best fallback when the exact id is unknown.")
 
     get_state = subparsers.add_parser(
         "get-state",
@@ -628,6 +666,11 @@ def main():
             states = [s for s in states if s["state"] == args.state]
         if args.area:
             states = [s for s in states if s.get("attributes", {}).get("area_id") == args.area]
+        if args.name:
+            states = [
+                s for s in states
+                if _name_matches(args.name, s["entity_id"], s.get("attributes", {}).get("friendly_name") or "")
+            ]
 
         if args.json:
             result = states
