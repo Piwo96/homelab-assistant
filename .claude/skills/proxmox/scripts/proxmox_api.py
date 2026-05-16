@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -240,6 +241,37 @@ class ProxmoxAPI:
         """Rollback to snapshot."""
         return self.post(f"/nodes/{node}/{vm_type}/{vmid}/snapshot/{name}/rollback")
 
+    # Task operations
+    def wait_task(self, node: str, upid: str, interval: float = 2.0,
+                  timeout: float = 600.0) -> dict:
+        """Poll a Proxmox task UPID until terminal state.
+
+        Args:
+            node: cluster node name.
+            upid: task identifier returned by an async API call.
+            interval: seconds between polls.
+            timeout: max total wait in seconds.
+
+        Returns:
+            { "exitstatus": "OK", ... } on success.
+
+        Raises:
+            RuntimeError: task finished with non-OK exitstatus.
+            TimeoutError: task still running after `timeout` seconds.
+        """
+        deadline = time.monotonic() + timeout
+        endpoint = f"/nodes/{node}/tasks/{upid}/status"
+        while True:
+            status = self.get(endpoint)
+            if status.get("status") == "stopped":
+                exit_status = status.get("exitstatus", "")
+                if exit_status != "OK":
+                    raise RuntimeError(f"Task {upid} failed: {exit_status}")
+                return status
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Task {upid} did not finish within {timeout}s")
+            time.sleep(interval)
+
 
 def execute(action: str, args: dict) -> Any:
     """Execute a Proxmox action directly (no CLI).
@@ -328,6 +360,10 @@ def execute(action: str, args: dict) -> Any:
         }
     elif action == "templates":
         return api.list_templates(args["node"], args.get("storage", "local"))
+    elif action == "wait-task":
+        return api.wait_task(args["node"], args["upid"],
+                             interval=float(args.get("interval", 2.0)),
+                             timeout=float(args.get("timeout", 600.0)))
     else:
         raise ValueError(f"Unknown action: {action}")
 
@@ -454,6 +490,13 @@ def main():
     templates.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
     templates.add_argument("--storage", default="local", help="Storage name (default: local)")
 
+    # Wait for task
+    wait_task = subparsers.add_parser("wait-task", help="Poll a Proxmox task until done")
+    wait_task.add_argument("upid", help="Task UPID returned by an async call")
+    wait_task.add_argument("--node", help="Node name (auto-detected if omitted)")
+    wait_task.add_argument("--interval", type=float, default=2.0, help="Poll interval seconds")
+    wait_task.add_argument("--timeout", type=float, default=600.0, help="Max wait seconds")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -466,7 +509,8 @@ def main():
 
     # Auto-detect node for commands that support it
     commands_with_optional_node = ["node-status", "vms", "containers", "overview",
-                                    "start", "stop", "shutdown", "reboot", "templates"]
+                                    "start", "stop", "shutdown", "reboot", "templates",
+                                    "wait-task"]
     if args.command in commands_with_optional_node:
         provided_node = getattr(args, "node", None)
         if not provided_node:
@@ -660,6 +704,9 @@ def main():
         return
     elif args.command == "templates":
         result = execute("templates", {"node": args.node, "storage": args.storage})
+    elif args.command == "wait-task":
+        result = execute("wait-task", {"node": args.node, "upid": args.upid,
+                                        "interval": args.interval, "timeout": args.timeout})
 
     if result is not None:
         print(format_output(result, output_format))

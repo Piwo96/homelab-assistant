@@ -84,3 +84,47 @@ def test_templates_cli_dispatch(monkeypatch, capsys):
         proxmox_api.main()
     out = capsys.readouterr().out
     assert "debian-12-standard" in out
+
+
+def test_wait_task_success(monkeypatch):
+    """Polls until status=stopped, returns exitstatus."""
+    api = proxmox_api.ProxmoxAPI()
+    # Simulate two "running" polls then "stopped/OK"
+    responses_seq = [
+        _mock_response({"data": {"status": "running"}}),
+        _mock_response({"data": {"status": "running"}}),
+        _mock_response({"data": {"status": "stopped", "exitstatus": "OK"}}),
+    ]
+    with patch("proxmox_api.requests.request", side_effect=responses_seq):
+        # Patch sleep so we don't actually wait
+        with patch("proxmox_api.time.sleep") as mock_sleep:
+            result = api.wait_task("pve", "UPID:pve:1234", interval=2, timeout=60)
+    assert result["exitstatus"] == "OK"
+    assert mock_sleep.call_count == 2  # sleeps before re-poll, not after final
+
+
+def test_wait_task_failure(monkeypatch):
+    """Non-OK exitstatus surfaces as RuntimeError."""
+    api = proxmox_api.ProxmoxAPI()
+    with patch("proxmox_api.requests.request",
+               return_value=_mock_response(
+                   {"data": {"status": "stopped", "exitstatus": "command 'lxc-start' failed"}})):
+        with patch("proxmox_api.time.sleep"):
+            with pytest.raises(RuntimeError, match="lxc-start"):
+                api.wait_task("pve", "UPID:pve:1234", interval=2, timeout=60)
+
+
+def test_wait_task_timeout(monkeypatch):
+    """Returns TimeoutError when task never stops within timeout."""
+    api = proxmox_api.ProxmoxAPI()
+    with patch("proxmox_api.requests.request",
+               return_value=_mock_response({"data": {"status": "running"}})):
+        with patch("proxmox_api.time.sleep"):
+            # Need monotonic to advance so timeout triggers
+            t = [0.0]
+            def fake_monotonic():
+                t[0] += 5
+                return t[0]
+            with patch("proxmox_api.time.monotonic", side_effect=fake_monotonic):
+                with pytest.raises(TimeoutError):
+                    api.wait_task("pve", "UPID:pve:1234", interval=2, timeout=10)
