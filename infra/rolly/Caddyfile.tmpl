@@ -1,10 +1,17 @@
 {
     email letsencrypt-${DUCKDNS_HOST}@duckdns.org
-    # DNS-01 challenge via DuckDNS (no port 80 needed)
-    acme_dns duckdns ${DUCKDNS_TOKEN}
 }
 
 ${DUCKDNS_HOST}:${PUBLIC_PORT} {
+    tls {
+        # DNS-01 via DuckDNS — no inbound port 80 needed.
+        dns duckdns ${DUCKDNS_TOKEN}
+        # Skip self-check of DNS propagation: outbound UDP/TCP 53 to arbitrary
+        # IPs is blocked by FritzBox, so Caddy can't dial the authoritative
+        # nameservers directly. The DuckDNS API call already confirmed the
+        # TXT record was set — that's enough for Let's Encrypt.
+        propagation_timeout -1
+    }
     reverse_proxy 127.0.0.1:${PORT}
     encode gzip
     log {
