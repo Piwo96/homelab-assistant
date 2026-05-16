@@ -363,6 +363,7 @@ def execute(action: str, args: dict) -> Any:
 def main():
     parser = argparse.ArgumentParser(description="Home Assistant API Client")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--help-json", action="store_true", help="Print JSON command spec and exit")
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -385,12 +386,15 @@ def main():
     turn_on.add_argument("entity_id", help="Entity ID")
     turn_on.add_argument("--brightness", type=int, help="Brightness (0-255)")
     turn_on.add_argument("--color-temp", type=int, help="Color temperature (mireds)")
+    turn_on.set_defaults(_is_write=True)
 
     turn_off = subparsers.add_parser("turn-off", help="Turn off entity")
     turn_off.add_argument("entity_id", help="Entity ID")
+    turn_off.set_defaults(_is_write=True)
 
     toggle = subparsers.add_parser("toggle", help="Toggle entity")
     toggle.add_argument("entity_id", help="Entity ID")
+    toggle.set_defaults(_is_write=True)
 
     # Services
     call_service = subparsers.add_parser("call-service", help="Call a service")
@@ -398,18 +402,22 @@ def main():
     call_service.add_argument("service", help="Service name")
     call_service.add_argument("--entity", help="Entity ID")
     call_service.add_argument("--data", help="JSON data")
+    call_service.set_defaults(_is_write=True)
 
     # Automations
     subparsers.add_parser("list-automations", help="List automations")
 
     trigger = subparsers.add_parser("trigger", help="Trigger automation")
     trigger.add_argument("automation_id", help="Automation ID")
+    trigger.set_defaults(_is_write=True)
 
     enable_auto = subparsers.add_parser("enable", help="Enable automation")
     enable_auto.add_argument("automation_id", help="Automation ID")
+    enable_auto.set_defaults(_is_write=True)
 
     disable_auto = subparsers.add_parser("disable", help="Disable automation")
     disable_auto.add_argument("automation_id", help="Automation ID")
+    disable_auto.set_defaults(_is_write=True)
 
     subparsers.add_parser("reload-automations", help="Reload automations")
 
@@ -438,6 +446,11 @@ def main():
     logbook.add_argument("--hours", type=int, default=1, help="Hours to look back")
 
     args = parser.parse_args()
+
+    if getattr(args, "help_json", False):
+        from skill_helpers import emit_help_json
+        emit_help_json(parser)
+        return
 
     if not args.command:
         parser.print_help()

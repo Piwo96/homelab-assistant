@@ -260,6 +260,7 @@ async def execute(action: str, args: dict):
 
 async def main():
     parser = argparse.ArgumentParser(description="Home Assistant Dashboard API")
+    parser.add_argument("--help-json", action="store_true", help="Print JSON command spec and exit")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # Get config
@@ -271,6 +272,7 @@ async def main():
     set_cmd = subparsers.add_parser("set", help="Set dashboard configuration")
     set_cmd.add_argument("file", help="YAML or JSON file with dashboard config")
     set_cmd.add_argument("--dashboard", "-d", help="Dashboard URL path (default: main dashboard)")
+    set_cmd.set_defaults(_is_write=True)
 
     # List dashboards
     subparsers.add_parser("list", help="List all dashboards")
@@ -282,6 +284,11 @@ async def main():
     optimize_cmd.add_argument("--backup", action="store_true", help="Create backup before optimization")
     optimize_cmd.add_argument("--dry-run", action="store_true", help="Show what would be optimized without applying changes")
     args = parser.parse_args()
+
+    if getattr(args, "help_json", False):
+        from skill_helpers import emit_help_json
+        emit_help_json(parser)
+        return
 
     if not args.command:
         parser.print_help()
