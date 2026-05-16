@@ -186,6 +186,20 @@ class ProxmoxAPI:
         """Get storage content."""
         return self.get(f"/nodes/{node}/storage/{storage}/content")
 
+    def list_templates(self, node: str, storage: str = "local") -> list:
+        """List container templates (vztmpl) available on a storage.
+
+        Returns list of dicts with keys: volid, format, size.
+        Only vztmpl content is returned (ISO and backups filtered out).
+        """
+        # Proxmox content filter: ?content=vztmpl (server-side).
+        # Also filter client-side as a safety net in case the server
+        # returns unfiltered content (older Proxmox / proxied responses).
+        items = self.get(f"/nodes/{node}/storage/{storage}/content?content=vztmpl")
+        if not isinstance(items, list):
+            return []
+        return [it for it in items if str(it.get("volid", "")).startswith(f"{storage}:vztmpl/")]
+
     # Mount operations
     def add_mount_to_lxc(
         self,
@@ -309,6 +323,8 @@ def execute(action: str, args: dict) -> Any:
             "containers": api.get_containers(node),
             "storage": api.get_storage(node),
         }
+    elif action == "templates":
+        return api.list_templates(args["node"], args.get("storage", "local"))
     else:
         raise ValueError(f"Unknown action: {action}")
 
@@ -430,6 +446,11 @@ def main():
     overview = subparsers.add_parser("overview", help="Show node overview")
     overview.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
 
+    # Templates
+    templates = subparsers.add_parser("templates", help="List LXC templates on storage")
+    templates.add_argument("node", nargs="?", help="Node name (auto-detected if omitted)")
+    templates.add_argument("--storage", default="local", help="Storage name (default: local)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -441,7 +462,8 @@ def main():
     result = None
 
     # Auto-detect node for commands that support it
-    commands_with_optional_node = ["node-status", "vms", "containers", "overview", "start", "stop", "shutdown", "reboot"]
+    commands_with_optional_node = ["node-status", "vms", "containers", "overview",
+                                    "start", "stop", "shutdown", "reboot", "templates"]
     if args.command in commands_with_optional_node:
         provided_node = getattr(args, "node", None)
         if not provided_node:
@@ -633,6 +655,8 @@ def main():
         for st in storage:
             print(f"  - {st['storage']}: {st.get('type', 'unknown')}")
         return
+    elif args.command == "templates":
+        result = execute("templates", {"node": args.node, "storage": args.storage})
 
     if result is not None:
         print(format_output(result, output_format))

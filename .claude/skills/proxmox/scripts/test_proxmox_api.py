@@ -44,3 +44,37 @@ def test_get_nodes_smoke(monkeypatch):
     args, kwargs = mock_req.call_args
     assert args[0] == "GET"
     assert args[1].endswith("/nodes")
+
+
+def test_list_templates_returns_vztmpl_only():
+    api = proxmox_api.ProxmoxAPI()
+    sample = {
+        "data": [
+            {"volid": "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst",
+             "format": "tzst", "size": 200000000},
+            {"volid": "local:iso/some.iso", "format": "iso", "size": 9999},
+        ]
+    }
+    with patch("proxmox_api.requests.request",
+               return_value=_mock_response(sample)) as mock_req:
+        templates = api.list_templates("pve", "local")
+    assert len(templates) == 1
+    assert templates[0]["volid"].startswith("local:vztmpl/")
+    # Verify endpoint includes content=vztmpl filter (sent in URL query string)
+    url = mock_req.call_args.args[1]
+    assert "content=vztmpl" in url
+
+
+def test_templates_cli_dispatch(monkeypatch, capsys):
+    """End-to-end: invoking via main() with mocked HTTP returns JSON."""
+    sample_data = [
+        {"volid": "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst",
+         "format": "tzst", "size": 200000000}
+    ]
+    monkeypatch.setattr(sys, "argv",
+                        ["proxmox_api.py", "--json", "templates", "pve"])
+    with patch("proxmox_api.requests.request",
+               return_value=_mock_response({"data": sample_data})):
+        proxmox_api.main()
+    out = capsys.readouterr().out
+    assert "debian-12-standard" in out
