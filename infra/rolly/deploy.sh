@@ -124,9 +124,8 @@ create_lxc_if_needed() {
         return
     fi
     log "Creating LXC '$LXC_HOSTNAME'"
-    local pubkey
-    pubkey=$(cat "${SSH_KEY_PATH:-$HOME/.ssh/id_rsa.pub}")
-
+    # Key injection happens out-of-band via inject_ssh_key (Proxmox API's
+    # ssh-public-keys param is unreliable for some setups).
     local result
     result=$(python3 "$PROXMOX_API" --json create-lxc \
         --hostname "$LXC_HOSTNAME" \
@@ -134,10 +133,40 @@ create_lxc_if_needed() {
         --cores "$LXC_CORES" --memory "$LXC_MEMORY_MB" --disk "$LXC_DISK_GB" \
         --storage "$LXC_STORAGE" --bridge "$LXC_BRIDGE" \
         --ip "$LXC_IP_CIDR" --gateway "$LXC_GATEWAY" \
-        --ssh-key "$pubkey" \
         --nameserver "$LXC_GATEWAY")
     VMID=$(echo "$result" | python3 -c "import sys,json;print(json.load(sys.stdin)['vmid'])")
     ok "Created LXC vmid=$VMID"
+}
+
+# --- 5b. Inject Mac's SSH key into the LXC via Proxmox host ---
+inject_ssh_key() {
+    log "Installing SSH key in LXC via Proxmox host (pct push)"
+    local pubkey_path="${SSH_KEY_PATH:-$HOME/.ssh/id_rsa.pub}"
+    [ -f "$pubkey_path" ] || fail "SSH key not found: $pubkey_path"
+
+    local ssh_opts=(-o StrictHostKeyChecking=accept-new
+                    -o UserKnownHostsFile=/dev/null
+                    -o BatchMode=yes -o ConnectTimeout=5)
+
+    # Verify Proxmox-host SSH works (prerequisite: ssh-copy-id root@$PROXMOX_HOST done once)
+    ssh "${ssh_opts[@]}" "root@$PROXMOX_HOST" "echo ok" >/dev/null \
+        || fail "Cannot SSH to Proxmox host root@$PROXMOX_HOST. Run once: ssh-copy-id root@$PROXMOX_HOST"
+
+    # Wait briefly for the LXC to finish booting before pct exec works
+    sleep 5
+
+    # SCP key to Proxmox host, then pct push into LXC
+    scp "${ssh_opts[@]}" "$pubkey_path" "root@$PROXMOX_HOST:/tmp/rolly_authkey.pub" >/dev/null \
+        || fail "scp to Proxmox host failed"
+    ssh "${ssh_opts[@]}" "root@$PROXMOX_HOST" "
+        set -e
+        pct exec $VMID -- mkdir -p /root/.ssh
+        pct push $VMID /tmp/rolly_authkey.pub /root/.ssh/authorized_keys
+        pct exec $VMID -- chmod 700 /root/.ssh
+        pct exec $VMID -- chmod 600 /root/.ssh/authorized_keys
+        rm -f /tmp/rolly_authkey.pub
+    " >/dev/null || fail "pct push of SSH key failed"
+    ok "SSH key installed in LXC $VMID"
 }
 
 # --- 6. Wait for SSH ---
@@ -239,6 +268,7 @@ main() {
     find_existing_lxc
     [ -z "$EXISTING_VMID" ] && verify_template
     create_lxc_if_needed
+    [ -z "$EXISTING_VMID" ] && inject_ssh_key
     wait_for_ssh
     upload_artifacts
     run_setup
