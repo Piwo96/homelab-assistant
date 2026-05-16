@@ -29,9 +29,16 @@ apt_install() {
 
 install_caddy_repo() {
     log "Configuring Caddy APT repo"
-    if [ ! -f /etc/apt/sources.list.d/caddy-stable.list ]; then
+    # Guard on both files: if curl for the .list succeeded but gpg partially wrote
+    # the keyring on a previous interrupted run, we must also re-write the keyring.
+    if [ ! -f /etc/apt/sources.list.d/caddy-stable.list ] ||
+       [ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]; then
+        # Write keyring atomically via temp file to stay idempotent on partial failures.
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-            | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+            | gpg --dearmor \
+            > /usr/share/keyrings/caddy-stable-archive-keyring.gpg.tmp
+        mv /usr/share/keyrings/caddy-stable-archive-keyring.gpg.tmp \
+           /usr/share/keyrings/caddy-stable-archive-keyring.gpg
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
             > /etc/apt/sources.list.d/caddy-stable.list
         apt-get update -qq
@@ -56,13 +63,14 @@ clone_or_pull() {
     else
         git -C "$REPO_DIR" pull --ff-only
     fi
-    ok "repo at: $(git -C $REPO_DIR rev-parse --short HEAD)"
+    ok "repo at: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 }
 
 install_agent_deps() {
     log "Installing agent (Bun) deps"
-    cd "$REPO_DIR/agent"
-    /root/.bun/bin/bun install
+    # Use a subshell so that the cd does not change the working directory for
+    # the rest of the script (set -e does not restore cwd on function return).
+    (cd "$REPO_DIR/agent" && /root/.bun/bin/bun install)
     ok "agent deps installed"
 }
 
@@ -79,7 +87,9 @@ install_skill_deps() {
 add_duckdns_plugin() {
     log "Ensuring caddy has caddy-dns/duckdns module"
     if ! caddy list-modules 2>/dev/null | grep -q "dns.providers.duckdns"; then
-        systemctl stop caddy 2>/dev/null || true
+        # Stop caddy before replacing the binary; suppress "unit not found" on
+        # first run, but preserve stderr for genuine stop failures.
+        systemctl stop caddy || true
         caddy add-package github.com/caddy-dns/duckdns
     fi
     ok "duckdns module present"
