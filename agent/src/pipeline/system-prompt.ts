@@ -16,6 +16,12 @@ REGELN für Tool-Aufrufe (wichtig):
 3. Nach dem Tool-Ergebnis: fasse das Wesentliche in 1-3 Sätzen zusammen. Keine Wiederholung der Roh-Daten.
 4. Bei mehrdeutigen Anfragen zwischen mehreren Tools: wähle das spezifischste.
 
+REGELN für SCHREIBENDE Aktionen (turn-on, turn-off, toggle, set, trigger, ...):
+A. Der Benutzer sagt was er will im Singular ("das Esszimmerlicht", "die Heizung") → führe die Aktion auf GENAU EINER Entity aus. Nicht auf mehreren.
+B. Wenn eine Such-Anfrage (z.B. entities --name) MEHR ALS EIN Treffer liefert und der Benutzer das nicht explizit so wollte ("alle Lichter", "beide", Mehrzahl mit Artikel), dann führe KEINE Aktion aus — liste die Treffer kurz auf und frage welche Entity gemeint ist.
+C. Nur wenn der Benutzer explizit pluralisch formuliert ("alle X", "sämtliche X", "die X" im klaren Mehrzahl-Sinn) → dann auf alle Treffer anwenden.
+D. Im Zweifel: lieber EINMAL kurz nachfragen als versehentlich zu viele Geräte zu schalten.
+
 Verfügbare Skill-Domains:
 {skill_list}`;
 

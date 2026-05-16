@@ -10,7 +10,9 @@ export interface LmStudioConfig {
 // Optional diagnostic fetch: when DUMP_LLM_REQUEST=1, writes the outgoing
 // request body to /tmp/llm-request.json so we can inspect exactly what the
 // AI SDK serializes to LM Studio. No-op in normal operation.
-const debugFetch: typeof fetch = async (input, init) => {
+// Typed loosely because `typeof fetch` in Bun carries non-portable static
+// properties (preconnect) we don't reimplement here.
+const debugFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
   if (process.env.DUMP_LLM_REQUEST === '1' && init?.body) {
     try {
       const body = typeof init.body === 'string' ? init.body : '<non-string>';
@@ -20,7 +22,7 @@ const debugFetch: typeof fetch = async (input, init) => {
     }
   }
   return fetch(input, init);
-};
+}) as typeof fetch;
 
 export function lmStudioModel(config: LmStudioConfig): LanguageModelV1 {
   const provider = createOpenAICompatible({

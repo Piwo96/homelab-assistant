@@ -27,6 +27,13 @@ export interface HandleDeps {
   skillEmbeddings: Record<string, number[]>;
   generate: (input: GenerateInput) => Promise<GenerateOutput>;
   thresholds: Thresholds;
+  /** Optional: quick reachability check for LM Studio (returns true if up). */
+  healthCheck?: () => Promise<boolean>;
+  /** Optional: triggers Wake-on-LAN + waits until LM Studio answers again. */
+  wakeGamingPc?: () => Promise<{ success: boolean; ms: number }>;
+  /** Optional: side-channel to send a status message to the user mid-pipeline
+   *  (e.g. "PC schläft, wecke auf..."). Failures here must not abort the pipeline. */
+  notifyStatus?: (chatId: number, text: string) => Promise<void>;
 }
 
 const HISTORY_LIMIT = 20;
@@ -37,6 +44,29 @@ export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate):
   log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length, bypassRouter });
   const ts = update.ts ?? Math.floor(Date.now() / 1000);
   appendMessage(deps.db, { chatId: update.chatId, role: 'user', content: { text: update.text }, ts });
+
+  // Pre-flight: if LM Studio is unreachable and we have WoL wired up, wake the
+  // Gaming PC before doing the embed/generate calls. Otherwise the entire
+  // pipeline silently fails on fetch ECONNREFUSED.
+  if (deps.healthCheck && deps.wakeGamingPc) {
+    const tHealth = Date.now();
+    const up = await deps.healthCheck();
+    log.info('lm_studio_health', { up, ms: Date.now() - tHealth });
+    if (!up) {
+      if (deps.notifyStatus) {
+        deps.notifyStatus(update.chatId, 'Gaming-PC schläft, wecke auf — einen Moment...').catch(err =>
+          log.warn('notify_status_failed', { err: String(err) }),
+        );
+      }
+      const wake = await deps.wakeGamingPc();
+      log.info('wol_wake_result', { success: wake.success, ms: wake.ms });
+      if (!wake.success) {
+        const failMsg = 'Gaming-PC kommt nicht hoch. Bitte manuell prüfen ob WoL aktiviert ist und der PC am Strom hängt.';
+        appendMessage(deps.db, { chatId: update.chatId, role: 'assistant', content: { text: failMsg }, success: false, ts: ts + 1 });
+        return failMsg;
+      }
+    }
+  }
 
   let selectedSkills;
   if (bypassRouter) {

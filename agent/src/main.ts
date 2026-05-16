@@ -6,6 +6,9 @@ import { openDb } from './memory/db';
 import { loadSkills } from './skills/loader';
 import { SkillRegistry } from './skills/registry';
 import { embed, embedMany } from './llm/embedding';
+import { isLmStudioReachable } from './llm/health';
+import { wakeGamingPc } from './wol/wake';
+import { sendText } from './telegram/send';
 import { computeCacheKey, loadCache, saveCache } from './router/cache';
 import { buildGenerator } from './llm/generate';
 import { startServer } from './server';
@@ -69,6 +72,9 @@ async function main(): Promise<void> {
       skillEmbeddings: cache.bySkillId,
       generate,
       thresholds: { high: 0.75, med: 0.4 },
+      healthCheck: () => isLmStudioReachable({ baseUrl: env.LM_STUDIO_URL, timeoutMs: 3000 }),
+      wakeGamingPc: () => wakeGamingPc({ skillsRoot, timeoutMs: 150_000 }),
+      notifyStatus: (chatId, text) => sendText({ botToken: env.TELEGRAM_BOT_TOKEN }, chatId, text),
     },
   });
 }
