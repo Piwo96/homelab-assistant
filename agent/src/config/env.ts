@@ -17,12 +17,12 @@ const envSchema = z.object({
   ADMIN_TELEGRAM_ID: z.coerce.number().int(),
   LM_STUDIO_URL: z.string().url(),
   LM_STUDIO_MODEL: z.string().min(1),
-  EMBEDDING_MODEL: z.string().min(1),
-  WHISPER_MODEL: z.string().min(1),
+  EMBEDDING_MODEL: z.string().min(1).default('google/embedding-gemma-300m'),
+  WHISPER_MODEL: z.string().min(1).default('whisper-large-v3-turbo'),
   INTERNAL_NOTIFY_TOKEN: z.string().min(32),
-  PORT: z.coerce.number().int().positive(),
-  SKILLS_ROOT: z.string().min(1),
-  DATA_DIR: z.string().min(1),
+  PORT: z.coerce.number().int().positive().default(8080),
+  SKILLS_ROOT: z.string().min(1).default('.claude/skills'),
+  DATA_DIR: z.string().min(1).default('data'),
 });
 
 export type Env = z.infer<typeof envSchema>;
