@@ -134,6 +134,40 @@ class HomeAssistantAPI:
         """Get all entity states."""
         return self._request("GET", "/states")
 
+    def render_template(self, template: str) -> str:
+        """Render a Jinja2 template server-side. Returns rendered output as raw text.
+
+        Useful for area lookups that aren't exposed via REST states:
+            api.render_template("{{ area_entities('Esszimmer') }}")
+
+        The /api/template endpoint returns text/plain (not JSON), so we bypass
+        the normal _request helper which expects JSON.
+        """
+        url = f"{self.base_url}/template"
+        response = self.session.post(url, json={"template": template}, timeout=10)
+        response.raise_for_status()
+        return response.text
+
+    def entities_in_area(self, area: str) -> List[str]:
+        """Return the list of entity_ids assigned to an area.
+
+        Accepts either the area display name ('Esszimmer') or its area_id
+        ('esszimmer'); HA's area_entities() resolves both.
+        """
+        # Template returns a Python-style list as text, e.g. "['light.a', 'light.b']"
+        raw = self.render_template(f"{{{{ area_entities('{area}') }}}}")
+        if isinstance(raw, str):
+            import ast
+            try:
+                value = ast.literal_eval(raw)
+                if isinstance(value, list):
+                    return [str(x) for x in value]
+            except (ValueError, SyntaxError):
+                pass
+        if isinstance(raw, list):
+            return [str(x) for x in raw]
+        return []
+
     def get_state(self, entity_id: str) -> dict:
         """Get specific entity state."""
         return self._request("GET", f"/states/{entity_id}")
@@ -192,12 +226,6 @@ class HomeAssistantAPI:
             params["end_time"] = end_time.isoformat()
 
         return self._request("GET", endpoint, params=params)
-
-    # Template rendering
-    def render_template(self, template: str) -> str:
-        """Render a template."""
-        result = self._request("POST", "/template", {"template": template})
-        return result
 
     # Convenience methods
     def turn_on(self, entity_id: str, **kwargs) -> List[dict]:
@@ -288,7 +316,8 @@ def execute(action: str, args: dict) -> Any:
         if args.get("state"):
             states = [s for s in states if s["state"] == args["state"]]
         if args.get("area"):
-            states = [s for s in states if s.get("attributes", {}).get("area_id") == args["area"]]
+            allowed = set(api.entities_in_area(args["area"]))
+            states = [s for s in states if s["entity_id"] in allowed]
         if args.get("name"):
             states = [
                 s for s in states
@@ -435,20 +464,20 @@ def main():
     entities = subparsers.add_parser(
         "entities",
         help=(
-            "List/discover Home Assistant entities. Filter by domain, state, area, and/or name. "
-            "DISCOVERY STRATEGY when the user names a room or thing but you don't know the exact "
-            "entity_id: try --name with a substring of what the user said (e.g. 'esszimmer', "
-            "'wohnzimmer', 'küche', 'lampe'). --name matches case-insensitive on BOTH entity_id "
-            "and friendly_name, so it catches 'light.esszimmer_decke', 'Esszimmerlampe', "
-            "'Wandleuchten Schlafzimmer', etc. Use this BEFORE turn-on/turn-off when you only "
-            "know the room or a partial name — discover the entity_id, then call turn-on/off "
-            "with the exact id. Combine filters as needed (e.g. --domain light --name esszimmer). "
-            "If --area returns nothing, fall back to --name with the same word."
+            "List/discover Home Assistant entities. Filter by domain, area, state, and/or name. "
+            "DISCOVERY STRATEGY when the user names a room and you don't know the exact entity_id: "
+            "1) FIRST try --area with the German room name ('Esszimmer', 'Wohnzimmer', 'Küche', "
+            "'Schlafzimmer', 'Kinderzimmer 1', 'Bad Eltern', 'Garage', etc.) — this is "
+            "authoritative because the user has configured HA areas properly. "
+            "2) ONLY if --area returns 0 results, fall back to --name (substring/prefix match "
+            "against entity_id + friendly_name) for older entities that aren't assigned to an "
+            "area. Always also pass --domain (e.g. light, switch, cover, climate) to scope. "
+            "Once you have the exact entity_id, call turn-on / turn-off / toggle / call-service."
         ),
     )
     entities.add_argument("--domain", help="HA domain filter: light, switch, sensor, cover (rollos/jalousien), climate (heating), media_player, scene, automation, script, ...")
     entities.add_argument("--state", help="State filter: on, off, home, away, unavailable, ...")
-    entities.add_argument("--area", help="Exact area_id filter (e.g. wohnzimmer, kueche). Strict — if HA doesn't have this area, returns []")
+    entities.add_argument("--area", help="HA area filter. Accepts EITHER the area display name ('Esszimmer', 'Wohnzimmer', 'Küche') OR the area_id ('esszimmer', 'wohnzimmer', 'kueche'). Resolved server-side via HA's area_entities() template — works for areas configured via Settings → Areas & Zones even when entities don't expose area_id in their state attributes.")
     entities.add_argument("--name", help="Case-insensitive substring matched against entity_id AND friendly_name. Best fallback when the exact id is unknown.")
 
     get_state = subparsers.add_parser(
@@ -665,7 +694,8 @@ def main():
         if args.state:
             states = [s for s in states if s["state"] == args.state]
         if args.area:
-            states = [s for s in states if s.get("attributes", {}).get("area_id") == args.area]
+            allowed = set(api.entities_in_area(args.area))
+            states = [s for s in states if s["entity_id"] in allowed]
         if args.name:
             states = [
                 s for s in states
