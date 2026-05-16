@@ -4,7 +4,6 @@ Run with: pytest .claude/skills/proxmox/scripts/test_proxmox_api.py -v
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -18,7 +17,7 @@ import proxmox_api  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
-    """Provide dummy credentials so ProxmoxAPI() doesn't fail at import."""
+    """Provide dummy credentials so ProxmoxAPI() construction doesn't fail."""
     monkeypatch.setenv("PROXMOX_HOST", "test-host")
     monkeypatch.setenv("PROXMOX_PORT", "8006")
     monkeypatch.setenv("PROXMOX_TOKEN_ID", "root@pam!test")
