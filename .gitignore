@@ -31,4 +31,7 @@ Thumbs.db
 .claude/pending_errors.json
 
 # Database (local only)
-data/
+/data/
+
+# Bun
+agent/node_modules/
