@@ -1,4 +1,6 @@
-import { isAbsolute, join, resolve } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadEnv } from './config/env';
 import { openDb } from './memory/db';
 import { loadSkills } from './skills/loader';
@@ -9,17 +11,24 @@ import { buildGenerator } from './llm/generate';
 import { startServer } from './server';
 import { log } from './utils/logger';
 
-const REPO_ROOT = resolve(import.meta.dir, '../../');
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../');
 
 function resolveRepoPath(p: string): string {
-  return isAbsolute(p) ? p : resolve(REPO_ROOT, p);
+  if (isAbsolute(p)) return p;
+  // Legacy support: values prefixed with `../` were cwd-relative in the old
+  // agent/.env.example; treat them as repo-root-relative by stripping the prefix.
+  const cleaned = p.replace(/^(\.\.\/)+/, '');
+  return resolve(REPO_ROOT, cleaned);
 }
 
 async function main(): Promise<void> {
   const env = loadEnv();
   const dataDir = resolveRepoPath(env.DATA_DIR);
   const skillsRoot = resolveRepoPath(env.SKILLS_ROOT);
-  const db = openDb(join(dataDir, 'conversations.db'));
+  await mkdir(dataDir, { recursive: true });
+  // New agent uses its own DB file to avoid colliding with agent-old's
+  // legacy conversations.db schema. Legacy data is intentionally not migrated.
+  const db = openDb(join(dataDir, 'agent.db'));
 
   const skills = await loadSkills(skillsRoot, ['homeassistant']);
   if (skills.length === 0) throw new Error('No skills loaded');
@@ -34,7 +43,7 @@ async function main(): Promise<void> {
     commandDescriptions: s.tools.map(t => t.description),
   }));
   const cacheKey = await computeCacheKey(env.EMBEDDING_MODEL, cacheable);
-  const cachePath = join(dataDir, 'embedding_cache.json');
+  const cachePath = join(dataDir, 'agent-embedding-cache.json');
   let cache = await loadCache(cachePath);
   if (!cache || cache.key !== cacheKey) {
     log.info('embedding_cache_rebuild');
