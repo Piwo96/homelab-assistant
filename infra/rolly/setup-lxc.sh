@@ -99,11 +99,30 @@ place_env_and_render() {
     log "Placing .env and rendering templates"
     install -m 600 /root/.env "$REPO_DIR/.env"
     chown root:root "$REPO_DIR/.env"
-    # Render Caddyfile + rolly.service via envsubst (read vars from .env)
-    set -a
-    # shellcheck disable=SC1091
-    source "$REPO_DIR/.env"
-    set +a
+    # Render Caddyfile + rolly.service via envsubst.
+    # .env values may contain spaces / # / $ that break `source` — parse via
+    # python and emit shell-quoted exports.
+    local tmp
+    tmp=$(mktemp)
+    python3 - "$REPO_DIR/.env" > "$tmp" <<'PY'
+import shlex, sys
+with open(sys.argv[1]) as f:
+    for raw in f:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k = k.strip()
+        if not k.replace("_", "").isalnum():
+            continue
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1]
+        print(f"export {k}={shlex.quote(v)}")
+PY
+    # shellcheck disable=SC1090
+    source "$tmp"
+    rm -f "$tmp"
     mkdir -p /etc/caddy /var/log/caddy
     envsubst < /root/Caddyfile.tmpl > /etc/caddy/Caddyfile
     envsubst < /root/rolly.service.tmpl > /etc/systemd/system/rolly.service

@@ -12,24 +12,48 @@ log()  { printf "\n\033[1;34m▶ %s\033[0m\n" "$1"; }
 ok()   { printf "  \033[1;32m✓\033[0m %s\n" "$1"; }
 fail() { printf "  \033[1;31m✗\033[0m %s\n" "$1" >&2; exit 1; }
 
+# Safely load a KEY=VALUE .env file into the current shell.
+# Uses python to handle values with spaces, quotes, $, #, etc. that would
+# break `source file` semantics.
+load_env_file() {
+    local path="$1"
+    [ -f "$path" ] || return 1
+    local tmp
+    tmp=$(mktemp)
+    python3 - "$path" > "$tmp" <<'PY'
+import shlex, sys
+with open(sys.argv[1]) as f:
+    for raw in f:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k = k.strip()
+        if not k.replace("_", "").isalnum():
+            continue
+        v = v.strip()
+        # Strip matching outer quotes if present
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1]
+        print(f"export {k}={shlex.quote(v)}")
+PY
+    # shellcheck disable=SC1090
+    source "$tmp"
+    rm -f "$tmp"
+}
+
 # --- 1. Load + validate config ---
 load_config() {
     log "Loading config"
-    # Step A: source the project's root .env (skill creds — HOMEASSISTANT_*,
+    # Step A: load the project's root .env (skill creds — HOMEASSISTANT_*,
     # PIHOLE_*, PROTECT_*, UNIFI_*, PROXMOX_*, TELEGRAM_*, LM_STUDIO_*, etc.)
     [ -f "$REPO_ROOT/.env" ] || fail "Missing $REPO_ROOT/.env (skill credentials)"
-    set -a
-    # shellcheck disable=SC1091
-    source "$REPO_ROOT/.env"
-    set +a
+    load_env_file "$REPO_ROOT/.env"
     ok "Loaded $REPO_ROOT/.env"
 
-    # Step B: source infra/rolly/config.env (deploy-specific settings)
+    # Step B: load infra/rolly/config.env (deploy-specific settings)
     [ -f "$SCRIPT_DIR/config.env" ] || fail "Missing $SCRIPT_DIR/config.env (copy from config.env.example)"
-    set -a
-    # shellcheck disable=SC1091
-    source "$SCRIPT_DIR/config.env"
-    set +a
+    load_env_file "$SCRIPT_DIR/config.env"
 
     local required=(PROXMOX_HOST PROXMOX_TOKEN_ID PROXMOX_TOKEN_SECRET
                     LXC_HOSTNAME LXC_IP_CIDR LXC_GATEWAY LXC_BRIDGE
