@@ -272,6 +272,56 @@ class ProxmoxAPI:
                 raise TimeoutError(f"Task {upid} did not finish within {timeout}s")
             time.sleep(interval)
 
+    def get_next_vmid(self) -> int:
+        """Ask Proxmox for the next free VMID (cluster-wide)."""
+        result = self.get("/cluster/nextid")
+        # Proxmox returns the id as a string
+        return int(result)
+
+    def create_lxc(self, node: str, vmid, ostemplate: str, hostname: str,
+                   cores: int, memory: int, disk_gb: int, storage: str,
+                   bridge: str, ip_cidr: str, gateway: str = None,
+                   ssh_public_keys: str = "", unprivileged: bool = True,
+                   start: bool = True, nameserver: str = None,
+                   wait: bool = True, timeout: float = 600.0) -> dict:
+        """Create an LXC container.
+
+        vmid can be int or 'auto' to use /cluster/nextid.
+        Returns: { vmid, upid, exitstatus } (exitstatus omitted if wait=False).
+        Raises RuntimeError on task failure, TimeoutError on wait timeout.
+        """
+        if vmid == "auto":
+            vmid = self.get_next_vmid()
+        vmid = int(vmid)
+
+        net0_parts = [f"name=eth0", f"bridge={bridge}", f"ip={ip_cidr}"]
+        if gateway and ip_cidr != "dhcp":
+            net0_parts.append(f"gw={gateway}")
+
+        body = {
+            "vmid": vmid,
+            "ostemplate": ostemplate,
+            "hostname": hostname,
+            "cores": cores,
+            "memory": memory,
+            "rootfs": f"{storage}:{disk_gb}",
+            "net0": ",".join(net0_parts),
+            "unprivileged": 1 if unprivileged else 0,
+            "start": 1 if start else 0,
+            "onboot": 1,
+        }
+        if ssh_public_keys:
+            body["ssh-public-keys"] = ssh_public_keys
+        if nameserver:
+            body["nameserver"] = nameserver
+
+        upid = self.post(f"/nodes/{node}/lxc", body)
+        result = {"vmid": vmid, "upid": upid}
+        if wait:
+            status = self.wait_task(node, upid, timeout=timeout)
+            result["exitstatus"] = status.get("exitstatus")
+        return result
+
 
 def execute(action: str, args: dict) -> Any:
     """Execute a Proxmox action directly (no CLI).
@@ -364,6 +414,25 @@ def execute(action: str, args: dict) -> Any:
         return api.wait_task(args["node"], args["upid"],
                              interval=float(args.get("interval", 2.0)),
                              timeout=float(args.get("timeout", 600.0)))
+    elif action == "create-lxc":
+        return api.create_lxc(
+            node=args["node"],
+            vmid=args.get("vmid", "auto"),
+            ostemplate=args["template"],
+            hostname=args["hostname"],
+            cores=int(args.get("cores", 2)),
+            memory=int(args.get("memory", 1024)),
+            disk_gb=int(args.get("disk", 10)),
+            storage=args.get("storage", "local-lvm"),
+            bridge=args.get("bridge", "vmbr0"),
+            ip_cidr=args.get("ip", "dhcp"),
+            gateway=args.get("gateway"),
+            ssh_public_keys=args.get("ssh_key", ""),
+            unprivileged=bool(args.get("unprivileged", True)),
+            start=bool(args.get("start", True)),
+            nameserver=args.get("nameserver"),
+            timeout=float(args.get("timeout", 600.0)),
+        )
     else:
         raise ValueError(f"Unknown action: {action}")
 
@@ -497,6 +566,32 @@ def main():
     wait_task.add_argument("--interval", type=float, default=2.0, help="Poll interval seconds")
     wait_task.add_argument("--timeout", type=float, default=600.0, help="Max wait seconds")
 
+    # Create LXC
+    create_lxc = subparsers.add_parser("create-lxc", help="Create an LXC container")
+    create_lxc.add_argument("--node", help="Node name (auto-detected if omitted)")
+    create_lxc.add_argument("--vmid", default="auto",
+                            help="VMID or 'auto' (default: auto, queries /cluster/nextid)")
+    create_lxc.add_argument("--hostname", required=True, help="Container hostname")
+    create_lxc.add_argument("--template", required=True,
+                            help="ostemplate volid (e.g. local:vztmpl/debian-12-...)")
+    create_lxc.add_argument("--cores", type=int, default=2, help="vCPU cores")
+    create_lxc.add_argument("--memory", type=int, default=1024, help="RAM in MB")
+    create_lxc.add_argument("--disk", type=int, default=10, help="Rootfs size in GB")
+    create_lxc.add_argument("--storage", default="local-lvm", help="Rootfs storage")
+    create_lxc.add_argument("--bridge", default="vmbr0", help="Network bridge")
+    create_lxc.add_argument("--ip", default="dhcp",
+                            help="IP/CIDR (e.g. 192.168.10.200/24) or 'dhcp'")
+    create_lxc.add_argument("--gateway", help="Default gateway (required for static IP)")
+    create_lxc.add_argument("--ssh-key", dest="ssh_key", default="",
+                            help="SSH public key text (entire ssh-... line)")
+    create_lxc.add_argument("--unprivileged", action="store_true", default=True)
+    create_lxc.add_argument("--privileged", dest="unprivileged", action="store_false")
+    create_lxc.add_argument("--start", action="store_true", default=True)
+    create_lxc.add_argument("--no-start", dest="start", action="store_false")
+    create_lxc.add_argument("--nameserver", help="DNS server inside container")
+    create_lxc.add_argument("--timeout", type=float, default=600.0,
+                            help="Max wait seconds for the create task")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -510,7 +605,7 @@ def main():
     # Auto-detect node for commands that support it
     commands_with_optional_node = ["node-status", "vms", "containers", "overview",
                                     "start", "stop", "shutdown", "reboot", "templates",
-                                    "wait-task"]
+                                    "wait-task", "create-lxc"]
     if args.command in commands_with_optional_node:
         provided_node = getattr(args, "node", None)
         if not provided_node:
@@ -707,6 +802,15 @@ def main():
     elif args.command == "wait-task":
         result = execute("wait-task", {"node": args.node, "upid": args.upid,
                                         "interval": args.interval, "timeout": args.timeout})
+    elif args.command == "create-lxc":
+        result = execute("create-lxc", {
+            "node": args.node, "vmid": args.vmid, "hostname": args.hostname,
+            "template": args.template, "cores": args.cores, "memory": args.memory,
+            "disk": args.disk, "storage": args.storage, "bridge": args.bridge,
+            "ip": args.ip, "gateway": args.gateway, "ssh_key": args.ssh_key,
+            "unprivileged": args.unprivileged, "start": args.start,
+            "nameserver": args.nameserver, "timeout": args.timeout,
+        })
 
     if result is not None:
         print(format_output(result, output_format))

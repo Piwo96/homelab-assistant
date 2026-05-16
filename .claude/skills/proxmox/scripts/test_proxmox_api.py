@@ -128,3 +128,91 @@ def test_wait_task_timeout(monkeypatch):
             with patch("proxmox_api.time.monotonic", side_effect=fake_monotonic):
                 with pytest.raises(TimeoutError):
                     api.wait_task("pve", "UPID:pve:1234", interval=2, timeout=10)
+
+
+def test_get_next_vmid(monkeypatch):
+    """Calls /cluster/nextid and returns an int."""
+    api = proxmox_api.ProxmoxAPI()
+    with patch("proxmox_api.requests.request",
+               return_value=_mock_response({"data": "201"})):
+        next_id = api.get_next_vmid()
+    assert next_id == 201
+
+
+def test_create_lxc_with_explicit_vmid(monkeypatch):
+    """Posts to /nodes/{node}/lxc with correct body, waits for task, returns vmid."""
+    api = proxmox_api.ProxmoxAPI()
+
+    upid = "UPID:pve:00001234:00ABCDEF:5A0000:vzcreate:200:root@pam!homelab:"
+
+    seq = [
+        # POST /nodes/pve/lxc → returns UPID
+        _mock_response({"data": upid}),
+        # GET /nodes/pve/tasks/.../status → done OK
+        _mock_response({"data": {"status": "stopped", "exitstatus": "OK"}}),
+    ]
+    with patch("proxmox_api.requests.request", side_effect=seq) as mock_req:
+        with patch("proxmox_api.time.sleep"):
+            result = api.create_lxc(
+                node="pve",
+                vmid=200,
+                ostemplate="local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst",
+                hostname="rolly",
+                cores=2,
+                memory=1024,
+                disk_gb=10,
+                storage="local-lvm",
+                bridge="vmbr0",
+                ip_cidr="192.168.10.200/24",
+                gateway="192.168.10.1",
+                ssh_public_keys="ssh-ed25519 AAAA test@mac",
+                unprivileged=True,
+                start=True,
+            )
+
+    assert result["vmid"] == 200
+    assert result["upid"] == upid
+    assert result["exitstatus"] == "OK"
+
+    # Inspect the POST body — _request passes data= as kwarg to requests.request
+    post_call = mock_req.call_args_list[0]
+    body = post_call.kwargs["data"]
+    assert body["vmid"] == 200
+    assert body["hostname"] == "rolly"
+    assert body["cores"] == 2
+    assert body["memory"] == 1024
+    assert body["rootfs"] == "local-lvm:10"
+    assert body["net0"] == "name=eth0,bridge=vmbr0,ip=192.168.10.200/24,gw=192.168.10.1"
+    assert body["unprivileged"] == 1
+    assert body["start"] == 1
+    assert "ssh-ed25519" in body["ssh-public-keys"]
+
+
+def test_create_lxc_auto_vmid(monkeypatch):
+    """When vmid='auto', calls /cluster/nextid first."""
+    api = proxmox_api.ProxmoxAPI()
+    upid = "UPID:pve:fake:vzcreate:201:test:"
+    seq = [
+        # GET /cluster/nextid → "201"
+        _mock_response({"data": "201"}),
+        # POST /nodes/pve/lxc → upid
+        _mock_response({"data": upid}),
+        # GET tasks/.../status → OK
+        _mock_response({"data": {"status": "stopped", "exitstatus": "OK"}}),
+    ]
+    with patch("proxmox_api.requests.request", side_effect=seq) as mock_req:
+        with patch("proxmox_api.time.sleep"):
+            result = api.create_lxc(
+                node="pve", vmid="auto",
+                ostemplate="local:vztmpl/debian-12-standard.tar.zst",
+                hostname="rolly", cores=1, memory=512, disk_gb=5,
+                storage="local-lvm", bridge="vmbr0",
+                ip_cidr="dhcp", gateway=None,
+                ssh_public_keys="", unprivileged=True, start=False,
+            )
+    assert result["vmid"] == 201
+    # net0 with dhcp should not include gw=
+    post_call = mock_req.call_args_list[1]
+    body = post_call.kwargs["data"]
+    assert "ip=dhcp" in body["net0"]
+    assert "gw=" not in body["net0"]
