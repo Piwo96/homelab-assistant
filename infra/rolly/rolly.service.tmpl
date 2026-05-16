@@ -14,10 +14,10 @@ RestartSec=5s
 StandardOutput=journal
 StandardError=journal
 
-# Light hardening — LXC already isolates
+# Light hardening — LXC already isolates.
+# ProtectHome=yes would block /root/.bun/bin/bun (root's home), so omit it.
 NoNewPrivileges=yes
 ProtectSystem=full
-ProtectHome=yes
 PrivateTmp=yes
 
 [Install]
