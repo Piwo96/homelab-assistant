@@ -1,7 +1,7 @@
 ---
 name: proxmox
 description: Server, VMs, Container und Speicher verwalten - starten, stoppen, Status, Snapshots
-version: 1.2.0
+version: 1.3.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -122,6 +122,15 @@ proxmox_api.py lxc-config <node> <vmid>   # Container config
 proxmox_api.py start <vmid> [node]        # Start container (auto-detects node)
 proxmox_api.py stop <vmid> [node]         # Stop container
 
+# LXC lifecycle (new in 1.3.0)
+proxmox_api.py templates [node] [--storage local]              # List LXC templates
+proxmox_api.py create-lxc --hostname rolly --template "local:vztmpl/debian-12-standard_*_amd64.tar.zst" \
+                          --cores 2 --memory 1024 --disk 10 \
+                          --ip 192.168.10.200/24 --gateway 192.168.10.1 \
+                          --ssh-key "$(cat ~/.ssh/id_rsa.pub)" --unprivileged --start
+proxmox_api.py delete-lxc <vmid> [--force]                     # Stop + destroy LXC
+proxmox_api.py wait-task <upid> [--node pve] [--timeout 600]   # Poll a task
+
 # Storage & Mounts
 proxmox_api.py storage [node]             # List storage
 proxmox_api.py add-mount <node> <vmid> --mp 0 --source /mnt/pve/nas --target /data
@@ -160,6 +169,22 @@ proxmox_api.py rollback <node> <vmid> --name clean-state --lxc
 3. If failed: `rollback pve 100 --name pre-maintenance` (add `--lxc` if container)
 
 > **Important**: Always use `--lxc` flag for LXC container snapshots, otherwise the command will fail.
+
+### Provisioning a New App in an LXC
+
+1. Verify template available:
+   `proxmox_api.py templates pve --storage local | grep debian-12`
+2. Create container (auto-picks VMID via `/cluster/nextid`):
+   ```
+   proxmox_api.py --json create-lxc --hostname myapp \
+       --template "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst" \
+       --cores 2 --memory 1024 --disk 10 \
+       --ip 192.168.10.X/24 --gateway 192.168.10.1 \
+       --ssh-key "$(cat ~/.ssh/id_rsa.pub)"
+   ```
+   Output JSON: `{"vmid": 201, "upid": "...", "exitstatus": "OK"}`
+3. SSH in: `ssh root@192.168.10.X` (key already injected by --ssh-key)
+4. To remove: `proxmox_api.py delete-lxc 201`
 
 ## Edge Cases
 
