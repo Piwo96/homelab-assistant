@@ -11,12 +11,12 @@ describe('buildSystemPrompt', () => {
     });
     expect(p).toContain('homeassistant');
     expect(p).toContain('Smart Home steuern');
-    expect(p).toContain('Wenn ein Tool passt');
+    expect(p).toContain('Tool-Aufrufe');
   });
 
   it('produces redirect prompt when no tools available', () => {
     const p = buildSystemPrompt({ skills: [], hasTools: false });
     expect(p.toLowerCase()).toContain('homelab');
-    expect(p).not.toContain('Wenn ein Tool passt');
+    expect(p).not.toContain('Tool-Aufrufe');
   });
 });

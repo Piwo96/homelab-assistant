@@ -1,13 +1,21 @@
 ---
 name: homeassistant
-description: Smart Home steuern - Licht, Sensoren, Szenen, Automationen, Schalter und Geräte
-version: 1.2.0
+description: Smart Home über Home Assistant (HA, HASS) steuern — Lichter, Heizung, Rollos/Jalousien, Steckdosen, Sensoren, Szenen und Automationen in den verschiedenen Räumen
+version: 1.3.0
 author: Philipp Rollmann
 tags:
   - homelab
   - smarthome
   - homeassistant
+  - hass
+  - lichter
+  - heizung
+  - rollos
+  - jalousien
+  - steckdose
+  - szenen
   - automation
+  - sensoren
   - iot
 requires:
   - python3
@@ -15,14 +23,31 @@ requires:
 triggers:
   - /homeassistant
   - /hass
+  - licht
+  - lampe
+  - lichter
+  - heizung
+  - rollo
+  - rollos
+  - jalousie
+  - jalousien
+  - steckdose
+  - szene
+  - sensor
+  - temperatur
+  - thermostat
+  - smart home
+  - home assistant
 intent_hints:
-  - "Licht an/aus, dimmen, Farbe ändern"
-  - "Temperatur, Sensor-Werte, Luftfeuchtigkeit"
-  - "Szene aktivieren, Stimmung setzen"
-  - "Geräte ein/ausschalten, Steckdose"
-  - "Automation starten/stoppen"
-  - "Smart Home Status, welche Geräte sind an"
-  - "Wohnzimmer, Küche, Schlafzimmer (Raumsteuerung)"
+  - "Licht/Lampe an, aus, umschalten, dimmen, Farbe ändern"
+  - "Heizung wärmer/kälter, Thermostat einstellen, Soll-Temperatur"
+  - "Rollos/Jalousien hoch, runter, halbe Höhe"
+  - "Steckdose, Schalter ein/aus"
+  - "Szene aktivieren (z.B. Filmabend, Gute Nacht, Aufstehen)"
+  - "Sensor-Werte abfragen: Temperatur, Luftfeuchtigkeit, Bewegung"
+  - "Automation starten, stoppen, aktivieren, deaktivieren"
+  - "Welche Geräte sind an, was läuft im Wohnzimmer / Küche / Schlafzimmer"
+  - "Status von Home Assistant prüfen, ist HA erreichbar"
 ---
 
 # Home Assistant Management

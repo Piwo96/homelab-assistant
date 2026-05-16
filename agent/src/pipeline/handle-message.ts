@@ -33,22 +33,31 @@ const HISTORY_LIMIT = 20;
 
 export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate): Promise<string> {
   const t0 = Date.now();
-  log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length });
+  const bypassRouter = process.env.BYPASS_ROUTER === '1';
+  log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length, bypassRouter });
   const ts = update.ts ?? Math.floor(Date.now() / 1000);
   appendMessage(deps.db, { chatId: update.chatId, role: 'user', content: { text: update.text }, ts });
 
-  const tEmbed = Date.now();
-  const queryEmbedding = await deps.embedQuery(update.text);
-  log.info('embed_done', { ms: Date.now() - tEmbed, dim: queryEmbedding.length });
+  let selectedSkills;
+  if (bypassRouter) {
+    // Skip embedding + cosine routing: expose all tool-bearing skills to the LLM.
+    // Relies on the model (and its thinking mode + context) to pick the right tool.
+    selectedSkills = deps.registry.all();
+    log.info('routing_bypassed', { skillCount: selectedSkills.length });
+  } else {
+    const tEmbed = Date.now();
+    const queryEmbedding = await deps.embedQuery(update.text);
+    log.info('embed_done', { ms: Date.now() - tEmbed, dim: queryEmbedding.length });
 
-  const skills = deps.registry.all();
-  const routable = skills
-    .filter(s => deps.skillEmbeddings[s.id] !== undefined)
-    .map(s => ({ id: s.id, embedding: deps.skillEmbeddings[s.id]! }));
-  const routed = route(queryEmbedding, routable, deps.thresholds);
-  log.info('routed', { band: routed.band, selected: routed.selectedIds, topScore: routed.scores[0]?.score });
+    const skills = deps.registry.all();
+    const routable = skills
+      .filter(s => deps.skillEmbeddings[s.id] !== undefined)
+      .map(s => ({ id: s.id, embedding: deps.skillEmbeddings[s.id]! }));
+    const routed = route(queryEmbedding, routable, deps.thresholds);
+    log.info('routed', { band: routed.band, selected: routed.selectedIds, topScore: routed.scores[0]?.score });
 
-  const selectedSkills = deps.registry.all().filter(s => routed.selectedIds.includes(s.id));
+    selectedSkills = deps.registry.all().filter(s => routed.selectedIds.includes(s.id));
+  }
   const tools: Record<string, Tool> = {};
   for (const s of selectedSkills) {
     for (const t of s.tools) {
@@ -81,11 +90,12 @@ export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate):
   const reply = out.text.trim() || '(Keine Antwort vom Modell)';
   log.info('pipeline_done', { totalMs: Date.now() - t0, replyLen: reply.length });
 
+  const primaryIntent = selectedSkills[0]?.id;
   appendMessage(deps.db, {
     chatId: update.chatId,
     role: 'assistant',
     content: { text: reply },
-    ...(routed.selectedIds[0] !== undefined ? { intent: routed.selectedIds[0] } : {}),
+    ...(primaryIntent !== undefined ? { intent: primaryIntent } : {}),
     success: true,
     ts: ts + 1,
   });
