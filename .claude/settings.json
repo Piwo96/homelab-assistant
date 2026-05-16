@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "/Users/philipprollmann/.claude/skills/waking-up-pc"
+    ],
+    "allow": [
+      "Edit(~/.claude/skills/waking-up-pc/**)"
+    ]
+  }
+}
