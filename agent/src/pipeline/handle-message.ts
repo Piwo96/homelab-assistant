@@ -67,14 +67,16 @@ export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate):
     reasoningEffort: 'low',
   });
 
+  const reply = out.text.trim() || '(Keine Antwort vom Modell)';
+
   appendMessage(deps.db, {
     chatId: update.chatId,
     role: 'assistant',
-    content: { text: out.text },
+    content: { text: reply },
     ...(routed.selectedIds[0] !== undefined ? { intent: routed.selectedIds[0] } : {}),
     success: true,
     ts: ts + 1,
   });
 
-  return out.text;
+  return reply;
 }

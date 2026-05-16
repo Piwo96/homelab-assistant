@@ -12,12 +12,16 @@ export interface ParsedTextUpdate {
 
 export type ParsedUpdate = ParsedTextUpdate;
 
+const SECRET_ENC = new TextEncoder();
+
 export function verifySecret(expected: string, header: string | null): boolean {
   if (!header) return false;
-  if (header.length !== expected.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) {
-    diff |= expected.charCodeAt(i) ^ header.charCodeAt(i);
+  const a = SECRET_ENC.encode(expected);
+  const b = SECRET_ENC.encode(header);
+  const len = Math.max(a.length, b.length);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < len; i++) {
+    diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
   }
   return diff === 0;
 }

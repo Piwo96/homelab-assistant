@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { sha256Hex } from '../utils/sha256';
 
@@ -40,5 +40,7 @@ export async function loadCache(path: string): Promise<EmbeddingCache | null> {
 
 export async function saveCache(path: string, cache: EmbeddingCache): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(cache, null, 2));
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, JSON.stringify(cache, null, 2));
+  await rename(tmp, path);
 }
