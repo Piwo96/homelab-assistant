@@ -268,7 +268,9 @@ main() {
     find_existing_lxc
     [ -z "$EXISTING_VMID" ] && verify_template
     create_lxc_if_needed
-    [ -z "$EXISTING_VMID" ] && inject_ssh_key
+    # Always inject the key — idempotent and protects against re-deploys where
+    # the LXC was created previously but the key isn't (yet) in authorized_keys.
+    inject_ssh_key
     wait_for_ssh
     upload_artifacts
     run_setup
