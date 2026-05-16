@@ -23,7 +23,7 @@ load_config() {
 
     local required=(PROXMOX_HOST PROXMOX_TOKEN_ID PROXMOX_TOKEN_SECRET
                     LXC_HOSTNAME LXC_IP_CIDR LXC_GATEWAY LXC_BRIDGE
-                    LXC_CORES LXC_MEMORY_MB LXC_DISK_GB LXC_STORAGE
+                    LXC_CORES LXC_MEMORY_MB LXC_DISK_GB LXC_STORAGE LXC_TEMPLATE_PREFIX
                     DUCKDNS_HOST DUCKDNS_TOKEN PUBLIC_PORT
                     TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS ADMIN_TELEGRAM_ID
                     LM_STUDIO_URL HA_URL HA_TOKEN PORT)
@@ -126,6 +126,7 @@ upload_artifacts() {
     log "Uploading artifacts to LXC"
     local tmpdir
     tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
     # Build the .env from current shell env (only the agent-relevant vars)
     cat > "$tmpdir/.env" <<EOF
 TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
@@ -150,7 +151,7 @@ PROXMOX_TOKEN_SECRET=$PROXMOX_TOKEN_SECRET
 EOF
     chmod 600 "$tmpdir/.env"
 
-    local ssh_opts=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
+    local ssh_opts=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes)
     scp "${ssh_opts[@]}" \
         "$tmpdir/.env" \
         "$SCRIPT_DIR/setup-lxc.sh" \
@@ -159,13 +160,14 @@ EOF
         "$SCRIPT_DIR/caddy.service" \
         "root@$LXC_IP:/root/"
     rm -rf "$tmpdir"
+    trap - EXIT
     ok "Artifacts uploaded"
 }
 
 # --- 8. Run setup in LXC ---
 run_setup() {
     log "Running setup-lxc.sh inside LXC (this is the long step)"
-    ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+    ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
         "root@$LXC_IP" "bash /root/setup-lxc.sh"
     ok "Setup completed inside LXC"
 }
@@ -173,8 +175,8 @@ run_setup() {
 # --- 9. End-to-end health checks ---
 health_checks() {
     log "End-to-end health checks"
-    ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
-        "root@$LXC_IP" 'curl -fsS http://127.0.0.1:8080/health' >/dev/null \
+    ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
+        "root@$LXC_IP" "curl -fsS http://127.0.0.1:${PORT}/health" >/dev/null \
         || fail "Internal /health failed"
     ok "Internal /health OK"
 
