@@ -35,3 +35,6 @@ Thumbs.db
 
 # Bun
 agent/node_modules/
+
+# Rolly deployment secrets (never commit the real config)
+infra/rolly/config.env
