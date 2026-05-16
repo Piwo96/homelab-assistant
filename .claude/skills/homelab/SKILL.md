@@ -18,7 +18,7 @@ This is a **meta-skill** that provides an overview of all homelab automation cap
 
 ## Goal
 
-Route homelab-related questions and tasks to the appropriate specialized skill. This meta-skill serves as a discovery layer and quick reference guide for 6 specialized homelab skills covering virtualization, DNS, networking, security cameras, smart home automation, and autonomous self-improvement.
+Route homelab-related questions and tasks to the appropriate specialized skill. This meta-skill serves as a discovery layer and quick reference guide for 7 specialized homelab skills covering virtualization, DNS, networking, security cameras, smart home automation, Wake-on-LAN, and autonomous self-improvement.
 
 ## Inputs
 
@@ -36,6 +36,7 @@ Route homelab-related questions and tasks to the appropriate specialized skill. 
 | `../unifi-network/SKILL.md` | Network infrastructure (routers, switches, APs) |
 | `../unifi-protect/SKILL.md` | Security cameras and smart lighting |
 | `../homeassistant/SKILL.md` | Smart home devices and automation |
+| `../wol/SKILL.md` | Wake-on-LAN for Gaming PC and LM Studio |
 | `../self-annealing/SKILL.md` | Error tracking and autonomous skill updates |
 
 ## Outputs
@@ -93,6 +94,15 @@ Manage Home Assistant: entities, scenes, automations, scripts.
 
 ---
 
+### [/wol](../wol/SKILL.md) - Wake-on-LAN (Gaming PC)
+Wake the Gaming PC via Magic Packet and check LM Studio availability.
+
+**Use for**: Gaming-PC aufwecken, LM Studio Status, Magic Packet senden
+**Triggers**: `/wol`, `/wake`
+**Tags**: `wol`, `wake-on-lan`, `gaming-pc`, `lm-studio`
+
+---
+
 ### [/self-annealing](../self-annealing/SKILL.md) - Autonomous Self-Improvement
 Track errors, update skills, and automatically commit/push to GitHub.
 
@@ -117,6 +127,8 @@ Track errors, update skills, and automatically commit/push to GitHub.
 | Take camera snapshot                | `/protect`         | `protect_api.py snapshot <camera-id>`    |
 | Control smart lights                | `/hass`            | `homeassistant_api.py turn-on light.room`|
 | Run automation                      | `/hass`            | `homeassistant_api.py trigger auto.name` |
+| Wake Gaming PC                      | `/wol`             | `wol_api.py wake`                        |
+| Check LM Studio status              | `/wol`             | `wol_api.py status`                      |
 | Commit and push changes             | `/anneal`          | `annealing_api.py anneal "fix: message"` |
 | Track an error                      | `/anneal`          | `annealing_api.py log-error "err" "ctx"` |
 
