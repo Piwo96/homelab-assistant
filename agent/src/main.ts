@@ -41,7 +41,9 @@ async function main(): Promise<void> {
   // legacy conversations.db schema. Legacy data is intentionally not migrated.
   const db = openDb(join(dataDir, 'agent.db'));
 
-  const skills = await loadSkills(skillsRoot, ['homeassistant']);
+  // smart-home is the user-facing domain layer; the homeassistant skill stays
+  // on disk as the raw HA-API implementation but is no longer exposed as tools.
+  const skills = await loadSkills(skillsRoot, ['smart-home']);
   if (skills.length === 0) throw new Error('No skills loaded');
   const registry = new SkillRegistry();
   registry.replaceAll(skills);

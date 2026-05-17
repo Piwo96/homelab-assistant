@@ -214,6 +214,150 @@ def lights_set(api: HomeAssistantAPI, where: str, brightness: int, confirm: bool
     return lights_on(api, where, brightness, confirm)
 
 
+# --------------------------------------------------------------------------
+# Rollos / Jalousien — two axes (position = height, tilt = slat angle)
+# --------------------------------------------------------------------------
+
+def _cover_action(api: HomeAssistantAPI, where: str, confirm: bool,
+                  *, position: int | None = None, tilt: int | None = None,
+                  open_all: bool = False, close_all: bool = False) -> dict[str, Any]:
+    target = resolve_where(api, where, "cover")
+    if not target["entities"]:
+        return {"ok": False, "error": f"Keine Rollos gefunden für '{where}'", "match_kind": "none"}
+    cap = _check_cap(target, confirm)
+    if cap:
+        return cap
+    affected: list[str] = []
+    for eid in target["entities"]:
+        if open_all:
+            api.call_service("cover", "open_cover", {"entity_id": eid})
+        elif close_all:
+            api.call_service("cover", "close_cover", {"entity_id": eid})
+        else:
+            # set-mode: position + tilt can be combined per entity
+            if position is not None:
+                api.call_service("cover", "set_cover_position",
+                                 {"entity_id": eid, "position": max(0, min(100, position))})
+            if tilt is not None:
+                api.call_service("cover", "set_cover_tilt_position",
+                                 {"entity_id": eid, "tilt_position": max(0, min(100, tilt))})
+        affected.append(eid)
+    return {
+        "ok": True,
+        "action": "rollos-open" if open_all else "rollos-close" if close_all else "rollos-set",
+        "match_kind": target["kind"],
+        "label": target.get("label"),
+        "entities_affected": affected,
+        **({"position": position} if position is not None else {}),
+        **({"tilt_position": tilt} if tilt is not None else {}),
+    }
+
+
+def rollos_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
+    wanted = None
+    if where:
+        target = resolve_where(api, where, "cover")
+        if not target["entities"]:
+            return {"ok": False, "error": f"Keine Rollos gefunden für '{where}'", "match_kind": "none"}
+        wanted = set(target["entities"])
+    items = []
+    for s in api.get_states():
+        if not s["entity_id"].startswith("cover."):
+            continue
+        if wanted is not None and s["entity_id"] not in wanted:
+            continue
+        attrs = s["attributes"]
+        items.append({
+            "entity_id": s["entity_id"],
+            "friendly_name": attrs.get("friendly_name") or s["entity_id"],
+            "state": s["state"],
+            "position": attrs.get("current_position"),
+            "tilt_position": attrs.get("current_tilt_position"),
+        })
+    return {"ok": True, "action": "rollos-status", "count": len(items), "rollos": items}
+
+
+# --------------------------------------------------------------------------
+# Klima / Heizung
+# --------------------------------------------------------------------------
+
+def klima_set(api: HomeAssistantAPI, where: str, target_temp: float, confirm: bool) -> dict[str, Any]:
+    target = resolve_where(api, where, "climate")
+    if not target["entities"]:
+        return {"ok": False, "error": f"Keine Heizung gefunden für '{where}'", "match_kind": "none"}
+    cap = _check_cap(target, confirm)
+    if cap:
+        return cap
+    affected: list[str] = []
+    for eid in target["entities"]:
+        api.call_service("climate", "set_temperature",
+                         {"entity_id": eid, "temperature": target_temp})
+        affected.append(eid)
+    return {
+        "ok": True,
+        "action": "klima-set",
+        "match_kind": target["kind"],
+        "label": target.get("label"),
+        "entities_affected": affected,
+        "target_temperature": target_temp,
+    }
+
+
+def klima_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
+    wanted = None
+    if where:
+        target = resolve_where(api, where, "climate")
+        if not target["entities"]:
+            return {"ok": False, "error": f"Keine Heizung gefunden für '{where}'", "match_kind": "none"}
+        wanted = set(target["entities"])
+    items = []
+    for s in api.get_states():
+        if not s["entity_id"].startswith("climate."):
+            continue
+        if wanted is not None and s["entity_id"] not in wanted:
+            continue
+        attrs = s["attributes"]
+        items.append({
+            "entity_id": s["entity_id"],
+            "friendly_name": attrs.get("friendly_name") or s["entity_id"],
+            "state": s["state"],
+            "current_temperature": attrs.get("current_temperature"),
+            "target_temperature": attrs.get("temperature"),
+        })
+    return {"ok": True, "action": "klima-status", "count": len(items), "klimas": items}
+
+
+# --------------------------------------------------------------------------
+# Szenen
+# --------------------------------------------------------------------------
+
+def szenen_aktivieren(api: HomeAssistantAPI, name: str) -> dict[str, Any]:
+    # Fuzzy match against scene friendly_name or entity_id.
+    needle = _norm(name)
+    matches: list[tuple[str, str]] = []
+    for s in api.get_states():
+        if not s["entity_id"].startswith("scene."):
+            continue
+        fn = (s["attributes"].get("friendly_name") or "").lower()
+        if needle == s["entity_id"].lower() or needle == fn or needle in fn:
+            matches.append((s["entity_id"], s["attributes"].get("friendly_name") or s["entity_id"]))
+    if not matches:
+        return {"ok": False, "error": f"Keine Szene gefunden für '{name}'"}
+    if len(matches) > 1:
+        return {"ok": False, "error": f"Mehrere Szenen passen zu '{name}'",
+                "candidates": [{"entity_id": e, "friendly_name": f} for e, f in matches]}
+    eid, fname = matches[0]
+    api.call_service("scene", "turn_on", {"entity_id": eid})
+    return {"ok": True, "action": "szenen-aktivieren", "entity_id": eid, "friendly_name": fname}
+
+
+def szenen_liste(api: HomeAssistantAPI) -> dict[str, Any]:
+    scenes = [{"entity_id": s["entity_id"],
+               "friendly_name": s["attributes"].get("friendly_name") or s["entity_id"]}
+              for s in api.get_states() if s["entity_id"].startswith("scene.")]
+    return {"ok": True, "action": "szenen-liste", "count": len(scenes), "szenen": scenes}
+
+
 def lights_status(api: HomeAssistantAPI, where: str | None, state_filter: str | None) -> dict[str, Any]:
     if where:
         target = resolve_where(api, where, "light")
@@ -299,6 +443,83 @@ def build_parser() -> argparse.ArgumentParser:
     lstat.add_argument("--where", help="optional Scope (Etage / Area / Group / Name)")
     lstat.add_argument("--state", choices=["on", "off"], help="optional Filter: nur 'on' oder 'off' Entities")
 
+    # ----- Rollos / Jalousien -----
+    rop = sub.add_parser(
+        "rollos-open",
+        help=("Rollos/Jalousien komplett HOCHFAHREN (position=100). Nutze für "
+              "'Rollo hoch', 'Rollos öffnen', 'Jalousie ganz auf'."),
+    )
+    rop.add_argument("--where", required=True, help="Scope wie bei lights-*")
+    rop.add_argument("--confirm", action="store_true")
+    rop.set_defaults(_is_write=True)
+
+    rcl = sub.add_parser(
+        "rollos-close",
+        help=("Rollos/Jalousien komplett HERUNTERFAHREN (position=0). Nutze für "
+              "'Rollo runter', 'Rollos zu', 'Jalousie schließen', '100% runter'."),
+    )
+    rcl.add_argument("--where", required=True, help="Scope wie bei lights-*")
+    rcl.add_argument("--confirm", action="store_true")
+    rcl.set_defaults(_is_write=True)
+
+    rset = sub.add_parser(
+        "rollos-set",
+        help=("Rollos setzen — zwei UNABHÄNGIGE Achsen: --position (Höhe: 0=zu/"
+              "unten, 100=auf/oben) und/oder --tilt (Lamellen-Neigung: 0=zu/"
+              "vertikal, 100=offen/horizontal). 'Lamellen auf X% neigen' → "
+              "--tilt X. 'Rollo halb runter' → --position 50. Beide zusammen "
+              "möglich. NIEMALS Lamellen-Neigung mit --position verwechseln!"),
+    )
+    rset.add_argument("--where", required=True, help="Scope wie bei lights-*")
+    rset.add_argument("--position", type=int,
+                      help="Höhe 0 (ganz unten/zu) bis 100 (ganz oben/offen)")
+    rset.add_argument("--tilt", type=int,
+                      help="Lamellen-Neigung 0 (zu) bis 100 (offen)")
+    rset.add_argument("--confirm", action="store_true")
+    rset.set_defaults(_is_write=True)
+
+    rstat = sub.add_parser(
+        "rollos-status",
+        help=("Live-Status der Rollos abfragen (Position + Lamellen-Neigung). "
+              "Ohne --where: alle. Mit --where: nur Scope. Nutze für 'welche "
+              "Rollos sind offen?', 'wie weit ist das Rollo im X?'."),
+    )
+    rstat.add_argument("--where", help="optional Scope (Etage / Area / Group / Name)")
+
+    # ----- Klima / Heizung -----
+    kset = sub.add_parser(
+        "klima-set",
+        help=("Heizung auf Zieltemperatur stellen. Nutze für 'Heizung im Bad "
+              "auf 22°', 'Wohnzimmer auf 21 Grad stellen', 'kühler im Büro'."),
+    )
+    kset.add_argument("--where", required=True, help="Scope wie bei lights-*")
+    kset.add_argument("--target", type=float, required=True,
+                      help="Zieltemperatur in °C, z.B. 21 oder 22.5")
+    kset.add_argument("--confirm", action="store_true")
+    kset.set_defaults(_is_write=True)
+
+    kstat = sub.add_parser(
+        "klima-status",
+        help=("Live-Status der Heizung: aktuelle und Ziel-Temperatur. Nutze für "
+              "'wie warm ist es im X?', 'auf welche Temperatur ist Y eingestellt?'."),
+    )
+    kstat.add_argument("--where", help="optional Scope")
+
+    # ----- Szenen -----
+    sact = sub.add_parser(
+        "szenen-aktivieren",
+        help=("Eine Szene aktivieren per Friendly-Name-Fragment (z.B. "
+              "'Schlafenszeit', 'Filmmodus'). Nutze für 'Szene X starten', "
+              "'aktivier die Y-Szene'."),
+    )
+    sact.add_argument("name", help="Name oder Fragment der Szene")
+    sact.set_defaults(_is_write=True)
+
+    sub.add_parser(
+        "szenen-liste",
+        help="Alle verfügbaren Szenen auflisten. Nutze für 'welche Szenen gibt es?'.",
+    )
+
     return p
 
 
@@ -331,6 +552,26 @@ def main() -> int:
             result = lights_set(api, args.where, args.brightness, args.confirm)
         elif args.command == "lights-status":
             result = lights_status(api, args.where, args.state)
+        elif args.command == "rollos-open":
+            result = _cover_action(api, args.where, args.confirm, open_all=True)
+        elif args.command == "rollos-close":
+            result = _cover_action(api, args.where, args.confirm, close_all=True)
+        elif args.command == "rollos-set":
+            if args.position is None and args.tilt is None:
+                result = {"ok": False, "error": "rollos-set braucht mindestens --position oder --tilt"}
+            else:
+                result = _cover_action(api, args.where, args.confirm,
+                                       position=args.position, tilt=args.tilt)
+        elif args.command == "rollos-status":
+            result = rollos_status(api, args.where)
+        elif args.command == "klima-set":
+            result = klima_set(api, args.where, args.target, args.confirm)
+        elif args.command == "klima-status":
+            result = klima_status(api, args.where)
+        elif args.command == "szenen-aktivieren":
+            result = szenen_aktivieren(api, args.name)
+        elif args.command == "szenen-liste":
+            result = szenen_liste(api)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
