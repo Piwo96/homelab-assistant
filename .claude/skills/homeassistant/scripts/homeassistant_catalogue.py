@@ -22,7 +22,32 @@ from homeassistant_api import HomeAssistantAPI
 # Controllable domains we want the LLM to know about. Sensor/update/zone/etc.
 # are deliberately excluded — they're read-only context, not action targets,
 # and would balloon the prompt without helping action selection.
-DEFAULT_DOMAINS = ["light", "switch", "cover", "climate", "scene", "script"]
+DEFAULT_DOMAINS = ["light", "switch", "cover", "climate", "scene", "script", "group"]
+
+
+# House-specific floor convention encoded in entity_id prefixes. The HA
+# install in this household doesn't use HA's native floor feature, but its
+# naming is consistent — every entity_id is `{domain}.{floor}_{room}_...`
+# with `kg/eg/og/dg/aussen` as floor markers. Surfacing the floor in the
+# catalogue lets the LLM resolve "alle og Lampen aus" without having to
+# enumerate the seven separate HA areas that physically sit on the OG.
+FLOOR_LABELS: dict[str, str] = {
+    "kg": "KG (Kellergeschoss)",
+    "eg": "EG (Erdgeschoss)",
+    "og": "OG (Obergeschoss)",
+    "dg": "DG (Dachgeschoss)",
+    "aussen": "Außen",
+}
+FLOOR_ORDER = ["aussen", "kg", "eg", "og", "dg", "_other"]
+
+
+def floor_from_entity_id(entity_id: str) -> str:
+    """Derive the floor bucket from an entity_id. Pure prefix match against
+    the part after the domain. Anything that doesn't match a known prefix
+    falls into the `_other` bucket so we never silently lose entities."""
+    local = entity_id.split(".", 1)[-1]
+    first = local.split("_", 1)[0]
+    return first if first in FLOOR_LABELS else "_other"
 
 
 def main() -> int:
@@ -53,23 +78,22 @@ def main() -> int:
         for eid in api.entities_in_area(aid):
             entity_area[eid] = aid
 
-    # 3. Build the catalogue from current states. Group by (domain, area).
+    # 3. Build the catalogue from current states. Group by (domain, floor, area).
     states = api.get_states()
-    by_domain_area: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
-    unassigned: dict[str, list[tuple[str, str]]] = defaultdict(list)  # domain -> entries
+    # nested: domain -> floor -> area_id -> [(eid, friendly), ...]
+    grouped: dict[str, dict[str, dict[str, list[tuple[str, str]]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list)))
     for s in states:
         eid = s["entity_id"]
         domain = eid.split(".")[0]
         if domain not in domains:
             continue
         friendly = s.get("attributes", {}).get("friendly_name") or eid
-        aid = entity_area.get(eid)
-        if aid:
-            by_domain_area[(domain, aid)].append((eid, friendly))
-        else:
-            unassigned[domain].append((eid, friendly))
+        floor = floor_from_entity_id(eid)
+        aid = entity_area.get(eid) or "_unassigned"
+        grouped[domain][floor][aid].append((eid, friendly))
 
-    # 4. Render as Markdown. Domains as headers, areas as sub-bullets.
+    # 4. Render as Markdown: Domain → Floor → Area → entity bullets.
     out: list[str] = []
     domain_labels = {
         "light": "Lichter",
@@ -78,23 +102,23 @@ def main() -> int:
         "climate": "Heizung / Klima",
         "scene": "Szenen",
         "script": "Skripte",
+        "group": "Gruppen (bevorzugen für Sammelaktionen!)",
     }
     for domain in domains:
-        domain_keys = [k for k in by_domain_area if k[0] == domain]
-        if not domain_keys and not unassigned.get(domain):
+        floors = grouped.get(domain)
+        if not floors:
             continue
         out.append(f"### {domain_labels.get(domain, domain)} ({domain})")
-        # Sort areas by display name
-        area_sorted = sorted(domain_keys, key=lambda k: area_names.get(k[1], k[1]))
-        for (_, aid) in area_sorted:
-            entries = by_domain_area[(domain, aid)][: args.max_per_area]
-            label = area_names.get(aid, aid)
-            for eid, friendly in entries:
-                out.append(f"- {label}: `{eid}` ({friendly})")
-        # Trailing block for unassigned entries (e.g. scenes without an area)
-        if unassigned.get(domain):
-            for eid, friendly in unassigned[domain][: args.max_per_area]:
-                out.append(f"- (ohne Area): `{eid}` ({friendly})")
+        for floor in FLOOR_ORDER:
+            areas = floors.get(floor)
+            if not areas:
+                continue
+            out.append(f"#### {FLOOR_LABELS.get(floor, 'Sonstige')}")
+            area_sorted = sorted(areas.keys(), key=lambda a: area_names.get(a, a))
+            for aid in area_sorted:
+                label = area_names.get(aid, "(ohne Area)" if aid == "_unassigned" else aid)
+                for eid, friendly in areas[aid][: args.max_per_area]:
+                    out.append(f"- {label}: `{eid}` ({friendly})")
         out.append("")  # blank line between domains
 
     print("\n".join(out).rstrip())
