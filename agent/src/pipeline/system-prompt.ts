@@ -9,6 +9,9 @@ export interface BuildOptions {
   /** Telegram first name of the current sender. Drives how the LLM
    *  addresses the user. Owner of the homelab is Philipp regardless. */
   firstName?: string;
+  /** Optional snapshot of all controllable HA entities (Markdown, grouped by
+   *  area). Injected verbatim so the model never has to guess entity_ids. */
+  entityCatalogue?: string;
 }
 
 /** Single source of truth for the "who is the user?" prompt line. Phrasing is
@@ -51,15 +54,32 @@ FOLGE-ANFRAGEN (Kontext aus Chat-Verlauf):
 - Wenn nach kurzem Nachdenken unklar bleibt was gemeint ist → EINE Rückfrage in 1 Satz.
 
 Verfügbare Skill-Domains:
-{skill_list}`;
+{skill_list}
+
+{entity_catalogue}`;
 
 const SMALLTALK_PROMPT = `Du bist Rolly, der Homelab-Assistent im Haushalt von Philipp — ein Telegram-Bot, der lokal auf Philipp's Gaming-PC via LM Studio antwortet. Philipp ist der Owner des Homelabs, aber NICHT zwangsläufig der gerade chattende User. {user_line} Diese Anfrage passt zu keinem Homelab-Tool. Antworte freundlich, kurz (max 4 Sätze) auf Deutsch, bleib bei der Identität "Rolly", erfinde nichts und biete konkret an, beim Homelab zu helfen — nenne 2-3 Beispiele aus: VMs (Proxmox), Smart Home (Lichter, Szenen), Kameras (UniFi Protect), DNS (Pi-hole), Netzwerk-Geräte, Wake-on-LAN. Kein Reasoning-Monolog im Output.`;
+
+function catalogueBlock(catalogue: string | undefined): string {
+  if (!catalogue) return '';
+  // Wrapped in an explicit section so the model treats it as authoritative
+  // data rather than narrative. Note "Snapshot zur Startzeit" — we don't
+  // refresh between requests, so the LLM should still verify via entities/
+  // get-state for read queries that need live data.
+  return `BEKANNTE ENTITIES (Snapshot zur Agent-Startzeit — KEINE Entity-IDs erfinden, immer aus dieser Liste wählen):
+
+${catalogue}`;
+}
 
 export function buildSystemPrompt(opts: BuildOptions): string {
   const u = userLine(opts.firstName);
   if (!opts.hasTools) return SMALLTALK_PROMPT.replace('{user_line}', u);
   const list = opts.skills.map(s => `- ${s.id}: ${s.description}`).join('\n');
-  return TOOLED_PROMPT.replace('{user_line}', u).replace('{skill_list}', list);
+  return TOOLED_PROMPT
+    .replace('{user_line}', u)
+    .replace('{skill_list}', list)
+    .replace('{entity_catalogue}', catalogueBlock(opts.entityCatalogue))
+    .trim();
 }
 
 const WELCOME_PROMPT = `Du bist Rolly, der Homelab-Assistent im Haushalt von Philipp. Philipp ist der Owner — aber NICHT zwangsläufig der gerade chattende User. {user_line} Der User hat soeben /start gesendet, der Chat ist frisch. Begrüße ihn kurz und persönlich (2-3 Sätze, locker, gerne mit max einem dezenten Emoji), nenne deinen Namen Rolly, und erwähne in einem Satz wobei du helfen kannst — Beispiele aus: VMs (Proxmox), Smart Home (Lichter/Heizung/Szenen), Kameras (UniFi Protect), DNS (Pi-hole), Netzwerk, Wake-on-LAN. KEINE Bullet-Liste, KEIN langer Featurelistenkatalog, KEINE Frage am Ende wie "Was steht an?", KEIN Reasoning-Monolog — der User wird selbst sagen was er möchte.`;

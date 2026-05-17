@@ -41,6 +41,10 @@ export interface HandleDeps {
   /** Optional: resolve a Telegram voice file_id to its transcribed German text.
    *  Composes Telegram getFile + LM Studio Whisper in main.ts. */
   transcribeVoice?: (fileId: string) => Promise<string>;
+  /** Optional: snapshot of all controllable HA entities (area → entity_id +
+   *  friendly_name) captured at agent startup. Injected verbatim into the
+   *  system prompt to ground the LLM and prevent entity_id hallucination. */
+  entityCatalogue?: string;
 }
 
 const HISTORY_LIMIT = 20;
@@ -195,6 +199,7 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
     skills: selectedSkills.map(s => ({ id: s.id, description: s.description })),
     hasTools,
     ...(update.firstName !== undefined ? { firstName: update.firstName } : {}),
+    ...(deps.entityCatalogue !== undefined ? { entityCatalogue: deps.entityCatalogue } : {}),
   });
 
   const history = recentMessages(deps.db, update.chatId, HISTORY_LIMIT)

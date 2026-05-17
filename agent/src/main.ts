@@ -11,6 +11,7 @@ import { wakeGamingPc } from './wol/wake';
 import { sendText } from './telegram/send';
 import { downloadTelegramFile } from './telegram/download';
 import { transcribeAudio } from './llm/transcribe';
+import { fetchHaCatalogue } from './skills/ha-catalogue';
 import { computeCacheKey, loadCache, saveCache } from './router/cache';
 import { buildGenerator } from './llm/generate';
 import { startServer } from './server';
@@ -64,6 +65,11 @@ async function main(): Promise<void> {
 
   const generate = buildGenerator({ baseUrl: env.LM_STUDIO_URL, modelId: env.LM_STUDIO_MODEL });
 
+  // Pull a snapshot of all controllable HA entities (lights, switches, covers,
+  // climates, scenes, scripts) grouped by area. The agent injects this into
+  // the system prompt so the LLM never has to guess entity_ids.
+  const haCatalogue = await fetchHaCatalogue(skillsRoot);
+
   startServer({
     env,
     db,
@@ -86,6 +92,7 @@ async function main(): Promise<void> {
           { data: audio.data, filename: audio.filename, mimeType: audio.mimeType },
         );
       },
+      ...(haCatalogue ? { entityCatalogue: haCatalogue } : {}),
     },
   });
 }

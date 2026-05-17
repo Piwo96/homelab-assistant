@@ -41,6 +41,29 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('Rückfrage');
   });
 
+  it('injects HA entity catalogue verbatim and instructs not to invent IDs', () => {
+    const catalogue = `### Lichter (light)\n- Büro: \`light.dg_buro_beleuchtung\` (DG Büro Beleuchtung)\n- Esszimmer: \`light.eg_essen_tischleuchte\` (EG Essen Tischleuchte)`;
+    const p = buildSystemPrompt({
+      skills: [{ id: 'homeassistant', description: 'Smart Home' }],
+      hasTools: true,
+      entityCatalogue: catalogue,
+    });
+    expect(p).toContain('light.dg_buro_beleuchtung');
+    expect(p).toContain('light.eg_essen_tischleuchte');
+    expect(p).toContain('BEKANNTE ENTITIES');
+    expect(p.toLowerCase()).toContain('keine entity-ids erfinden');
+  });
+
+  it('omits catalogue section cleanly when no catalogue is provided', () => {
+    const p = buildSystemPrompt({
+      skills: [{ id: 'homeassistant', description: 'Smart Home' }],
+      hasTools: true,
+    });
+    expect(p).not.toContain('BEKANNTE ENTITIES');
+    // No trailing whitespace/empty placeholder lines should leak through
+    expect(p).not.toMatch(/\{entity_catalogue\}/);
+  });
+
   it('anchors the output format so the model does not leak its reasoning', () => {
     // Without this anchor the 4B model produced visible Chain-of-Thought
     // monologues ("Gemäß Regel F...", "Tool-Aufruf:") instead of a tool call
