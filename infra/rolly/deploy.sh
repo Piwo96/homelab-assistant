@@ -212,6 +212,9 @@ PUBLIC_PORT=$PUBLIC_PORT
 DUCKDNS_HOST=$DUCKDNS_HOST
 DUCKDNS_TOKEN=$DUCKDNS_TOKEN
 PYTHON_BIN=/opt/rolly/.venv/bin/python
+# Bypass the embedding-based semantic router — Gemma picks the right tool
+# directly via function-calling with full skill catalogue exposed.
+BYPASS_ROUTER=1
 EOF
 
     scp "${SSH_BASE_OPTS[@]}" \
