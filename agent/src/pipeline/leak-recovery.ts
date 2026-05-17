@@ -119,6 +119,20 @@ export function formatRecoveredResult(call: RecoveredCall, result: unknown): str
   return `Tool ${call.toolName} ausgeführt. Ergebnis: ${preview}`;
 }
 
+// Recovery is gated to commands that map cleanly to "I wanted to {do X} on the
+// user's behalf". Anything outside this set (system introspection like
+// list-services, list-components, error-log, ...) just dumps raw data that's
+// useless for the user and was almost certainly NOT what they asked for.
+const RECOVERABLE_COMMANDS = new Set([
+  'entities', 'get-state',
+  'turn-on', 'turn-off', 'toggle',
+  'call-service',
+  'list-scenes', 'activate-scene',
+  'list-scripts', 'run-script', 'stop-script',
+  'list-automations', 'trigger', 'enable', 'disable',
+  'history', 'logbook',
+]);
+
 /** Try to recover a leaked tool call from the model's reply: parse, find the
  *  tool in the registry, execute it, format the result. Returns null when
  *  recovery isn't possible (the caller then uses the generic fallback). */
@@ -128,6 +142,15 @@ export async function recoverFromLeakedToolCall(
 ): Promise<{ reply: string; call: RecoveredCall; raw: unknown } | null> {
   const parsed = parseLeakedToolCall(text);
   if (!parsed) return null;
+
+  // Skip recovery for anything outside the user-intent allowlist — prevents
+  // raw HA system dumps (components / services / error_log) from leaking
+  // through when the model just panicked.
+  const command = parsed.toolName.split('__')[1] ?? parsed.toolName;
+  if (!RECOVERABLE_COMMANDS.has(command)) {
+    log.info('leak_recovery_skipped_unsafe_command', { tool: parsed.toolName, command });
+    return null;
+  }
 
   // Find the SkillTool by its registered name.
   const allSkills = registry.all();

@@ -231,9 +231,11 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   if (trimmedText && looksLikeLeakedReasoning(trimmedText)) {
     log.warn('llm_reply_looks_like_reasoning', { textLen: trimmedText.length, finishReason: out.finishReason });
     // Best-effort recovery: parse the leaked JSON, run the intended tool
-    // ourselves, return the formatted result. Falls through to the generic
-    // fallback only if the JSON is unparseable or names an unknown tool.
-    const recovered = await recoverFromLeakedToolCall(trimmedText, deps.registry);
+    // ourselves, return the formatted result. Only attempt when tools were
+    // actually available this turn — in smalltalk mode (hasTools=false) the
+    // model has no business calling tools, recovering would just expose data
+    // the user didn't ask for. Falls through to the friendly Rolly fallback.
+    const recovered = hasTools ? await recoverFromLeakedToolCall(trimmedText, deps.registry) : null;
     if (recovered) {
       reply = recovered.reply;
     } else if (!hasTools) {
