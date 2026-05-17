@@ -45,6 +45,24 @@ export interface HandleDeps {
 
 const HISTORY_LIMIT = 20;
 
+/** Detects when the LLM's "final reply" is actually leaked chain-of-thought
+ *  — e.g. Gemma narrating "Gemäß Regel F..." or "Tool-Aufruf: ..." instead
+ *  of issuing a proper tool call. The prompt is supposed to prevent this,
+ *  but a 4B model still slips occasionally; better to surface a clean error
+ *  than to dump pseudo-code in the user's chat. */
+function looksLikeLeakedReasoning(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0) return false;
+  const markers: RegExp[] = [
+    /\bTool-Aufruf:\s/i,
+    /\bArgumente:\s/i,
+    /Gemäß Regel\b/i,
+    /^Ich muss\b/m,
+    /^Schritt \d+:/m,
+  ];
+  return markers.some(re => re.test(t));
+}
+
 export async function handleMessage(deps: HandleDeps, input: ParsedUpdate): Promise<string> {
   if (input.kind === 'voice') {
     return handleVoice(deps, input);
@@ -196,7 +214,10 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
 
   const trimmedText = out.text.trim();
   let reply: string;
-  if (trimmedText) {
+  if (trimmedText && looksLikeLeakedReasoning(trimmedText)) {
+    log.warn('llm_reply_looks_like_reasoning', { textLen: trimmedText.length, finishReason: out.finishReason });
+    reply = '⚠️ Das Modell hat statt einer Aktion seine Gedanken ausgegeben. Bitte versuch es nochmal, gerne spezifischer formuliert.';
+  } else if (trimmedText) {
     reply = trimmedText;
   } else if (out.finishReason === 'length') {
     reply = '⚠️ Antwort wurde abgeschnitten — der Output war zu lang. Bitte spezifischer fragen (z.B. nur eine Area oder nur eine Domäne auf einmal).';

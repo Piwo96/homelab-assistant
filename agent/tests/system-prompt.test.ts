@@ -11,13 +11,13 @@ describe('buildSystemPrompt', () => {
     });
     expect(p).toContain('homeassistant');
     expect(p).toContain('Smart Home steuern');
-    expect(p).toContain('Tool-Aufrufe');
+    expect(p).toContain('TOOL-NUTZUNG');
   });
 
   it('produces redirect prompt when no tools available', () => {
     const p = buildSystemPrompt({ skills: [], hasTools: false });
     expect(p.toLowerCase()).toContain('homelab');
-    expect(p).not.toContain('Tool-Aufrufe');
+    expect(p).not.toContain('TOOL-NUTZUNG');
   });
 
   it('injects firstName so the LLM addresses the right user', () => {
@@ -39,6 +39,19 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('FOLGE-ANFRAGEN');
     expect(p).toContain('wieder');
     expect(p).toContain('Rückfrage');
+  });
+
+  it('anchors the output format so the model does not leak its reasoning', () => {
+    // Without this anchor the 4B model produced visible Chain-of-Thought
+    // monologues ("Gemäß Regel F...", "Tool-Aufruf:") instead of a tool call
+    // or clean reply. The OUTPUT-FORMAT block + the explicit "no reasoning
+    // monologue" rule is the prompt-side fix.
+    const p = buildSystemPrompt({ skills: [{ id: 'x', description: 'y' }], hasTools: true });
+    expect(p).toContain('OUTPUT-FORMAT');
+    expect(p.toLowerCase()).toContain('reasoning-monolog');
+    // Labeled rules ("Regel A", "Regel F") invite the model to quote them
+    // back. The new prompt must NOT use them.
+    expect(p).not.toMatch(/Regel\s+[A-G]\b/);
   });
 });
 
