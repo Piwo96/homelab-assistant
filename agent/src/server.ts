@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { verifySecret, isDuplicate, markProcessed, parseUpdate } from './telegram/webhook';
-import { sendText } from './telegram/send';
+import { sendText, sendChatAction } from './telegram/send';
 import type { HandleDeps } from './pipeline/handle-message';
 import { handleMessage } from './pipeline/handle-message';
 import { log } from './utils/logger';
@@ -57,9 +57,22 @@ async function handleWebhook(req: Request, deps: ServerDeps, allowed: Set<number
   }
 
   setTimeout(() => {
+    const sendOpts = { botToken: deps.env.TELEGRAM_BOT_TOKEN };
+    // Show "Rolly tippt..." in Telegram while the pipeline runs.
+    // sendChatAction expires after ~5s server-side, so refresh every 4s.
+    void sendChatAction(sendOpts, parsed.chatId, 'typing');
+    const typingInterval = setInterval(() => {
+      void sendChatAction(sendOpts, parsed.chatId, 'typing');
+    }, 4000);
     handleMessage(deps.handleDeps, parsed)
-      .then(reply => sendText({ botToken: deps.env.TELEGRAM_BOT_TOKEN }, parsed.chatId, reply))
-      .catch(err => log.error('handle_failed', { err: String(err), updateId: parsed.updateId }));
+      .then(reply => {
+        clearInterval(typingInterval);
+        return sendText(sendOpts, parsed.chatId, reply);
+      })
+      .catch(err => {
+        clearInterval(typingInterval);
+        log.error('handle_failed', { err: String(err), updateId: parsed.updateId });
+      });
   }, 0);
 
   return new Response('ok', { status: 200 });

@@ -3,7 +3,7 @@ import { route, type Thresholds } from '../router/semantic';
 import { SkillRegistry } from '../skills/registry';
 import { defineSkillTool, inferPositionals } from '../tools/define-skill-tool';
 import { buildSystemPrompt } from './system-prompt';
-import { appendMessage, recentMessages } from '../memory/history';
+import { appendMessage, clearHistory, recentMessages } from '../memory/history';
 import type { ParsedTextUpdate } from '../telegram/webhook';
 import type { Tool } from 'ai';
 import { log } from '../utils/logger';
@@ -43,6 +43,16 @@ export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate):
   const bypassRouter = process.env.BYPASS_ROUTER === '1';
   log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length, bypassRouter });
   const ts = update.ts ?? Math.floor(Date.now() / 1000);
+
+  // /start: clear THIS chat's history (other chats untouched) and return a
+  // short welcome — no LLM call needed.
+  const trimmed = update.text.trim();
+  if (trimmed === '/start' || trimmed.startsWith('/start ')) {
+    const removed = clearHistory(deps.db, update.chatId);
+    log.info('history_cleared', { chatId: update.chatId, removed });
+    return 'Hallo! Ich bin **Rolly**, dein Homelab-Assistent. Ich kann dir bei VMs (Proxmox), Smart Home (Lichter, Szenen), Kameras (UniFi Protect), DNS (Pi-hole), Netzwerk und Wake-on-LAN helfen. Was steht an?';
+  }
+
   appendMessage(deps.db, { chatId: update.chatId, role: 'user', content: { text: update.text }, ts });
 
   // Pre-flight: if LM Studio is unreachable and we have WoL wired up, wake the

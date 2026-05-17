@@ -31,6 +31,15 @@ export function appendMessage(db: Database, msg: Message): void {
   );
 }
 
+/**
+ * Drop all stored messages for the given chat. Scoped to chat_id so other
+ * users on the same instance are unaffected.
+ */
+export function clearHistory(db: Database, chatId: number): number {
+  const result = db.prepare('DELETE FROM conversations WHERE chat_id = ?').run(chatId);
+  return Number(result.changes);
+}
+
 export function recentMessages(db: Database, chatId: number, limit: number): Message[] {
   const rows = db.prepare(
     `SELECT chat_id, role, content, intent, success, ts FROM conversations
