@@ -10,7 +10,6 @@ describe('loadEnv', () => {
       ADMIN_TELEGRAM_ID: '111',
       LM_STUDIO_URL: 'http://localhost:1234',
       LM_STUDIO_MODEL: 'gemma-4-e4b',
-      EMBEDDING_MODEL: 'nomic-embed-text-v2-moe',
       WHISPER_MODEL: 'whisper-large-v3-turbo',
       INTERNAL_NOTIFY_TOKEN: 't'.repeat(32),
       PORT: '8080',
@@ -31,7 +30,7 @@ describe('loadEnv', () => {
       TELEGRAM_BOT_TOKEN: 'abc', TELEGRAM_WEBHOOK_SECRET: 's',
       TELEGRAM_ALLOWED_USERS: '1', ADMIN_TELEGRAM_ID: '1',
       LM_STUDIO_URL: 'http://x', LM_STUDIO_MODEL: 'm',
-      EMBEDDING_MODEL: 'e', WHISPER_MODEL: 'w',
+      WHISPER_MODEL: 'w',
       INTERNAL_NOTIFY_TOKEN: 't'.repeat(32),
       PORT: 'abc', SKILLS_ROOT: '/s', DATA_DIR: '/d',
     })).toThrow(/PORT/);
