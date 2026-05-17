@@ -8,7 +8,7 @@ const MAX_STEPS = 5;
 // of its output budget on reasoning before producing the user-facing text; the
 // AI-SDK default (~1024) was getting truncated for tool-heavy responses (e.g.
 // listing lights across two areas), surfacing as empty text + finishReason='length'.
-const MAX_OUTPUT_TOKENS = 8192;
+const MAX_OUTPUT_TOKENS = 16384;
 
 export function buildGenerator(cfg: LmStudioConfig) {
   const model = lmStudioModel(cfg);
