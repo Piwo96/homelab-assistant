@@ -173,9 +173,12 @@ describe('handleMessage', () => {
     const reply = await handleMessage(deps, {
       kind: 'text', updateId: 400, chatId: 800, userId: 999, messageId: 1, text: 'Erzähl mir einen Witz', ts: 1,
     });
+    // The leaked JSON must never reach the user.
     expect(reply).not.toContain('tool_name');
     expect(reply).not.toContain('```json');
-    expect(reply.toLowerCase()).toContain('gedanken');
+    // In smalltalk mode (no tools available) we ship a friendly Rolly fallback
+    // rather than the generic "Gedanken ausgegeben" warning.
+    expect(reply.toLowerCase()).toContain('rolly');
   });
 
   it('replaces leaked chain-of-thought with a clean error instead of shipping it', async () => {

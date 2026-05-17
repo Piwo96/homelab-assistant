@@ -33,7 +33,18 @@ function baseSchema(arg: HelpJsonArg): ZodTypeAny {
     case 'int': return z.number().int();
     case 'float': return z.number();
     case 'bool': return z.boolean();
-    case 'str': default: return z.string();
+    case 'str': default:
+      // Strings whose description hints they carry JSON (e.g. call-service
+      // --data: '{"temperature": 21}') should accept either a real string OR
+      // a literal object/array from the model — we serialize to JSON before
+      // handing off to the subprocess. Without this Gemma's natural output of
+      // `data: {position: 50}` hits a Zod type-mismatch and the whole tool
+      // call fails with AI_ToolExecutionError.
+      if (arg.description && /JSON/.test(arg.description)) {
+        return z.union([z.string(), z.record(z.any()), z.array(z.any())])
+          .transform((v) => (typeof v === 'string' ? v : JSON.stringify(v)));
+      }
+      return z.string();
   }
 }
 

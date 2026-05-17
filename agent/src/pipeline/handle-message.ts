@@ -3,6 +3,7 @@ import { route, type Thresholds } from '../router/semantic';
 import { SkillRegistry } from '../skills/registry';
 import { defineSkillTool, inferPositionals } from '../tools/define-skill-tool';
 import { buildSystemPrompt, buildWelcomePrompt } from './system-prompt';
+import { recoverFromLeakedToolCall } from './leak-recovery';
 import { appendMessage, clearHistory, recentMessages } from '../memory/history';
 import type { ParsedTextUpdate, ParsedUpdate, ParsedVoiceUpdate } from '../telegram/webhook';
 import type { Tool } from 'ai';
@@ -63,10 +64,13 @@ function looksLikeLeakedReasoning(text: string): boolean {
     /Gemäß Regel\b/i,
     /^Ich muss\b/m,
     /^Schritt \d+:/m,
-    // Gemma sometimes dumps the *intended* tool call as a JSON code block
-    // instead of issuing a real function call (seen in smalltalk replies
-    // like "Erzähl mir einen Witz" — model wrote ```json {"tool_name": ...}```).
+    // Gemma's function-calling sometimes flips into text-mode and writes the
+    // *intended* tool call as JSON instead of issuing a real function call.
+    // Three observed shapes — single tool_name, OpenAI-style tool_calls array,
+    // and bare function field with the homeassistant_ prefix.
     /"tool_name"\s*:/i,
+    /"tool_calls"\s*:\s*\[/i,
+    /"function"\s*:\s*"homeassistant_/i,
     /"parameters"\s*:\s*\{[^}]*entity_id/i,
   ];
   return markers.some(re => re.test(t));
@@ -226,7 +230,20 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   let reply: string;
   if (trimmedText && looksLikeLeakedReasoning(trimmedText)) {
     log.warn('llm_reply_looks_like_reasoning', { textLen: trimmedText.length, finishReason: out.finishReason });
-    reply = '⚠️ Das Modell hat statt einer Aktion seine Gedanken ausgegeben. Bitte versuch es nochmal, gerne spezifischer formuliert.';
+    // Best-effort recovery: parse the leaked JSON, run the intended tool
+    // ourselves, return the formatted result. Falls through to the generic
+    // fallback only if the JSON is unparseable or names an unknown tool.
+    const recovered = await recoverFromLeakedToolCall(trimmedText, deps.registry);
+    if (recovered) {
+      reply = recovered.reply;
+    } else if (!hasTools) {
+      // Smalltalk mode: model leaked a phantom tool call but had no tools
+      // available anyway. Give a friendly, on-brand fallback instead of the
+      // generic "Gedanken ausgegeben" warning — the user just wanted to chat.
+      reply = 'Ich bin Rolly, dein Homelab-Assistent. Ich kann dir mit Smart Home (Lichter, Heizung, Rollos), Kameras, Netzwerk, VMs und Wake-on-LAN helfen — frag einfach.';
+    } else {
+      reply = '⚠️ Das Modell hat statt einer Aktion seine Gedanken ausgegeben. Bitte versuch es nochmal, gerne spezifischer formuliert.';
+    }
   } else if (trimmedText) {
     reply = trimmedText;
   } else if (out.finishReason === 'length') {
