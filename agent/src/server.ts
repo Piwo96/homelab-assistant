@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { verifySecret, isDuplicate, markProcessed, parseUpdate } from './telegram/webhook';
-import { sendText, sendChatAction } from './telegram/send';
+import { sendText, editText, sendChatAction } from './telegram/send';
 import type { HandleDeps } from './pipeline/handle-message';
 import { handleMessage } from './pipeline/handle-message';
 import { log } from './utils/logger';
@@ -56,22 +56,45 @@ async function handleWebhook(req: Request, deps: ServerDeps, allowed: Set<number
     return new Response('ok', { status: 200 });
   }
 
-  setTimeout(() => {
+  setTimeout(async () => {
     const sendOpts = { botToken: deps.env.TELEGRAM_BOT_TOKEN };
-    // Show "Rolly tippt..." in Telegram while the pipeline runs.
-    // sendChatAction expires after ~5s server-side, so refresh every 4s.
+
+    // Two parallel feedback channels while the pipeline runs:
+    //  1. "Rolly tippt..." chat action (refreshed every 4s; expires at 5s)
+    //  2. A real placeholder message "⌛ Ich kümmere mich darum..." that
+    //     gets edited in place with the real reply once ready.
     void sendChatAction(sendOpts, parsed.chatId, 'typing');
     const typingInterval = setInterval(() => {
       void sendChatAction(sendOpts, parsed.chatId, 'typing');
     }, 4000);
+
+    let placeholderId = 0;
+    try {
+      placeholderId = await sendText(sendOpts, parsed.chatId, '⌛ Ich kümmere mich darum...');
+    } catch (err) {
+      log.warn('placeholder_send_failed', { err: String(err), updateId: parsed.updateId });
+    }
+
     handleMessage(deps.handleDeps, parsed)
-      .then(reply => {
+      .then(async reply => {
         clearInterval(typingInterval);
-        return sendText(sendOpts, parsed.chatId, reply);
+        if (placeholderId) {
+          await editText(sendOpts, parsed.chatId, placeholderId, reply);
+        } else {
+          // Placeholder couldn't be sent; fall back to a fresh message.
+          await sendText(sendOpts, parsed.chatId, reply);
+        }
       })
-      .catch(err => {
+      .catch(async err => {
         clearInterval(typingInterval);
         log.error('handle_failed', { err: String(err), updateId: parsed.updateId });
+        const errMsg = '⚠️ Da ist etwas schiefgegangen. Versuch es nochmal oder check `journalctl -u rolly`.';
+        try {
+          if (placeholderId) await editText(sendOpts, parsed.chatId, placeholderId, errMsg);
+          else await sendText(sendOpts, parsed.chatId, errMsg);
+        } catch (e) {
+          log.error('error_reply_failed', { err: String(e) });
+        }
       });
   }, 0);
 

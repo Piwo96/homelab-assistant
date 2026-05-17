@@ -4,7 +4,7 @@ export interface SendOptions {
   botToken: string;
 }
 
-export async function sendText(opts: SendOptions, chatId: number, text: string): Promise<void> {
+export async function sendText(opts: SendOptions, chatId: number, text: string): Promise<number> {
   const html = markdownToTelegramHtml(text);
   const res = await fetch(`https://api.telegram.org/bot${opts.botToken}/sendMessage`, {
     method: 'POST',
@@ -13,6 +13,29 @@ export async function sendText(opts: SendOptions, chatId: number, text: string):
   });
   if (!res.ok) {
     throw new Error(`sendMessage failed: ${res.status} ${await res.text()}`);
+  }
+  const body = (await res.json()) as { result?: { message_id?: number } };
+  return body.result?.message_id ?? 0;
+}
+
+/**
+ * Edit an existing bot message in-place. Used to swap the "⌛ working on it…"
+ * placeholder with the real reply once the pipeline completes.
+ */
+export async function editText(
+  opts: SendOptions,
+  chatId: number,
+  messageId: number,
+  text: string,
+): Promise<void> {
+  const html = markdownToTelegramHtml(text);
+  const res = await fetch(`https://api.telegram.org/bot${opts.botToken}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, message_id: messageId, text: html, parse_mode: 'HTML' }),
+  });
+  if (!res.ok) {
+    throw new Error(`editMessageText failed: ${res.status} ${await res.text()}`);
   }
 }
 
