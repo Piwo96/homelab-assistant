@@ -26,14 +26,14 @@ import os
 import sys
 from typing import Any
 
-# Pfad zum homeassistant Skill (Schwester-Verzeichnis) damit wir die rohe
-# HA-API-Klasse importieren können ohne sie zu duplizieren.
+# smart-home ist self-contained: ha_client.py + catalogue.py + skill_helpers.py
+# liegen alle im selben scripts/-Verzeichnis. Damit Python sie ohne package-
+# Konfiguration findet, fügen wir _THIS_DIR zum sys.path hinzu.
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_HA_SCRIPTS = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "homeassistant", "scripts"))
-sys.path.insert(0, _HA_SCRIPTS)
-sys.path.insert(0, _THIS_DIR)  # for skill_helpers shared by both skills
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 
-from homeassistant_api import HomeAssistantAPI  # type: ignore  # noqa: E402
+from ha_client import HAClient as HomeAssistantAPI  # type: ignore  # noqa: E402
 
 
 FLOOR_LABELS = {
@@ -660,6 +660,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gst.add_argument("--entity", required=True)
 
+    # ----- Context (für Agent System-Prompt) -----
+    sub.add_parser(
+        "context",
+        help=("Liefert den Entity-Catalogue als Markdown-Block für den "
+              "Agent-System-Prompt. Wird vom Agent beim Routing auf smart-home "
+              "abgerufen und gecached. NICHT als User-Tool nutzen."),
+    )
+
     return p
 
 
@@ -668,13 +676,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.help_json:
-        # Reuse the homeassistant skill's emitter so the format matches the
-        # loader's HelpJsonScript shape exactly (including the `positional` flag).
-        try:
-            from skill_helpers import emit_help_json  # type: ignore
-        except ImportError:
-            sys.path.insert(0, _HA_SCRIPTS)
-            from skill_helpers import emit_help_json  # type: ignore
+        from skill_helpers import emit_help_json  # type: ignore
         emit_help_json(parser)
         return 0
 
@@ -724,6 +726,9 @@ def main() -> int:
             result = gerät_action(api, args.entity, "toggle")
         elif args.command == "gerät-status":
             result = gerät_status(api, args.entity)
+        elif args.command == "context":
+            from catalogue import build_markdown
+            result = {"markdown": build_markdown(api)}
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
