@@ -76,12 +76,18 @@ def _norm(s: str) -> str:
 def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, Any]:
     """Resolve a user-supplied `--where` string into a concrete target.
 
-    Returns one of:
-      {kind: 'group', group_id, entities, label}   — when an HA-group entity matches
-      {kind: 'floor', floor, entities, label}      — when --where names an Etage
-      {kind: 'area', area_id, entities, label}     — when --where names an HA-Area
-      {kind: 'name', entities, label}              — friendly-name substring fallback
-      {kind: 'none', entities: []}                 — nothing found
+    Accepts ONLY exact identifiers — the LLM is expected to look up entity_ids
+    or friendly_names in its catalogue and pass them verbatim. No substring or
+    fuzzy matching: ambiguous user vocabulary is the LLM's job to translate,
+    not the tool's. If nothing matches the user gets a clear "not found" so
+    the LLM can disambiguate or ask back.
+
+    Recognized inputs:
+      - HA entity_id, e.g. "light.eg_essen_tischleuchte"
+      - HA-Group entity_id, e.g. "group.og_lichter"
+      - Floor alias / display name, e.g. "OG", "Obergeschoss"
+      - HA-Area display name or area_id, e.g. "Esszimmer", "esszimmer", "Felix"
+      - Friendly_name (exact, case-insensitive), e.g. "EG Essen Tischleuchte"
     """
     needle = _norm(where)
     if not needle:
@@ -89,21 +95,36 @@ def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, A
 
     states = api.get_states()
 
-    # 1. HA-Group: explicit group entity_id reference OR a group whose name
-    #    matches AND has members in the requested domain.
+    # 0. Exact entity_id (single entity) — caller passed e.g. "light.eg_..."
+    if "." in needle:
+        for s in states:
+            if s["entity_id"].lower() == needle and s["entity_id"].startswith(f"{domain}."):
+                return {"kind": "entity", "entities": [s["entity_id"]],
+                        "label": s["attributes"].get("friendly_name") or s["entity_id"]}
+        # group.* entity_id reference
+        if needle.startswith("group."):
+            for s in states:
+                if s["entity_id"].lower() == needle:
+                    members = s["attributes"].get("entity_id") or []
+                    domain_members = [m for m in members if isinstance(m, str) and m.startswith(f"{domain}.")]
+                    if domain_members:
+                        return {"kind": "group", "group_id": s["entity_id"],
+                                "entities": domain_members,
+                                "label": s["attributes"].get("friendly_name") or s["entity_id"]}
+
+    # 1. HA-Group by exact friendly_name.
     for s in states:
         if not s["entity_id"].startswith("group."):
             continue
-        gid = s["entity_id"]
-        members = s["attributes"].get("entity_id") or []
         fn = (s["attributes"].get("friendly_name") or "").lower()
-        if needle == gid.lower() or needle == fn or needle in fn:
+        if needle == fn:
+            members = s["attributes"].get("entity_id") or []
             domain_members = [m for m in members if isinstance(m, str) and m.startswith(f"{domain}.")]
             if domain_members:
-                return {"kind": "group", "group_id": gid, "entities": domain_members,
-                        "label": s["attributes"].get("friendly_name") or gid}
+                return {"kind": "group", "group_id": s["entity_id"], "entities": domain_members,
+                        "label": s["attributes"].get("friendly_name") or s["entity_id"]}
 
-    # 2. Etage: floor alias.
+    # 2. Etage / floor alias (exact).
     floor_key = FLOOR_ALIASES.get(needle)
     if floor_key:
         ents = [s["entity_id"] for s in states
@@ -113,7 +134,7 @@ def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, A
             short, _ = FLOOR_LABELS[floor_key]
             return {"kind": "floor", "floor": floor_key, "entities": ents, "label": short}
 
-    # 3. HA-Area: display name or area_id. Use template helper for area_entities.
+    # 3. HA-Area: exact display name OR exact area_id.
     areas_raw = api.render_template("{{ areas() | sort | join(',') }}").strip()
     area_ids = [a.strip() for a in areas_raw.split(",") if a.strip()]
     for aid in area_ids:
@@ -121,7 +142,7 @@ def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, A
             name = api.render_template(f"{{{{ area_name('{aid}') }}}}").strip().lower()
         except Exception:
             name = aid
-        if needle == aid.lower() or needle == name or needle in name:
+        if needle == aid.lower() or needle == name:
             try:
                 area_ents = api.entities_in_area(aid)
                 ents = [e for e in area_ents if e.startswith(f"{domain}.")]
@@ -131,40 +152,14 @@ def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, A
             except Exception:
                 continue
 
-    # 4. Friendly-name substring + German-compound-aware fallback.
-    #
-    # German compound words mean "Esstisch" must match "Essen Tischleuchte" —
-    # neither substring matches the other directly. So in addition to the
-    # plain substring test we try splitting the needle at every position
-    # ≥3 chars and checking if both halves are prefixes of tokens in the
-    # friendly_name. "esstisch" → "ess" + "tisch" → both prefix matches.
-    import re
-
-    def _tokens(text: str) -> list[str]:
-        return [t for t in re.split(r"[\s_\-.]+", text.lower()) if t]
-
-    def _matches(fn: str, eid: str) -> bool:
-        if needle in fn or needle in eid:
-            return True
-        if " " in needle:
-            return False  # multi-word queries: substring already covers it
-        toks = _tokens(fn) + _tokens(eid)
-        # split needle into two halves at every cut ≥3 chars on each side
-        for i in range(3, len(needle) - 2):
-            left, right = needle[:i], needle[i:]
-            if any(t.startswith(left) for t in toks) and any(t.startswith(right) for t in toks):
-                return True
-        return False
-
-    matches: list[str] = []
+    # 4. Exact friendly_name (case-insensitive).
     for s in states:
         if not s["entity_id"].startswith(f"{domain}."):
             continue
         fn = (s["attributes"].get("friendly_name") or "").lower()
-        if _matches(fn, s["entity_id"].lower()):
-            matches.append(s["entity_id"])
-    if matches:
-        return {"kind": "name", "entities": matches, "label": where}
+        if needle == fn:
+            return {"kind": "name", "entities": [s["entity_id"]],
+                    "label": s["attributes"].get("friendly_name") or s["entity_id"]}
 
     return {"kind": "none", "entities": [], "label": where}
 
