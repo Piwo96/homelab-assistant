@@ -9,6 +9,8 @@ import { embed, embedMany } from './llm/embedding';
 import { isLmStudioReachable } from './llm/health';
 import { wakeGamingPc } from './wol/wake';
 import { sendText } from './telegram/send';
+import { downloadTelegramFile } from './telegram/download';
+import { transcribeAudio } from './llm/transcribe';
 import { computeCacheKey, loadCache, saveCache } from './router/cache';
 import { buildGenerator } from './llm/generate';
 import { startServer } from './server';
@@ -76,6 +78,13 @@ async function main(): Promise<void> {
       wakeGamingPc: () => wakeGamingPc({ skillsRoot, timeoutMs: 150_000 }),
       notifyStatus: async (chatId, text) => {
         await sendText({ botToken: env.TELEGRAM_BOT_TOKEN }, chatId, text);
+      },
+      transcribeVoice: async (fileId) => {
+        const audio = await downloadTelegramFile({ botToken: env.TELEGRAM_BOT_TOKEN }, fileId);
+        return transcribeAudio(
+          { baseUrl: env.LM_STUDIO_URL, model: env.WHISPER_MODEL },
+          { data: audio.data, filename: audio.filename, mimeType: audio.mimeType },
+        );
       },
     },
   });

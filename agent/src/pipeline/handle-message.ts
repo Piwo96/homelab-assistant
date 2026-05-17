@@ -4,7 +4,7 @@ import { SkillRegistry } from '../skills/registry';
 import { defineSkillTool, inferPositionals } from '../tools/define-skill-tool';
 import { buildSystemPrompt, buildWelcomePrompt } from './system-prompt';
 import { appendMessage, clearHistory, recentMessages } from '../memory/history';
-import type { ParsedTextUpdate } from '../telegram/webhook';
+import type { ParsedTextUpdate, ParsedUpdate, ParsedVoiceUpdate } from '../telegram/webhook';
 import type { Tool } from 'ai';
 import { log } from '../utils/logger';
 
@@ -38,11 +38,55 @@ export interface HandleDeps {
   /** Optional: side-channel to send a status message to the user mid-pipeline
    *  (e.g. "PC schläft, wecke auf..."). Failures here must not abort the pipeline. */
   notifyStatus?: (chatId: number, text: string) => Promise<void>;
+  /** Optional: resolve a Telegram voice file_id to its transcribed German text.
+   *  Composes Telegram getFile + LM Studio Whisper in main.ts. */
+  transcribeVoice?: (fileId: string) => Promise<string>;
 }
 
 const HISTORY_LIMIT = 20;
 
-export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate): Promise<string> {
+export async function handleMessage(deps: HandleDeps, input: ParsedUpdate): Promise<string> {
+  if (input.kind === 'voice') {
+    return handleVoice(deps, input);
+  }
+  return handleText(deps, input);
+}
+
+async function handleVoice(deps: HandleDeps, voice: ParsedVoiceUpdate): Promise<string> {
+  log.info('voice_received', { updateId: voice.updateId, durationSec: voice.durationSec, mimeType: voice.mimeType });
+  if (!deps.transcribeVoice) {
+    return '⚠️ Sprachnachrichten sind aktuell nicht aktiviert. Bitte als Text schreiben.';
+  }
+  const tTranscribe = Date.now();
+  let transcript: string;
+  try {
+    transcript = (await deps.transcribeVoice(voice.fileId)).trim();
+  } catch (err) {
+    log.error('transcribe_failed', { err: String(err), updateId: voice.updateId });
+    return '⚠️ Transkription fehlgeschlagen. Versuch es nochmal oder schreib es als Text.';
+  }
+  log.info('transcribed', { ms: Date.now() - tTranscribe, len: transcript.length, durationSec: voice.durationSec });
+  if (!transcript) {
+    return '🎤 Ich konnte nichts verstehen — sprich bitte deutlicher oder schreib es als Text.';
+  }
+  // Run the synthesized text through the normal pipeline, then prefix the
+  // reply with the transcript so the user can verify what Whisper heard
+  // (cheap defense against mis-transcriptions sending tool calls awry).
+  const textUpdate: ParsedTextUpdate = {
+    kind: 'text',
+    updateId: voice.updateId,
+    chatId: voice.chatId,
+    userId: voice.userId,
+    messageId: voice.messageId,
+    ts: voice.ts,
+    text: transcript,
+    ...(voice.firstName !== undefined ? { firstName: voice.firstName } : {}),
+  };
+  const reply = await handleText(deps, textUpdate);
+  return `🎤 _${transcript}_\n\n${reply}`;
+}
+
+async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<string> {
   const t0 = Date.now();
   const bypassRouter = process.env.BYPASS_ROUTER === '1';
   log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length, bypassRouter });

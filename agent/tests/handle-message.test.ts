@@ -84,6 +84,63 @@ describe('handleMessage', () => {
     expect(reply).not.toContain('Keine Antwort');
   });
 
+  it('voice: transcribes, runs text pipeline, and prefixes reply with transcript', async () => {
+    const deps: HandleDeps = {
+      db, registry,
+      embedQuery: async () => [1, 0, 0],
+      skillEmbeddings: { homeassistant: [1, 0, 0] },
+      generate: async () => ({ text: 'Esstisch ist an.', toolCalls: [], finishReason: 'stop' }),
+      thresholds: { high: 0.75, med: 0.4 },
+      transcribeVoice: async (fileId) => {
+        expect(fileId).toBe('AwACAGV');
+        return 'Mach das Esszimmerlicht an';
+      },
+    };
+    const reply = await handleMessage(deps, {
+      kind: 'voice', updateId: 50, chatId: 400, userId: 999, messageId: 1, ts: 1,
+      fileId: 'AwACAGV', durationSec: 3,
+    });
+    expect(reply).toContain('🎤');
+    expect(reply).toContain('Mach das Esszimmerlicht an');
+    expect(reply).toContain('Esstisch ist an.');
+    // Persisted user message should be the TRANSCRIPT (so future tool-calls
+    // can reference what the user just asked), not the raw voice metadata.
+    const userRow = db.prepare('SELECT content FROM conversations WHERE chat_id=400 AND role=?').get('user') as { content: string } | undefined;
+    expect(userRow?.content).toContain('Mach das Esszimmerlicht an');
+  });
+
+  it('voice: returns friendly error when transcribeVoice is not wired', async () => {
+    const deps: HandleDeps = {
+      db, registry,
+      embedQuery: async () => [1, 0, 0],
+      skillEmbeddings: { homeassistant: [1, 0, 0] },
+      generate: async () => ({ text: 'should not be called', toolCalls: [], finishReason: 'stop' }),
+      thresholds: { high: 0.75, med: 0.4 },
+    };
+    const reply = await handleMessage(deps, {
+      kind: 'voice', updateId: 51, chatId: 401, userId: 999, messageId: 1, ts: 1,
+      fileId: 'X', durationSec: 1,
+    });
+    expect(reply.toLowerCase()).toContain('sprachnachrichten');
+  });
+
+  it('voice: empty transcript asks user to speak clearer / write', async () => {
+    const deps: HandleDeps = {
+      db, registry,
+      embedQuery: async () => [1, 0, 0],
+      skillEmbeddings: { homeassistant: [1, 0, 0] },
+      generate: async () => ({ text: 'never', toolCalls: [], finishReason: 'stop' }),
+      thresholds: { high: 0.75, med: 0.4 },
+      transcribeVoice: async () => '   ',
+    };
+    const reply = await handleMessage(deps, {
+      kind: 'voice', updateId: 52, chatId: 402, userId: 999, messageId: 1, ts: 1,
+      fileId: 'X', durationSec: 1,
+    });
+    expect(reply).toContain('🎤');
+    expect(reply.toLowerCase()).toContain('verstehen');
+  });
+
   it('persists user msg + assistant reply to history', async () => {
     const deps: HandleDeps = {
       db, registry,

@@ -63,11 +63,36 @@ describe('parseUpdate', () => {
     expect(u).not.toHaveProperty('firstName');
   });
 
+  it('parses voice messages with file_id, duration and mime', () => {
+    const u = parseUpdate({
+      update_id: 7,
+      message: {
+        message_id: 11,
+        chat: { id: 555, type: 'private' },
+        from: { id: 999, is_bot: false, first_name: 'P' },
+        date: 1700000000,
+        voice: { file_id: 'AwACAGV', duration: 4, mime_type: 'audio/ogg' },
+      },
+    });
+    expect(u).toEqual({
+      kind: 'voice',
+      updateId: 7,
+      chatId: 555,
+      userId: 999,
+      messageId: 11,
+      ts: 1700000000,
+      firstName: 'P',
+      fileId: 'AwACAGV',
+      durationSec: 4,
+      mimeType: 'audio/ogg',
+    });
+  });
+
   it('returns null for callback queries (handled later)', () => {
     expect(parseUpdate({ update_id: 2, callback_query: { id: 'x' } } as never)).toBeNull();
   });
 
-  it('returns null for unsupported message types in MVP', () => {
+  it('returns null for photo (or other unsupported) message types', () => {
     expect(parseUpdate({
       update_id: 3,
       message: { message_id: 1, chat: { id: 1, type: 'private' }, from: { id: 1, is_bot: false }, date: 0, photo: [] },
