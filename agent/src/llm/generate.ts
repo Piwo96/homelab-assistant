@@ -4,6 +4,11 @@ import type { GenerateInput, GenerateOutput } from '../pipeline/handle-message';
 import { log } from '../utils/logger';
 
 const MAX_STEPS = 5;
+// Output-token headroom per LLM call. Gemma-4B in thinking mode spends a chunk
+// of its output budget on reasoning before producing the user-facing text; the
+// AI-SDK default (~1024) was getting truncated for tool-heavy responses (e.g.
+// listing lights across two areas), surfacing as empty text + finishReason='length'.
+const MAX_OUTPUT_TOKENS = 8192;
 
 export function buildGenerator(cfg: LmStudioConfig) {
   const model = lmStudioModel(cfg);
@@ -15,6 +20,7 @@ export function buildGenerator(cfg: LmStudioConfig) {
       tools: input.tools,
       toolChoice: Object.keys(input.tools).length > 0 ? 'auto' : 'none',
       maxSteps: MAX_STEPS,
+      maxTokens: MAX_OUTPUT_TOKENS,
       experimental_providerMetadata: {
         'lm-studio': {
           reasoning: { effort: input.reasoningEffort },
@@ -34,6 +40,7 @@ export function buildGenerator(cfg: LmStudioConfig) {
     return {
       text: result.text,
       toolCalls: allToolCalls.map(tc => ({ toolName: tc.toolName, args: tc.args })),
+      finishReason: result.finishReason,
     };
   };
 }

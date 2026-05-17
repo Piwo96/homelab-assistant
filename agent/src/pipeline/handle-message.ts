@@ -18,6 +18,10 @@ export interface GenerateInput {
 export interface GenerateOutput {
   text: string;
   toolCalls: Array<{ toolName: string; args: unknown }>;
+  /** Why the final LLM step stopped. 'length' = hit max output tokens
+   *  (response was truncated); 'stop' = clean completion. Used by the
+   *  pipeline to craft a useful fallback when text comes back empty. */
+  finishReason: string;
 }
 
 export interface HandleDeps {
@@ -144,9 +148,17 @@ export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate):
     tools,
     reasoningEffort: 'low',
   });
-  log.info('llm_call_done', { ms: Date.now() - tGen, textLen: out.text.length, toolCallCount: out.toolCalls.length });
+  log.info('llm_call_done', { ms: Date.now() - tGen, textLen: out.text.length, toolCallCount: out.toolCalls.length, finishReason: out.finishReason });
 
-  const reply = out.text.trim() || '(Keine Antwort vom Modell)';
+  const trimmedText = out.text.trim();
+  let reply: string;
+  if (trimmedText) {
+    reply = trimmedText;
+  } else if (out.finishReason === 'length') {
+    reply = '⚠️ Antwort wurde abgeschnitten — der Output war zu lang. Bitte spezifischer fragen (z.B. nur eine Area oder nur eine Domäne auf einmal).';
+  } else {
+    reply = `(Keine Antwort vom Modell, finishReason=${out.finishReason})`;
+  }
   log.info('pipeline_done', { totalMs: Date.now() - t0, replyLen: reply.length });
 
   const primaryIntent = selectedSkills[0]?.id;

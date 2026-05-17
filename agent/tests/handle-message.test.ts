@@ -40,7 +40,7 @@ describe('handleMessage', () => {
       skillEmbeddings: { homeassistant: [1, 0, 0] },
       generate: async ({ tools }) => {
         receivedTools = tools as Record<string, unknown>;
-        return { text: 'Status: alles ok', toolCalls: [] };
+        return { text: 'Status: alles ok', toolCalls: [], finishReason: 'stop' };
       },
       thresholds: { high: 0.75, med: 0.4 },
     };
@@ -59,7 +59,7 @@ describe('handleMessage', () => {
       skillEmbeddings: { homeassistant: [1, 0, 0] },
       generate: async ({ tools }) => {
         expect(Object.keys(tools as object)).toHaveLength(0);
-        return { text: 'Ich helfe beim Homelab — frag mich z. B. nach Lichtern.', toolCalls: [] };
+        return { text: 'Ich helfe beim Homelab — frag mich z. B. nach Lichtern.', toolCalls: [], finishReason: 'stop' };
       },
       thresholds: { high: 0.75, med: 0.4 },
     };
@@ -69,12 +69,27 @@ describe('handleMessage', () => {
     expect(reply).toContain('Homelab');
   });
 
+  it('explains truncation to user when model returns empty text + finishReason=length', async () => {
+    const deps: HandleDeps = {
+      db, registry,
+      embedQuery: async () => [1, 0, 0],
+      skillEmbeddings: { homeassistant: [1, 0, 0] },
+      generate: async () => ({ text: '', toolCalls: [], finishReason: 'length' }),
+      thresholds: { high: 0.75, med: 0.4 },
+    };
+    const reply = await handleMessage(deps, {
+      kind: 'text', updateId: 99, chatId: 300, userId: 999, messageId: 1, text: 'liste alles auf', ts: 1,
+    });
+    expect(reply.toLowerCase()).toContain('abgeschnitten');
+    expect(reply).not.toContain('Keine Antwort');
+  });
+
   it('persists user msg + assistant reply to history', async () => {
     const deps: HandleDeps = {
       db, registry,
       embedQuery: async () => [1, 0, 0],
       skillEmbeddings: { homeassistant: [1, 0, 0] },
-      generate: async () => ({ text: 'Reply', toolCalls: [] }),
+      generate: async () => ({ text: 'Reply', toolCalls: [], finishReason: 'stop' }),
       thresholds: { high: 0.75, med: 0.4 },
     };
     await handleMessage(deps, {
