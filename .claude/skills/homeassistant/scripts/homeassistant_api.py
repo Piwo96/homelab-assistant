@@ -360,15 +360,23 @@ def execute(action: str, args: dict) -> Any:
             data.update(extra)
         return api.call_service(args["domain"], args["service"], data)
     elif action in ("cover-open", "cover_open"):
-        return api.call_service("cover", "open_cover", {"entity_id": args["entity_id"]})
+        # HA's call_service returns [] on success. Wrap in a structured object
+        # so the LLM doesn't misread "[]" as failure.
+        api.call_service("cover", "open_cover", {"entity_id": args["entity_id"]})
+        return {"ok": True, "entity_id": args["entity_id"], "action": "open"}
     elif action in ("cover-close", "cover_close"):
-        return api.call_service("cover", "close_cover", {"entity_id": args["entity_id"]})
+        api.call_service("cover", "close_cover", {"entity_id": args["entity_id"]})
+        return {"ok": True, "entity_id": args["entity_id"], "action": "close"}
     elif action in ("cover-set-position", "cover_set_position"):
-        return api.call_service("cover", "set_cover_position",
-                                {"entity_id": args["entity_id"], "position": int(args["position"])})
+        pos = int(args["position"])
+        api.call_service("cover", "set_cover_position",
+                         {"entity_id": args["entity_id"], "position": pos})
+        return {"ok": True, "entity_id": args["entity_id"], "position": pos}
     elif action in ("cover-set-tilt", "cover_set_tilt"):
-        return api.call_service("cover", "set_cover_tilt_position",
-                                {"entity_id": args["entity_id"], "tilt_position": int(args["tilt_position"])})
+        tilt = int(args["tilt_position"])
+        api.call_service("cover", "set_cover_tilt_position",
+                         {"entity_id": args["entity_id"], "tilt_position": tilt})
+        return {"ok": True, "entity_id": args["entity_id"], "tilt_position": tilt}
     elif action == "list-automations":
         automations = api.list_automations()
         limit = int(args["limit"]) if args.get("limit") else 50
@@ -831,25 +839,31 @@ def main():
         result = api.call_service(args.domain, args.service, data)
 
     # Cover (Rollo / Jalousie) — high-level commands that hide HA's service-name layout.
+    # Wrap HA's empty-list success in a structured {ok:true,...} so the LLM
+    # doesn't mis-read "[]" as failure (real prod bug, see commit history).
     elif args.command == "cover-open":
-        result = api.call_service("cover", "open_cover", {"entity_id": args.entity_id})
+        api.call_service("cover", "open_cover", {"entity_id": args.entity_id})
+        result = {"ok": True, "entity_id": args.entity_id, "action": "open"}
         if not args.json:
             print(f"Opened {args.entity_id}")
             return
     elif args.command == "cover-close":
-        result = api.call_service("cover", "close_cover", {"entity_id": args.entity_id})
+        api.call_service("cover", "close_cover", {"entity_id": args.entity_id})
+        result = {"ok": True, "entity_id": args.entity_id, "action": "close"}
         if not args.json:
             print(f"Closed {args.entity_id}")
             return
     elif args.command == "cover-set-position":
-        result = api.call_service("cover", "set_cover_position",
-                                  {"entity_id": args.entity_id, "position": args.position})
+        api.call_service("cover", "set_cover_position",
+                         {"entity_id": args.entity_id, "position": args.position})
+        result = {"ok": True, "entity_id": args.entity_id, "position": args.position}
         if not args.json:
             print(f"Set position of {args.entity_id} to {args.position}%")
             return
     elif args.command == "cover-set-tilt":
-        result = api.call_service("cover", "set_cover_tilt_position",
-                                  {"entity_id": args.entity_id, "tilt_position": args.tilt_position})
+        api.call_service("cover", "set_cover_tilt_position",
+                         {"entity_id": args.entity_id, "tilt_position": args.tilt_position})
+        result = {"ok": True, "entity_id": args.entity_id, "tilt_position": args.tilt_position}
         if not args.json:
             print(f"Set tilt of {args.entity_id} to {args.tilt_position}%")
             return

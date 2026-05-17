@@ -4,6 +4,13 @@ export interface HelpJsonArg {
   name: string;
   type: 'str' | 'int' | 'float' | 'bool';
   required: boolean;
+  /** True if argparse treats this as a positional argument (no `--flag` prefix).
+   *  Crucial for the executor: positional values are appended in declaration
+   *  order, optional flags are passed as `--name value`. The earlier code
+   *  inferred "required" → "positional" which broke for argparse subcommands
+   *  that have BOTH a positional + a required-but-flag arg (e.g. cover-set-tilt
+   *  with positional entity_id + required --tilt-position). */
+  positional?: boolean;
   description: string;
   choices?: Array<string | number>;
   default?: unknown;

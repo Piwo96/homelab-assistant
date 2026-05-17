@@ -60,7 +60,14 @@ export function defineSkillTool(skillTool: SkillTool, opts: DefineOptions = {}):
   return built as unknown as SkillToolHandle;
 }
 
+/** @deprecated Use `skillTool.positionalArgs` directly — it comes from
+ *  argparse's actual `positional` flag via the help-json. The Zod-shape
+ *  inference here treats every required arg as positional, which is wrong
+ *  for argparse subcommands that have BOTH a positional + required-but-flag
+ *  arg (e.g. cover-set-tilt: positional entity_id + required --tilt-position). */
 export function inferPositionals(skillTool: SkillTool): string[] {
+  if (skillTool.positionalArgs) return skillTool.positionalArgs;
+  // Legacy fallback for callers/tests that build a SkillTool without the field.
   const shape = skillTool.schema.shape;
   const required: string[] = [];
   for (const [key, val] of Object.entries(shape)) {

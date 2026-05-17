@@ -31,6 +31,7 @@ describe('defineSkillTool', () => {
       description: 'turn on',
       schema: z.object({ entity_id: z.string(), brightness: z.number().int().optional() }),
       isWrite: true,
+      positionalArgs: ["entity_id"],
     };
     const tool = defineSkillTool(skillTool, { positionalArgs: ['entity_id'] });
     const result = await tool.execute({ brightness: 100 } as never, {} as never) as { ok: boolean; error: string };
@@ -61,6 +62,7 @@ sys.exit(1)
       description: 'fails',
       schema: z.object({ entity_id: z.string() }),
       isWrite: false,
+      positionalArgs: ["entity_id"],
     };
     const tool = defineSkillTool(skillTool, { positionalArgs: ['entity_id'] });
     const result = await tool.execute({ entity_id: 'light.buero' } as never, {} as never) as { ok: boolean; error: string; tool: string };
@@ -77,6 +79,7 @@ sys.exit(1)
       description: 'turn on',
       schema: z.object({ entity_id: z.string(), brightness: z.number().int().optional() }),
       isWrite: true,
+      positionalArgs: ["entity_id"],
     };
     const tool = defineSkillTool(skillTool, { positionalArgs: ['entity_id'] });
     const result = await tool.execute({ entity_id: 'light.kitchen', brightness: 200 } as never, {} as never);

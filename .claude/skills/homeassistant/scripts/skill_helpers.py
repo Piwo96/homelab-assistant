@@ -33,6 +33,7 @@ def _arg_to_dict(action: argparse.Action) -> dict[str, Any]:
         "name": name,
         "type": type_name,
         "required": required,
+        "positional": not is_flag,
         "description": action.help or "",
     }
     if action.choices is not None:

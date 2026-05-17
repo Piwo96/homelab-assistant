@@ -12,6 +12,13 @@ export interface SkillTool {
   description: string;
   schema: ZodObject<Record<string, ZodTypeAny>>;
   isWrite: boolean;
+  /** Args that argparse expects positionally (no `--flag`). The executor
+   *  passes these in declaration order; everything else becomes `--flag value`.
+   *  Populated from the `positional` field in --help-json output. Without
+   *  this list, required-but-optional flags like `--tilt-position` would be
+   *  passed positionally and argparse would error with "the following arguments
+   *  are required: --tilt-position". */
+  positionalArgs: string[];
 }
 
 export interface LoadedSkill {
@@ -98,6 +105,7 @@ export async function loadSkills(skillsRoot: string, only?: string[]): Promise<L
       }
       const stem = scriptStem(scriptPath);
       for (const [cmdName, cmd] of Object.entries(helpJson.commands)) {
+        const positionalArgs = cmd.args.filter(a => a.positional).map(a => a.name);
         tools.push({
           name: `${stem}__${cmdName}`,
           scriptPath,
@@ -105,6 +113,7 @@ export async function loadSkills(skillsRoot: string, only?: string[]): Promise<L
           description: cmd.description || cmdName,
           schema: commandToZod(cmd),
           isWrite: cmd.is_write,
+          positionalArgs,
         });
       }
     }

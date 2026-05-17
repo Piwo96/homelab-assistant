@@ -25,6 +25,7 @@ beforeEach(() => {
       description: 'HA Status',
       schema: z.object({}),
       isWrite: false,
+      positionalArgs: [],
     }],
   }];
   registry.replaceAll(skills);
