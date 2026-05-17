@@ -131,13 +131,37 @@ def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, A
             except Exception:
                 continue
 
-    # 4. Friendly-name substring fallback.
+    # 4. Friendly-name substring + German-compound-aware fallback.
+    #
+    # German compound words mean "Esstisch" must match "Essen Tischleuchte" —
+    # neither substring matches the other directly. So in addition to the
+    # plain substring test we try splitting the needle at every position
+    # ≥3 chars and checking if both halves are prefixes of tokens in the
+    # friendly_name. "esstisch" → "ess" + "tisch" → both prefix matches.
+    import re
+
+    def _tokens(text: str) -> list[str]:
+        return [t for t in re.split(r"[\s_\-.]+", text.lower()) if t]
+
+    def _matches(fn: str, eid: str) -> bool:
+        if needle in fn or needle in eid:
+            return True
+        if " " in needle:
+            return False  # multi-word queries: substring already covers it
+        toks = _tokens(fn) + _tokens(eid)
+        # split needle into two halves at every cut ≥3 chars on each side
+        for i in range(3, len(needle) - 2):
+            left, right = needle[:i], needle[i:]
+            if any(t.startswith(left) for t in toks) and any(t.startswith(right) for t in toks):
+                return True
+        return False
+
     matches: list[str] = []
     for s in states:
         if not s["entity_id"].startswith(f"{domain}."):
             continue
         fn = (s["attributes"].get("friendly_name") or "").lower()
-        if needle in fn or needle in s["entity_id"]:
+        if _matches(fn, s["entity_id"].lower()):
             matches.append(s["entity_id"])
     if matches:
         return {"kind": "name", "entities": matches, "label": where}
