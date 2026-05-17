@@ -31,6 +31,15 @@ describe('buildSystemPrompt', () => {
     const p = buildSystemPrompt({ skills: [], hasTools: false });
     expect(p).toContain('unbekannt');
   });
+
+  it('includes anti-endless-thinking guidance for follow-up queries', () => {
+    const p = buildSystemPrompt({ skills: [{ id: 'x', description: 'y' }], hasTools: true });
+    // Must instruct the model to resolve "alle/sie/wieder" via chat history,
+    // not re-search; and to ask a clarifying question instead of looping forever.
+    expect(p).toContain('FOLGE-ANFRAGEN');
+    expect(p).toContain('wieder');
+    expect(p).toContain('Rückfrage');
+  });
 });
 
 describe('buildWelcomePrompt', () => {

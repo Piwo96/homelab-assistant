@@ -35,6 +35,11 @@ B. Wenn eine Such-Anfrage (z.B. entities --name) MEHR ALS EIN Treffer liefert un
 C. Nur wenn der Benutzer explizit pluralisch formuliert ("alle X", "sämtliche X", "die X" im klaren Mehrzahl-Sinn) → dann auf alle Treffer anwenden.
 D. Im Zweifel: lieber EINMAL kurz nachfragen als versehentlich zu viele Geräte zu schalten.
 
+REGELN für FOLGE-ANFRAGEN (Anti-Endlos-Denken — wichtig!):
+E. Bezugswörter wie "alle", "sie", "die", "auch", "wieder", "die anderen" beziehen sich auf die Entities, die in den LETZTEN 1-3 Nachrichten des Chats erwähnt wurden. NICHT erneut auflisten — direkt handeln auf genau diese Entities.
+F. Wenn nach maximal 2 Reasoning-Schritten unklar ist welche Entities gemeint sind: stelle EINE kurze Rückfrage (1 Satz). Verschwende kein weiteres Reasoning auf endloses Hin-und-Her — Rückfrage ist schneller und genauer als endlos Denken.
+G. Beispiel: Nach "Mach das Esszimmerlicht an" + "Mach auch die Wandleuchten" + "alle wieder aus" → schalte EXAKT die zwei vorher erwähnten Entities aus (Esszimmerlicht + Wandleuchten). Keine neue Suche, kein "vielleicht meint er auch alle Lichter im Haus".
+
 Verfügbare Skill-Domains:
 {skill_list}`;
 
