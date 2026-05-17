@@ -70,6 +70,7 @@ async function main(): Promise<void> {
     },
     ttlMs: CONTEXT_TTL_MS,
   });
+  contextCache.start();
 
   // Stage-1 LLM router. Only called when >1 skill is loaded (handle-message
   // falls into the fast-path when there's a single skill).

@@ -59,4 +59,51 @@ describe('SkillContextCache', () => {
     });
     expect(await cache.get('smart-home')).toBeNull();
   });
+
+  it('start() triggers an immediate initial fetch', async () => {
+    let calls = 0;
+    const cache = createSkillContextCache({
+      skills: [{ id: 'smart-home', hasContext: true }],
+      fetch: async () => { calls++; return `markdown-${calls}`; },
+      ttlMs: 60_000,
+    });
+    cache.start();
+    // Give the immediate fetch a tick to resolve.
+    await new Promise(r => setTimeout(r, 5));
+    expect(calls).toBe(1);
+    // get() should hit cache, not refetch.
+    expect(await cache.get('smart-home')).toBe('markdown-1');
+    expect(calls).toBe(1);
+    cache.stop();
+  });
+
+  it('start() is idempotent (subsequent calls no-op)', async () => {
+    let calls = 0;
+    const cache = createSkillContextCache({
+      skills: [{ id: 'smart-home', hasContext: true }],
+      fetch: async () => { calls++; return `markdown-${calls}`; },
+      ttlMs: 60_000,
+    });
+    cache.start();
+    cache.start();  // should be no-op
+    await new Promise(r => setTimeout(r, 5));
+    expect(calls).toBe(1); // not 2
+    cache.stop();
+  });
+
+  it('skips background refresh for skills without context', async () => {
+    let calls = 0;
+    const cache = createSkillContextCache({
+      skills: [
+        { id: 'smart-home', hasContext: true },
+        { id: 'wol', hasContext: false },
+      ],
+      fetch: async (id) => { calls++; return `md-${id}-${calls}`; },
+      ttlMs: 60_000,
+    });
+    cache.start();
+    await new Promise(r => setTimeout(r, 5));
+    expect(calls).toBe(1); // only smart-home was fetched
+    cache.stop();
+  });
 });

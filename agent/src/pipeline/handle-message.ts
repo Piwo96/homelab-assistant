@@ -68,7 +68,7 @@ function looksLikeLeakedReasoning(text: string): boolean {
     /"tool_name"\s*:/i,
     /"tool_calls"\s*:\s*\[/i,
     /"function"\s*:\s*"smart-home_/i,
-    /"parameters"\s*:\s*\{[^}]*entity_id/i,
+    /"parameters"\s*:\s*\{[^}]*"entity(?:_id)?"\s*:/i,
   ];
   return markers.some(re => re.test(t));
 }

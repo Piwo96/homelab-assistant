@@ -38,7 +38,7 @@ function baseDeps(overrides: Partial<HandleDeps> = {}): HandleDeps {
     registry,
     generate: async () => ({ text: 'OK', toolCalls: [], finishReason: 'stop' }),
     llmRouter: { pick: async () => ({ skillId: 'smart-home' }) },
-    contextCache: { get: async () => null },
+    contextCache: { get: async () => null, start: () => {}, stop: () => {} },
     ...overrides,
   };
 }
@@ -63,7 +63,7 @@ describe('handleMessage — fast-path (single skill)', () => {
   it('injects skill context block when contextCache returns markdown', async () => {
     let receivedSystem = '';
     const deps = baseDeps({
-      contextCache: { get: async () => 'BEKANNTE ENTITIES (smart-home, Snapshot ...)' },
+      contextCache: { get: async () => 'BEKANNTE ENTITIES (smart-home, Snapshot ...)', start: () => {}, stop: () => {} },
       generate: async ({ system }) => {
         receivedSystem = system;
         return { text: 'OK', toolCalls: [], finishReason: 'stop' };

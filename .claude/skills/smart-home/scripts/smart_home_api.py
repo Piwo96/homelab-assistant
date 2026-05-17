@@ -3,8 +3,8 @@
 
 Dieses Script übersetzt deutsche Alltagskommandos in HA-Service-Calls und
 versteckt Service-Namen / entity_id-Konventionen vor dem LLM-Agenten. Es nutzt
-intern den `homeassistant` Skill als rohe HA-API (importiert die
-HomeAssistantAPI-Klasse aus dem Schwester-Skill).
+intern den lokalen `ha_client.py` als HA-REST-Client (minimal, nur die
+Methoden die smart-home tatsächlich braucht).
 
 Erweiterungs-Modell:
 - v1 (jetzt): Lichter — on/off/set/status mit `--where`-Auflösung (Etage,
