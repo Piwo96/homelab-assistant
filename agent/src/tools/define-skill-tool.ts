@@ -12,6 +12,21 @@ export type SkillToolHandle = Tool & {
   execute: (args: unknown, options: ToolExecutionOptions) => Promise<unknown>;
 };
 
+/** Pull the most useful single-line summary out of a stderr blob.
+ *  Python tracebacks end with "ErrorType: message" — that's the bit the model
+ *  needs to reason about. Everything above is noise that just eats tokens. */
+function extractErrorSummary(stderr: string, timedOut: boolean | undefined): string {
+  if (timedOut) return 'timed out';
+  const trimmed = stderr.trim();
+  if (!trimmed) return 'unknown error';
+  const lines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
+  // Walk from the end and grab the first "Foo(Error|Exception): bar" line.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^[A-Z][A-Za-z]+(Error|Exception):\s/.test(lines[i]!)) return lines[i]!;
+  }
+  return lines[lines.length - 1] ?? trimmed;
+}
+
 export function defineSkillTool(skillTool: SkillTool, opts: DefineOptions = {}): SkillToolHandle {
   const built = tool({
     description: skillTool.description,
@@ -25,10 +40,19 @@ export function defineSkillTool(skillTool: SkillTool, opts: DefineOptions = {}):
         opts.positionalArgs ?? [],
       );
       if (!result.success) {
-        log.warn('skill_tool_failed', { tool: skillTool.name, exitCode: result.exitCode, stderr: result.stderr });
-        throw new Error(
-          `Skill ${skillTool.name} failed (exit ${result.exitCode})${result.timedOut ? ' [timeout]' : ''}: ${result.stderr.trim() || 'unknown'}`,
-        );
+        const summary = extractErrorSummary(result.stderr, result.timedOut);
+        log.warn('skill_tool_failed', { tool: skillTool.name, exitCode: result.exitCode, summary, stderr: result.stderr });
+        // Return as a structured tool result instead of throwing. The AI SDK
+        // feeds this back to the model as the tool's output, so the model can
+        // apologize / ask / try a different entity rather than the whole
+        // pipeline failing with "etwas schiefgegangen" at the user.
+        return {
+          ok: false,
+          error: summary,
+          tool: skillTool.name,
+          exit_code: result.exitCode,
+          ...(result.timedOut ? { timed_out: true } : {}),
+        };
       }
       return result.data ?? { ok: true };
     },
