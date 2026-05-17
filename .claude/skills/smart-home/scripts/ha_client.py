@@ -116,15 +116,19 @@ class HAClient:
             return response.text
         except requests.exceptions.HTTPError as e:
             raise RuntimeError(f"Template render failed: {e}") from e
-        except RuntimeError:
-            raise
         except Exception as e:
             raise RuntimeError(f"API error: {e}") from e
 
     def entities_in_area(self, area: str) -> list[str]:
-        """entity_ids in einer HA-Area (display-name oder area_id)."""
-        safe_area = area.replace("'", "\\'")
-        raw = self.render_template(f"{{{{ area_entities('{safe_area}') }}}}")
+        """entity_ids in einer HA-Area (display-name oder area_id).
+
+        Validiert dass `area` keine Template-Sonderzeichen enthält — HA-Area-
+        Namen sind in der Praxis simple Identifier, also fängt diese Schranke
+        sowohl Halluzinationen als auch Injection-Versuche ab.
+        """
+        if any(c in area for c in ("'", '"', "\\", "\n", "\r", "{", "}")):
+            raise RuntimeError(f"Invalid area name (contains template-breaking chars): {area!r}")
+        raw = self.render_template(f"{{{{ area_entities('{area}') }}}}")
         if isinstance(raw, str):
             try:
                 value = ast.literal_eval(raw)
