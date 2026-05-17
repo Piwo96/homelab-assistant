@@ -28,6 +28,9 @@ export interface LoadedSkill {
   intentHints: string[];
   scriptPaths: string[];
   tools: SkillTool[];
+  /** True iff the skill exposes a `context` subcommand that the agent should
+   *  fetch and inject into the system prompt when this skill is routed. */
+  hasContext: boolean;
 }
 
 interface Frontmatter {
@@ -95,6 +98,7 @@ export async function loadSkills(skillsRoot: string, only?: string[]): Promise<L
     if (scriptPaths.length === 0) continue;
 
     const tools: SkillTool[] = [];
+    let skillHasContext = false;
     for (const scriptPath of scriptPaths) {
       let helpJson: HelpJsonScript;
       try {
@@ -105,6 +109,11 @@ export async function loadSkills(skillsRoot: string, only?: string[]): Promise<L
       }
       const stem = scriptStem(scriptPath);
       for (const [cmdName, cmd] of Object.entries(helpJson.commands)) {
+        if (cmdName === 'context') {
+          // context is a helper for prompt injection, not a user-callable tool.
+          skillHasContext = true;
+          continue;
+        }
         const positionalArgs = cmd.args.filter(a => a.positional).map(a => a.name);
         tools.push({
           name: `${stem}__${cmdName}`,
@@ -125,6 +134,7 @@ export async function loadSkills(skillsRoot: string, only?: string[]): Promise<L
       intentHints: frontmatter.intent_hints ?? [],
       scriptPaths,
       tools,
+      hasContext: skillHasContext,
     });
   }
   return result;

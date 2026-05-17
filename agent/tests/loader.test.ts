@@ -25,4 +25,13 @@ describe('loadSkills', () => {
     const skills = await loadSkills(SKILLS_ROOT, ['homelab']);
     expect(skills).toHaveLength(0);
   });
+
+  it('sets hasContext=true when --help-json includes context command and filters it from tools', async () => {
+    const skills = await loadSkills(`${import.meta.dir}/../../.claude/skills`, ['smart-home']);
+    expect(skills).toHaveLength(1);
+    const smartHome = skills[0]!;
+    expect(smartHome.hasContext).toBe(true);
+    const toolNames = smartHome.tools.map(t => t.name);
+    expect(toolNames).not.toContain('smart-home__context');
+  });
 });
