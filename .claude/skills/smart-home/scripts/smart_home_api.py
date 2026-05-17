@@ -351,6 +351,73 @@ def szenen_aktivieren(api: HomeAssistantAPI, name: str) -> dict[str, Any]:
     return {"ok": True, "action": "szenen-aktivieren", "entity_id": eid, "friendly_name": fname}
 
 
+def _entities_in_scope_across_domains(api: HomeAssistantAPI, where: str,
+                                       domains: list[str]) -> dict[str, list[str]]:
+    """Resolve --where for each domain and collect the entity_ids. Returns
+    dict mapping domain → list of entity_ids that matched the scope."""
+    by_domain: dict[str, list[str]] = {}
+    for d in domains:
+        target = resolve_where(api, where, d)
+        if target["entities"]:
+            by_domain[d] = target["entities"]
+    return by_domain
+
+
+def bereich_aus(api: HomeAssistantAPI, area: str, confirm: bool) -> dict[str, Any]:
+    """Turn off all lights + switches in the given scope. Covers untouched
+    (closing covers has different semantics — user can use rollos-close)."""
+    scope = _entities_in_scope_across_domains(api, area, ["light", "switch"])
+    total = sum(len(v) for v in scope.values())
+    if total == 0:
+        return {"ok": False, "error": f"Keine Lichter/Steckdosen gefunden für Bereich '{area}'"}
+    if not confirm and total > MASS_ACTION_CAP:
+        return {"ok": False, "error": f"Zu viele Treffer ({total}) — bitte enger eingrenzen oder --confirm",
+                "total": total, "entities_preview": [e for v in scope.values() for e in v][:5]}
+    affected: dict[str, list[str]] = {}
+    for domain, ents in scope.items():
+        affected[domain] = []
+        for eid in ents:
+            api.call_service(domain, "turn_off", {"entity_id": eid})
+            affected[domain].append(eid)
+    return {"ok": True, "action": "bereich-aus", "scope": area,
+            "entities_affected_by_domain": affected, "total": total,
+            "note": "Lichter und Steckdosen aus. Rollos unverändert (nutze rollos-close separat)."}
+
+
+def etage_aus(api: HomeAssistantAPI, floor: str, confirm: bool) -> dict[str, Any]:
+    """Same as bereich-aus but resolves by floor (KG/EG/OG/DG/Außen)."""
+    # Reuse bereich-aus — resolve_where handles floors via FLOOR_ALIASES.
+    return bereich_aus(api, floor, confirm)
+
+
+def gerät_action(api: HomeAssistantAPI, entity_id: str, action: str) -> dict[str, Any]:
+    """Escape-hatch: direct entity action for rare cases the named commands
+    don't cover. Validates the entity exists, then calls turn_on/off/toggle
+    via its domain. Returns structured success."""
+    try:
+        state = api.get_state(entity_id)
+    except Exception:
+        return {"ok": False, "error": f"Entity '{entity_id}' nicht gefunden in HA"}
+    domain = entity_id.split(".", 1)[0]
+    service = {"on": "turn_on", "off": "turn_off", "toggle": "toggle"}.get(action)
+    if not service:
+        return {"ok": False, "error": f"Unbekannte Aktion '{action}'"}
+    api.call_service(domain, service, {"entity_id": entity_id})
+    return {"ok": True, "action": f"gerät-{action}", "entity_id": entity_id,
+            "previous_state": state["state"]}
+
+
+def gerät_status(api: HomeAssistantAPI, entity_id: str) -> dict[str, Any]:
+    """Escape-hatch: raw state of a specific entity_id."""
+    try:
+        s = api.get_state(entity_id)
+    except Exception:
+        return {"ok": False, "error": f"Entity '{entity_id}' nicht gefunden"}
+    return {"ok": True, "action": "gerät-status", "entity_id": entity_id,
+            "state": s["state"], "friendly_name": s["attributes"].get("friendly_name"),
+            "attributes": s["attributes"]}
+
+
 def szenen_liste(api: HomeAssistantAPI) -> dict[str, Any]:
     scenes = [{"entity_id": s["entity_id"],
                "friendly_name": s["attributes"].get("friendly_name") or s["entity_id"]}
@@ -520,6 +587,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="Alle verfügbaren Szenen auflisten. Nutze für 'welche Szenen gibt es?'.",
     )
 
+    # ----- Macros: Bereich-/Etage-aus -----
+    ba = sub.add_parser(
+        "bereich-aus",
+        help=("Alle LICHTER und STECKDOSEN in einem Bereich/Raum ausschalten. "
+              "Rollos werden NICHT angefasst (dafür separat rollos-close). "
+              "Nutze für 'alles im Wohnzimmer aus', 'Felix-Zimmer aus', "
+              "'mach im Büro alles aus'."),
+    )
+    ba.add_argument("area", help="HA-Area / Bereich, z.B. 'Wohnzimmer', 'Büro', 'Felix'")
+    ba.add_argument("--confirm", action="store_true",
+                    help="Sicherheits-Cap (>10) übergehen")
+    ba.set_defaults(_is_write=True)
+
+    ea = sub.add_parser(
+        "etage-aus",
+        help=("Alle LICHTER und STECKDOSEN auf einer ganzen Etage ausschalten "
+              "(KG/EG/OG/DG/Außen). Rollos werden NICHT angefasst. Nutze für "
+              "'alle OG-Lichter aus', 'alles im EG aus', 'Keller aus'."),
+    )
+    ea.add_argument("floor", help="Etage: 'OG', 'Obergeschoss', 'EG', 'KG', 'DG', 'Außen'")
+    ea.add_argument("--confirm", action="store_true")
+    ea.set_defaults(_is_write=True)
+
+    # ----- Escape-hatch: direct entity action -----
+    ga = sub.add_parser(
+        "gerät-an",
+        help=("ESCAPE-HATCH: ein spezifisches Gerät per entity_id einschalten. "
+              "Nur nutzen wenn lights-on/rollos-* nicht passen (z.B. seltene "
+              "Domain). Validiert dass die Entity existiert."),
+    )
+    ga.add_argument("--entity", required=True, help="z.B. switch.kg_hwr_schaltsteckd")
+    ga.set_defaults(_is_write=True)
+
+    gao = sub.add_parser(
+        "gerät-aus",
+        help="ESCAPE-HATCH: spezifisches Gerät per entity_id ausschalten.",
+    )
+    gao.add_argument("--entity", required=True)
+    gao.set_defaults(_is_write=True)
+
+    gtog = sub.add_parser(
+        "gerät-toggle",
+        help="ESCAPE-HATCH: spezifisches Gerät per entity_id togglen.",
+    )
+    gtog.add_argument("--entity", required=True)
+    gtog.set_defaults(_is_write=True)
+
+    gst = sub.add_parser(
+        "gerät-status",
+        help=("ESCAPE-HATCH: Roh-Status einer spezifischen Entity. Nur nutzen "
+              "wenn lights-status / rollos-status / klima-status nicht passen."),
+    )
+    gst.add_argument("--entity", required=True)
+
     return p
 
 
@@ -572,6 +693,18 @@ def main() -> int:
             result = szenen_aktivieren(api, args.name)
         elif args.command == "szenen-liste":
             result = szenen_liste(api)
+        elif args.command == "bereich-aus":
+            result = bereich_aus(api, args.area, args.confirm)
+        elif args.command == "etage-aus":
+            result = etage_aus(api, args.floor, args.confirm)
+        elif args.command == "gerät-an":
+            result = gerät_action(api, args.entity, "on")
+        elif args.command == "gerät-aus":
+            result = gerät_action(api, args.entity, "off")
+        elif args.command == "gerät-toggle":
+            result = gerät_action(api, args.entity, "toggle")
+        elif args.command == "gerät-status":
+            result = gerät_status(api, args.entity)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
