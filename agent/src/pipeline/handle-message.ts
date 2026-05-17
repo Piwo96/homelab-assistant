@@ -226,8 +226,13 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
     reply = trimmedText;
   } else if (out.finishReason === 'length') {
     reply = '⚠️ Antwort wurde abgeschnitten — der Output war zu lang. Bitte spezifischer fragen (z.B. nur eine Area oder nur eine Domäne auf einmal).';
+  } else if (out.toolCalls.length > 0) {
+    // Tools liefen, aber das Modell hat keinen finalen Text produziert — meist
+    // weil es nach ein paar Calls die Übersicht verloren hat. Häufigster
+    // Auslöser: einzelne get-state-Schleife statt entities --state-Filter.
+    reply = '🤔 Ich hab die Daten geholt aber konnte sie nicht zusammenfassen. Frag bitte spezifischer (z.B. "welche Lichter sind an?" statt "was ist alles an?").';
   } else {
-    reply = `(Keine Antwort vom Modell, finishReason=${out.finishReason})`;
+    reply = '🤔 Ich habe keine Antwort generiert. Bitte nochmal versuchen oder konkreter formulieren.';
   }
   log.info('pipeline_done', { totalMs: Date.now() - t0, replyLen: reply.length });
 

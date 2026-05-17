@@ -64,6 +64,17 @@ describe('buildSystemPrompt', () => {
     expect(p).not.toMatch(/\{entity_catalogue\}/);
   });
 
+  it('steers bulk state queries toward a single entities --state call', () => {
+    // The model used to brute-force "welche Rollos sind offen?" with 20+
+    // parallel get-state calls; the prompt now nudges it to a single
+    // entities --domain X --state Y call instead.
+    const p = buildSystemPrompt({ skills: [{ id: 'x', description: 'y' }], hasTools: true });
+    expect(p).toContain('KOLLEKTIVE ZUSTANDS-ABFRAGEN');
+    expect(p).toContain('entities --domain');
+    expect(p).toContain('--state');
+    expect(p).toContain('NIEMALS einzelne get-state-Calls');
+  });
+
   it('anchors the output format so the model does not leak its reasoning', () => {
     // Without this anchor the 4B model produced visible Chain-of-Thought
     // monologues ("Gemäß Regel F...", "Tool-Aufruf:") instead of a tool call

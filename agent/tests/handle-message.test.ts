@@ -69,6 +69,23 @@ describe('handleMessage', () => {
     expect(reply).toContain('Homelab');
   });
 
+  it('explains "tools ran but no summary" when text empty after tool calls', async () => {
+    const deps: HandleDeps = {
+      db, registry,
+      embedQuery: async () => [1, 0, 0],
+      skillEmbeddings: { homeassistant: [1, 0, 0] },
+      // Model called tools but produced no final text (the "Keine Antwort
+      // vom Modell, finishReason=stop" scenario).
+      generate: async () => ({ text: '', toolCalls: [{ toolName: 'homeassistant__get-state', args: {} }], finishReason: 'stop' }),
+      thresholds: { high: 0.75, med: 0.4 },
+    };
+    const reply = await handleMessage(deps, {
+      kind: 'text', updateId: 300, chatId: 700, userId: 999, messageId: 1, text: 'welche Rollos sind offen?', ts: 1,
+    });
+    expect(reply).not.toContain('finishReason');
+    expect(reply.toLowerCase()).toContain('zusammenfassen');
+  });
+
   it('explains truncation to user when model returns empty text + finishReason=length', async () => {
     const deps: HandleDeps = {
       db, registry,
