@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { route, type Thresholds } from '../router/semantic';
 import { SkillRegistry } from '../skills/registry';
 import { defineSkillTool, inferPositionals } from '../tools/define-skill-tool';
-import { buildSystemPrompt } from './system-prompt';
+import { buildSystemPrompt, buildWelcomePrompt } from './system-prompt';
 import { appendMessage, clearHistory, recentMessages } from '../memory/history';
 import type { ParsedTextUpdate } from '../telegram/webhook';
 import type { Tool } from 'ai';
@@ -44,13 +44,31 @@ export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate):
   log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length, bypassRouter });
   const ts = update.ts ?? Math.floor(Date.now() / 1000);
 
-  // /start: clear THIS chat's history (other chats untouched) and return a
-  // short welcome — no LLM call needed.
+  // /start: clear THIS chat's history (other chats untouched), then ask the
+  // LLM to generate a fresh welcome. No tools, no prior history fed in —
+  // the welcome is the first turn of the new conversation.
   const trimmed = update.text.trim();
   if (trimmed === '/start' || trimmed.startsWith('/start ')) {
     const removed = clearHistory(deps.db, update.chatId);
     log.info('history_cleared', { chatId: update.chatId, removed });
-    return 'Hallo! Ich bin **Rolly**, dein Homelab-Assistent. Ich kann dir bei VMs (Proxmox), Smart Home (Lichter, Szenen), Kameras (UniFi Protect), DNS (Pi-hole), Netzwerk und Wake-on-LAN helfen. Was steht an?';
+    const tGen = Date.now();
+    const out = await deps.generate({
+      system: buildWelcomePrompt(),
+      messages: [{ role: 'user', content: '/start' }],
+      tools: {},
+      reasoningEffort: 'low',
+    });
+    log.info('welcome_generated', { ms: Date.now() - tGen, textLen: out.text.length });
+    const reply = out.text.trim() || 'Hallo, ich bin Rolly. Sag mir was du brauchst.';
+    // Persist just the welcome so the next turn has a single anchor message
+    // showing the assistant just greeted.
+    appendMessage(deps.db, {
+      chatId: update.chatId,
+      role: 'assistant',
+      content: { text: reply },
+      ts: ts + 1,
+    });
+    return reply;
   }
 
   appendMessage(deps.db, { chatId: update.chatId, role: 'user', content: { text: update.text }, ts });
