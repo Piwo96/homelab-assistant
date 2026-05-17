@@ -5,22 +5,23 @@ import { loadEnv } from './config/env';
 import { openDb } from './memory/db';
 import { loadSkills } from './skills/loader';
 import { SkillRegistry } from './skills/registry';
-import { embed, embedMany } from './llm/embedding';
 import { isLmStudioReachable } from './llm/health';
 import { wakeGamingPc } from './wol/wake';
 import { sendText } from './telegram/send';
 import { downloadTelegramFile } from './telegram/download';
 import { transcribeAudio } from './llm/transcribe';
-import { fetchHaCatalogue, startCatalogueRefresh } from './skills/ha-catalogue';
-
-// Refetch the HA entity catalogue every 30 min so new / renamed entities show
-// up without a deploy. Failed refreshes keep the previous snapshot in place
-// (see startCatalogueRefresh), so a transient HA blip never poisons the prompt.
-const CATALOGUE_REFRESH_MS = 30 * 60 * 1000;
-import { computeCacheKey, loadCache, saveCache } from './router/cache';
+import { runSkillCommand } from './skills/executor';
+import { createSkillContextCache } from './skills/context-cache';
+import { createLlmRouter } from './router/llm-router';
 import { buildGenerator } from './llm/generate';
+import { lmStudioModel } from './llm/lm-studio';
 import { startServer } from './server';
 import { log } from './utils/logger';
+
+// Default TTL for skill-owned context (entity catalogue etc.). The cache
+// keeps the previous value on fetch errors, so a transient HA blip never
+// poisons the prompt.
+const CONTEXT_TTL_MS = 30 * 60 * 1000;
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../');
 
@@ -37,53 +38,51 @@ async function main(): Promise<void> {
   const dataDir = resolveRepoPath(env.DATA_DIR);
   const skillsRoot = resolveRepoPath(env.SKILLS_ROOT);
   await mkdir(dataDir, { recursive: true });
-  // New agent uses its own DB file to avoid colliding with agent-old's
-  // legacy conversations.db schema. Legacy data is intentionally not migrated.
   const db = openDb(join(dataDir, 'agent.db'));
 
   // smart-home is the user-facing domain layer; the homeassistant skill stays
-  // on disk as the raw HA-API implementation but is no longer exposed as tools.
+  // on disk as a standalone CLI but is intentionally not loaded into the bot.
   const skills = await loadSkills(skillsRoot, ['smart-home']);
   if (skills.length === 0) throw new Error('No skills loaded');
   const registry = new SkillRegistry();
   registry.replaceAll(skills);
 
-  const cacheable = skills.map(s => ({
-    id: s.id,
-    description: s.description,
-    triggers: s.triggers,
-    intentHints: s.intentHints,
-    commandDescriptions: s.tools.map(t => t.description),
-  }));
-  const cacheKey = await computeCacheKey(env.EMBEDDING_MODEL, cacheable);
-  const cachePath = join(dataDir, 'agent-embedding-cache.json');
-  let cache = await loadCache(cachePath);
-  if (!cache || cache.key !== cacheKey) {
-    log.info('embedding_cache_rebuild');
-    const inputs = skills.map(s => buildSkillEmbeddingInput(s));
-    const vectors = await embedMany(inputs, { baseUrl: env.LM_STUDIO_URL, model: env.EMBEDDING_MODEL });
-    const bySkillId: Record<string, number[]> = {};
-    skills.forEach((s, i) => { bySkillId[s.id] = vectors[i]!; });
-    cache = { key: cacheKey, embeddingModel: env.EMBEDDING_MODEL, bySkillId };
-    await saveCache(cachePath, cache);
-  } else {
-    log.info('embedding_cache_hit');
-  }
-
   const generate = buildGenerator({ baseUrl: env.LM_STUDIO_URL, modelId: env.LM_STUDIO_MODEL });
 
-  // Pull a snapshot of all controllable HA entities (lights, switches, covers,
-  // climates, scenes, scripts) grouped by area. The agent injects this into
-  // the system prompt so the LLM never has to guess entity_ids.
-  const initialCatalogue = await fetchHaCatalogue(skillsRoot);
+  // Skill-owned context: each skill with hasContext=true exposes `--json context`,
+  // which the cache fetches lazily and refreshes every CONTEXT_TTL_MS.
+  const contextCache = createSkillContextCache({
+    skills: skills.map(s => ({ id: s.id, hasContext: s.hasContext })),
+    fetch: async (skillId) => {
+      const skill = skills.find(s => s.id === skillId);
+      if (!skill || !skill.scriptPaths[0]) throw new Error(`No script for skill ${skillId}`);
+      const t0 = Date.now();
+      const res = await runSkillCommand(skill.scriptPaths[0], 'context', {}, { timeoutMs: 15_000 });
+      if (!res.success) {
+        throw new Error(`context command failed: exit=${res.exitCode} stderr=${res.stderr.slice(0, 200)}`);
+      }
+      const data = res.data as { markdown?: string } | undefined;
+      if (!data || typeof data.markdown !== 'string') {
+        throw new Error(`context command returned unexpected shape: ${res.stdout.slice(0, 200)}`);
+      }
+      log.info('skill_context_fetched', { skillId, ms: Date.now() - t0, chars: data.markdown.length });
+      return data.markdown;
+    },
+    ttlMs: CONTEXT_TTL_MS,
+  });
+
+  // Stage-1 LLM router. Only called when >1 skill is loaded (handle-message
+  // falls into the fast-path when there's a single skill).
+  const llmRouter = createLlmRouter({
+    model: lmStudioModel({ baseUrl: env.LM_STUDIO_URL, modelId: env.LM_STUDIO_MODEL }),
+  });
 
   const handleDeps: import('./pipeline/handle-message').HandleDeps = {
     db,
     registry,
-    embedQuery: (text) => embed(text, { baseUrl: env.LM_STUDIO_URL, model: env.EMBEDDING_MODEL }),
-    skillEmbeddings: cache.bySkillId,
     generate,
-    thresholds: { high: 0.75, med: 0.4 },
+    llmRouter,
+    contextCache,
     healthCheck: () => isLmStudioReachable({ baseUrl: env.LM_STUDIO_URL, timeoutMs: 3000 }),
     wakeGamingPc: () => wakeGamingPc({ skillsRoot, timeoutMs: 150_000 }),
     notifyStatus: async (chatId, text) => {
@@ -96,26 +95,9 @@ async function main(): Promise<void> {
         { data: audio.data, filename: audio.filename, mimeType: audio.mimeType },
       );
     },
-    ...(initialCatalogue ? { entityCatalogue: initialCatalogue } : {}),
   };
 
-  // Background refresh: every CATALOGUE_REFRESH_MS, refetch and mutate
-  // handleDeps.entityCatalogue in place. The pipeline reads deps.entityCatalogue
-  // per-request, so the next message picks up the new snapshot automatically.
-  startCatalogueRefresh(skillsRoot, CATALOGUE_REFRESH_MS, (fresh) => {
-    handleDeps.entityCatalogue = fresh;
-  });
-
   startServer({ env, db, handleDeps });
-}
-
-function buildSkillEmbeddingInput(s: { description: string; triggers: string[]; intentHints: string[]; tools: Array<{ description: string }> }): string {
-  return [
-    s.description,
-    s.triggers.length > 0 ? `Triggers: ${s.triggers.join(', ')}.` : '',
-    s.intentHints.join('. '),
-    `Commands: ${s.tools.map(t => t.description).join('. ')}.`,
-  ].filter(Boolean).join(' ');
 }
 
 main().catch(err => {
