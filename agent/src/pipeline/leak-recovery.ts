@@ -139,6 +139,7 @@ const RECOVERABLE_COMMANDS = new Set([
   'entities', 'get-state',
   'turn-on', 'turn-off', 'toggle',
   'call-service',
+  'cover-open', 'cover-close', 'cover-set-position', 'cover-set-tilt',
   'list-scenes', 'activate-scene',
   'list-scripts', 'run-script', 'stop-script',
   'list-automations', 'trigger', 'enable', 'disable',

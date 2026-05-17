@@ -83,16 +83,13 @@ describe('buildSystemPrompt', () => {
     expect(p.toLowerCase()).toContain('keine aktuellen zustände');
   });
 
-  it('distinguishes cover position from cover tilt (Lamellen-Neigung)', () => {
+  it('teaches the model which cover tool to use (height vs tilt)', () => {
     const p = buildSystemPrompt({ skills: [{ id: 'homeassistant', description: 'Smart Home' }], hasTools: true });
-    // Both services must be named — Rolly was failing in prod with the
-    // shortened (and invalid) "set_cover_tilt" before this rule landed.
-    expect(p).toContain('set_cover_position');
-    expect(p).toContain('set_cover_tilt_position');
-    // The conceptual two-axis distinction must be made explicit.
-    expect(p).toContain('POSITION');
-    expect(p).toContain('TILT');
-    // German user vocab must map: "neigen" → tilt, "runter/zu" → position.
+    // Prompt should point at the dedicated tools, NOT leak HA service names.
+    expect(p).toContain('cover-set-position');
+    expect(p).toContain('cover-set-tilt');
+    expect(p).not.toMatch(/set_cover_tilt_position|set_cover_position/);
+    // Vocabulary mapping for German user phrasing.
     expect(p.toLowerCase()).toContain('neigen');
     expect(p.toLowerCase()).toContain('lamellen');
   });

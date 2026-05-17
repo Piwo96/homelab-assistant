@@ -359,6 +359,16 @@ def execute(action: str, args: dict) -> Any:
                 extra = json.loads(extra)
             data.update(extra)
         return api.call_service(args["domain"], args["service"], data)
+    elif action in ("cover-open", "cover_open"):
+        return api.call_service("cover", "open_cover", {"entity_id": args["entity_id"]})
+    elif action in ("cover-close", "cover_close"):
+        return api.call_service("cover", "close_cover", {"entity_id": args["entity_id"]})
+    elif action in ("cover-set-position", "cover_set_position"):
+        return api.call_service("cover", "set_cover_position",
+                                {"entity_id": args["entity_id"], "position": int(args["position"])})
+    elif action in ("cover-set-tilt", "cover_set_tilt"):
+        return api.call_service("cover", "set_cover_tilt_position",
+                                {"entity_id": args["entity_id"], "tilt_position": int(args["tilt_position"])})
     elif action == "list-automations":
         automations = api.list_automations()
         limit = int(args["limit"]) if args.get("limit") else 50
@@ -553,6 +563,56 @@ def main():
     call_service.add_argument("--entity", help="Target entity_id, e.g. climate.wohnzimmer, cover.rollo_schlafzimmer")
     call_service.add_argument("--data", help="JSON-encoded service data, e.g. '{\"temperature\": 21}' or '{\"position\": 50}'")
     call_service.set_defaults(_is_write=True)
+
+    # Cover (Rollos / Jalousien) — dedicated commands so the LLM doesn't have to
+    # know HA service names. Two independent axes per cover: position (Höhe) and
+    # tilt (Lamellen-Neigung). Both 0..100.
+    cover_open = subparsers.add_parser(
+        "cover-open",
+        help=(
+            "Rollo/Jalousie komplett HOCHFAHREN (ganz öffnen, position=100). "
+            "Nutze für 'Rollo hochfahren', 'Rollo öffnen', 'Jalousie ganz auf'."
+        ),
+    )
+    cover_open.add_argument("entity_id", help="z.B. cover.dg_schlafen_rollo")
+    cover_open.set_defaults(_is_write=True)
+
+    cover_close = subparsers.add_parser(
+        "cover-close",
+        help=(
+            "Rollo/Jalousie komplett HERUNTERFAHREN (ganz schließen, position=0). "
+            "Nutze für 'Rollo runter', 'Rollo zu', 'Jalousie schließen', '100% runter'."
+        ),
+    )
+    cover_close.add_argument("entity_id", help="z.B. cover.dg_schlafen_rollo")
+    cover_close.set_defaults(_is_write=True)
+
+    cover_set_pos = subparsers.add_parser(
+        "cover-set-position",
+        help=(
+            "Rollo/Jalousie auf eine bestimmte Höhe fahren. position=0 ist ganz unten "
+            "(geschlossen), position=100 ganz oben (offen). Nutze für 'halb runter' (50), "
+            "'auf 30% offen' (30), 'zu 70% heruntergefahren' (30 — Inversion!)."
+        ),
+    )
+    cover_set_pos.add_argument("entity_id", help="z.B. cover.dg_schlafen_rollo")
+    cover_set_pos.add_argument("--position", type=int, required=True,
+                               help="0 (ganz zu/unten) bis 100 (ganz auf/oben)")
+    cover_set_pos.set_defaults(_is_write=True)
+
+    cover_set_tilt = subparsers.add_parser(
+        "cover-set-tilt",
+        help=(
+            "Lamellen-Neigung einer Jalousie setzen (Tilt, unabhängig von der Position!). "
+            "tilt_position=0 = Lamellen geschlossen (vertikal, blockt Licht), "
+            "tilt_position=100 = Lamellen offen (horizontal, lässt Licht durch). "
+            "Nutze für 'auf 50% neigen', 'Lamellen halb offen', 'Lamellen kippen'."
+        ),
+    )
+    cover_set_tilt.add_argument("entity_id", help="z.B. cover.og_kind_3_rollo_1")
+    cover_set_tilt.add_argument("--tilt-position", type=int, required=True,
+                                help="0 (Lamellen zu) bis 100 (Lamellen offen)")
+    cover_set_tilt.set_defaults(_is_write=True)
 
     # Automations
     subparsers.add_parser(
@@ -769,6 +829,30 @@ def main():
         if args.data:
             data.update(json.loads(args.data))
         result = api.call_service(args.domain, args.service, data)
+
+    # Cover (Rollo / Jalousie) — high-level commands that hide HA's service-name layout.
+    elif args.command == "cover-open":
+        result = api.call_service("cover", "open_cover", {"entity_id": args.entity_id})
+        if not args.json:
+            print(f"Opened {args.entity_id}")
+            return
+    elif args.command == "cover-close":
+        result = api.call_service("cover", "close_cover", {"entity_id": args.entity_id})
+        if not args.json:
+            print(f"Closed {args.entity_id}")
+            return
+    elif args.command == "cover-set-position":
+        result = api.call_service("cover", "set_cover_position",
+                                  {"entity_id": args.entity_id, "position": args.position})
+        if not args.json:
+            print(f"Set position of {args.entity_id} to {args.position}%")
+            return
+    elif args.command == "cover-set-tilt":
+        result = api.call_service("cover", "set_cover_tilt_position",
+                                  {"entity_id": args.entity_id, "tilt_position": args.tilt_position})
+        if not args.json:
+            print(f"Set tilt of {args.entity_id} to {args.tilt_position}%")
+            return
 
     # Automation commands
     elif args.command == "list-automations":
