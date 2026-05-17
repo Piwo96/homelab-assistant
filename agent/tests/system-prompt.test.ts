@@ -83,6 +83,20 @@ describe('buildSystemPrompt', () => {
     expect(p.toLowerCase()).toContain('keine aktuellen zustände');
   });
 
+  it('distinguishes cover position from cover tilt (Lamellen-Neigung)', () => {
+    const p = buildSystemPrompt({ skills: [{ id: 'homeassistant', description: 'Smart Home' }], hasTools: true });
+    // Both services must be named — Rolly was failing in prod with the
+    // shortened (and invalid) "set_cover_tilt" before this rule landed.
+    expect(p).toContain('set_cover_position');
+    expect(p).toContain('set_cover_tilt_position');
+    // The conceptual two-axis distinction must be made explicit.
+    expect(p).toContain('POSITION');
+    expect(p).toContain('TILT');
+    // German user vocab must map: "neigen" → tilt, "runter/zu" → position.
+    expect(p.toLowerCase()).toContain('neigen');
+    expect(p.toLowerCase()).toContain('lamellen');
+  });
+
   it('steers bulk state queries toward a single entities --state call', () => {
     // The model used to brute-force "welche Rollos sind offen?" with 20+
     // parallel get-state calls; the prompt now nudges it to a single
