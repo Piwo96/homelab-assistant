@@ -63,6 +63,11 @@ function looksLikeLeakedReasoning(text: string): boolean {
     /Gemäß Regel\b/i,
     /^Ich muss\b/m,
     /^Schritt \d+:/m,
+    // Gemma sometimes dumps the *intended* tool call as a JSON code block
+    // instead of issuing a real function call (seen in smalltalk replies
+    // like "Erzähl mir einen Witz" — model wrote ```json {"tool_name": ...}```).
+    /"tool_name"\s*:/i,
+    /"parameters"\s*:\s*\{[^}]*entity_id/i,
   ];
   return markers.some(re => re.test(t));
 }

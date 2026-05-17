@@ -64,6 +64,25 @@ describe('buildSystemPrompt', () => {
     expect(p).not.toMatch(/\{entity_catalogue\}/);
   });
 
+  it('requires confirmation before unbounded mass actions (alle/alles)', () => {
+    const p = buildSystemPrompt({ skills: [{ id: 'x', description: 'y' }], hasTools: true });
+    expect(p).toContain('UNBESCHRÄNKTE Mehrzahl');
+    expect(p).toContain('ZWINGEND zuerst Rückfrage');
+  });
+
+  it('forbids inventing current states from the catalogue', () => {
+    // Catalogue is name+id only — model must always call get-state/entities
+    // for current states. Without this rule Gemma sometimes answered
+    // "welche Rollos sind zu?" by guessing from the catalogue entries.
+    const p = buildSystemPrompt({
+      skills: [{ id: 'homeassistant', description: 'Smart Home' }],
+      hasTools: true,
+      entityCatalogue: '### Lichter\n- Büro: `light.dg_buro_beleuchtung` (Büro)',
+    });
+    expect(p).toContain('NIE STATISCH');
+    expect(p.toLowerCase()).toContain('keine aktuellen zustände');
+  });
+
   it('steers bulk state queries toward a single entities --state call', () => {
     // The model used to brute-force "welche Rollos sind offen?" with 20+
     // parallel get-state calls; the prompt now nudges it to a single

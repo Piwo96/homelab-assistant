@@ -158,6 +158,26 @@ describe('handleMessage', () => {
     expect(reply.toLowerCase()).toContain('verstehen');
   });
 
+  it('detects Gemma-style JSON pseudo-tool-call blocks in smalltalk replies', async () => {
+    // Real Gemma output observed in prod for "Erzähl mir einen Witz":
+    // dumped a JSON code block describing an intended tool call into a mode
+    // where no tools were even available. Detector must catch this.
+    const fakeJsonLeak = '```json\n{"tool_name": "homeassistant_get_state", "parameters": {"entity_id": "sensor.witz"}}\n```\nIch kann dir leider keinen Witz erzählen.';
+    const deps: HandleDeps = {
+      db, registry,
+      embedQuery: async () => [0, 0, 0],
+      skillEmbeddings: { homeassistant: [1, 0, 0] },
+      generate: async () => ({ text: fakeJsonLeak, toolCalls: [], finishReason: 'stop' }),
+      thresholds: { high: 0.75, med: 0.4 },
+    };
+    const reply = await handleMessage(deps, {
+      kind: 'text', updateId: 400, chatId: 800, userId: 999, messageId: 1, text: 'Erzähl mir einen Witz', ts: 1,
+    });
+    expect(reply).not.toContain('tool_name');
+    expect(reply).not.toContain('```json');
+    expect(reply.toLowerCase()).toContain('gedanken');
+  });
+
   it('replaces leaked chain-of-thought with a clean error instead of shipping it', async () => {
     const leakedMonologue = `Die letzte Aktion betraf das Ausschalten von "alle" Lichtern im Esszimmer.
 
