@@ -7,6 +7,7 @@ Logbook, Config) sind absichtlich nicht enthalten — die gehören zum
 homeassistant-Skill und sind kein Smart-Home-Alltag.
 """
 
+import ast
 import os
 import sys
 from pathlib import Path
@@ -109,15 +110,22 @@ class HAClient:
     def render_template(self, template: str) -> str:
         """Server-side Jinja2-Rendering. Liefert Raw-Text (kein JSON)."""
         url = f"{self.base_url}/template"
-        response = self.session.post(url, json={"template": template}, timeout=10)
-        response.raise_for_status()
-        return response.text
+        try:
+            response = self.session.post(url, json={"template": template}, timeout=10)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.HTTPError as e:
+            raise RuntimeError(f"Template render failed: {e}") from e
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"API error: {e}") from e
 
     def entities_in_area(self, area: str) -> list[str]:
         """entity_ids in einer HA-Area (display-name oder area_id)."""
-        raw = self.render_template(f"{{{{ area_entities('{area}') }}}}")
+        safe_area = area.replace("'", "\\'")
+        raw = self.render_template(f"{{{{ area_entities('{safe_area}') }}}}")
         if isinstance(raw, str):
-            import ast
             try:
                 value = ast.literal_eval(raw)
                 if isinstance(value, list):
