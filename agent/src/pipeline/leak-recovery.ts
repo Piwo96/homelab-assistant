@@ -77,11 +77,23 @@ function extractFromParsed(parsed: unknown): RecoveredCall | null {
   return null;
 }
 
-/** Normalize the tool name the model wrote (`homeassistant_entities`) into
- *  the registry's `skill__command` form (`homeassistant__entities`). Most
- *  shapes use single underscore as the separator; we tolerate both. */
+/** Normalize the tool name the model wrote into the registry's
+ *  `skill__command` form. Two transforms needed:
+ *   1. Skill→command separator: Gemma writes single underscore
+ *      ("homeassistant_get_state") but the registry uses double
+ *      ("homeassistant__get_state"); convert the first one.
+ *   2. Command word boundary: Python argparse subcommands use HYPHENS
+ *      ("get-state", "turn-on", "call-service"); Gemma writes underscores
+ *      ("get_state", "turn_on", "call_service"). After splitting the
+ *      skill prefix, convert remaining underscores in the command part. */
 function normalize(rawName: string, rawArgs: unknown): RecoveredCall | null {
-  const name = rawName.includes('__') ? rawName : rawName.replace(/_/, '__');
+  let name = rawName.includes('__') ? rawName : rawName.replace(/_/, '__');
+  const idx = name.indexOf('__');
+  if (idx > 0) {
+    const skill = name.slice(0, idx);
+    const command = name.slice(idx + 2).replace(/_/g, '-');
+    name = `${skill}__${command}`;
+  }
   const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs))
     ? (rawArgs as Record<string, unknown>)
     : {};

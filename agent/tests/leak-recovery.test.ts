@@ -6,7 +6,7 @@ describe('parseLeakedToolCall', () => {
     const parsed = parseLeakedToolCall(`\`\`\`json
 {"tool_name": "homeassistant_get_state", "parameters": {"entity_id": "light.dg_buro_beleuchtung"}}
 \`\`\``);
-    expect(parsed).toEqual({ toolName: 'homeassistant__get_state', args: { entity_id: 'light.dg_buro_beleuchtung' } });
+    expect(parsed).toEqual({ toolName: 'homeassistant__get-state', args: { entity_id: 'light.dg_buro_beleuchtung' } });
   });
 
   it('extracts from {tool_calls: [{function, args}]} shape', () => {
@@ -17,6 +17,20 @@ describe('parseLeakedToolCall', () => {
     }`);
     expect(parsed?.toolName).toBe('homeassistant__entities');
     expect(parsed?.args).toEqual({ domain: 'cover', state: 'open' });
+  });
+
+  it('normalizes underscore command names to hyphen form (get_state → get-state)', () => {
+    // Real captured leak that broke recovery: Gemma writes
+    // `homeassistant_get_state` but the registry has `homeassistant__get-state`.
+    const parsed = parseLeakedToolCall('{"tool_name":"homeassistant_get_state","parameters":{"entity_id":"light.x"}}');
+    expect(parsed?.toolName).toBe('homeassistant__get-state');
+  });
+
+  it('normalizes turn_on → turn-on, call_service → call-service', () => {
+    expect(parseLeakedToolCall('{"tool_name":"homeassistant_turn_on","parameters":{}}')?.toolName)
+      .toBe('homeassistant__turn-on');
+    expect(parseLeakedToolCall('{"tool_name":"homeassistant_call_service","parameters":{}}')?.toolName)
+      .toBe('homeassistant__call-service');
   });
 
   it('handles homeassistant__entities (already-namespaced) without re-splitting', () => {
