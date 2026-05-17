@@ -728,7 +728,10 @@ def main() -> int:
             result = gerät_status(api, args.entity)
         elif args.command == "context":
             from catalogue import build_markdown
-            result = {"markdown": build_markdown(api)}
+            # `ok: True` keeps the exit-code logic at the bottom of main()
+            # (returns 1 unless result.ok is truthy) happy without leaking
+            # into the agent's consumer, which only reads `markdown`.
+            result = {"ok": True, "markdown": build_markdown(api)}
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
