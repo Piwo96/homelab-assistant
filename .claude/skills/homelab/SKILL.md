@@ -1,7 +1,7 @@
 ---
 name: homelab
 description: Overview of all homelab automation skills - meta-skill that guides you to the right specialized skill
-version: 2.2.0
+version: 2.3.0
 author: Philipp Rollmann
 tags:
   - homelab
@@ -109,6 +109,13 @@ Track errors, update skills, and automatically commit/push to GitHub.
 **Use for**: Error tracking, skill updates, git automation, autonomous learning
 **Triggers**: `/self-annealing`, `/anneal`, `/git`
 **Tags**: `meta`, `git`, `automation`, `self-improvement`
+
+### [/proxmox-lxc-deploy](../proxmox-lxc-deploy/SKILL.md) - LXC Deployment Pattern
+End-to-end pattern for deploying a self-hosted app as an unprivileged Proxmox LXC with Caddy + Let's Encrypt (DuckDNS DNS-01) public HTTPS endpoint. Captures all the gotchas from the rolly first-deploy.
+
+**Use for**: Deploying a new bot/service to the homelab, troubleshooting deploy.sh / setup-lxc.sh, FritzBox-and-UniFi port-forward topology
+**Triggers**: `/deploy-lxc`, `proxmox deploy`, `deploy to homelab`
+**Tags**: `deployment`, `lxc`, `caddy`, `letsencrypt`
 
 ---
 
