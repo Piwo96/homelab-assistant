@@ -161,7 +161,73 @@ def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, A
             return {"kind": "name", "entities": [s["entity_id"]],
                     "label": s["attributes"].get("friendly_name") or s["entity_id"]}
 
-    return {"kind": "none", "entities": [], "label": where}
+    # Nothing matched exactly. Compute fuzzy candidates so the LLM can retry
+    # with one of them — strict matching is the contract, but a "did you mean?"
+    # hint dramatically reduces user-facing failures when the LLM picks a
+    # near-miss like "Tischlampe" instead of "EG Essen Tischleuchte".
+    return {
+        "kind": "none",
+        "entities": [],
+        "label": where,
+        "candidates": _fuzzy_candidates(states, domain, needle),
+    }
+
+
+def _fuzzy_candidates(states: list[dict], domain: str, needle: str,
+                      max_results: int = 5) -> list[dict[str, str]]:
+    """Score-rank candidates by friendly_name / entity_id similarity to `needle`.
+
+    Heuristics (case-insensitive, in priority order):
+      - substring of needle in friendly_name              → 1.0
+      - substring of needle in entity_id (underscores→space) → 0.8
+      - any prefix of needle (length ≥4) is the prefix of any haystack word → 0.5
+
+    The "prefix of needle" rule is what gets German near-misses across the
+    finish line: 'Tischlampe' → 'Tischleuchte' (common prefix 'Tischl' /
+    'Tisch'), 'Beleuchtung' → 'Beleuchtungsspots' (common prefix 'Beleucht'),
+    'Schlaf' → 'Schlafzimmer'. Underscores in entity_ids are split so words
+    inside 'light.eg_essen_tischleuchte' are individually matchable.
+    """
+    needle = needle.strip().lower()
+    if not needle:
+        return []
+    scored: list[tuple[float, dict[str, str]]] = []
+    for s in states:
+        eid = s["entity_id"]
+        if not eid.startswith(f"{domain}."):
+            continue
+        eid_lower = eid.lower()
+        eid_localpart = eid_lower.split(".", 1)[1] if "." in eid_lower else eid_lower
+        fn_raw = s["attributes"].get("friendly_name") or eid
+        fn_lower = fn_raw.lower()
+        score = 0.0
+        if needle in fn_lower:
+            score = 1.0
+        elif needle in eid_lower.replace("_", " "):
+            score = 0.8
+        else:
+            haystack_words = (fn_lower + " " + eid_localpart.replace("_", " ")).split()
+            # Prefix-of-needle: descending lengths so the best (longest) match wins.
+            for length in range(min(len(needle), 12), 3, -1):
+                prefix = needle[:length]
+                if any(w.startswith(prefix) for w in haystack_words):
+                    score = max(score, 0.5)
+                    break
+        if score > 0:
+            scored.append((score, {"entity_id": eid, "friendly_name": fn_raw}))
+    scored.sort(key=lambda t: -t[0])
+    return [c for _, c in scored[:max_results]]
+
+
+def _no_match(target: dict[str, Any], domain_label: str, where: str) -> dict[str, Any]:
+    """Uniform 'nothing found' result that surfaces fuzzy candidates so the
+    LLM can re-call the same tool with one of the suggested exact names."""
+    return {
+        "ok": False,
+        "error": f"Keine {domain_label} gefunden für '{where}'",
+        "match_kind": "none",
+        "candidates": target.get("candidates", []),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -188,7 +254,7 @@ def _check_cap(target: dict[str, Any], confirm: bool) -> dict[str, Any] | None:
 def lights_on(api: HomeAssistantAPI, where: str, brightness: int | None, confirm: bool) -> dict[str, Any]:
     target = resolve_where(api, where, "light")
     if not target["entities"]:
-        return {"ok": False, "error": f"Keine Lichter gefunden für '{where}'", "match_kind": "none"}
+        return _no_match(target, "Lichter", where)
     cap = _check_cap(target, confirm)
     if cap:
         return cap
@@ -212,7 +278,7 @@ def lights_on(api: HomeAssistantAPI, where: str, brightness: int | None, confirm
 def lights_off(api: HomeAssistantAPI, where: str, confirm: bool) -> dict[str, Any]:
     target = resolve_where(api, where, "light")
     if not target["entities"]:
-        return {"ok": False, "error": f"Keine Lichter gefunden für '{where}'", "match_kind": "none"}
+        return _no_match(target, "Lichter", where)
     cap = _check_cap(target, confirm)
     if cap:
         return cap
@@ -242,7 +308,7 @@ def _cover_action(api: HomeAssistantAPI, where: str, confirm: bool,
                   open_all: bool = False, close_all: bool = False) -> dict[str, Any]:
     target = resolve_where(api, where, "cover")
     if not target["entities"]:
-        return {"ok": False, "error": f"Keine Rollos gefunden für '{where}'", "match_kind": "none"}
+        return _no_match(target, "Rollos", where)
     cap = _check_cap(target, confirm)
     if cap:
         return cap
@@ -277,7 +343,7 @@ def rollos_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
     if where:
         target = resolve_where(api, where, "cover")
         if not target["entities"]:
-            return {"ok": False, "error": f"Keine Rollos gefunden für '{where}'", "match_kind": "none"}
+            return _no_match(target, "Rollos", where)
         wanted = set(target["entities"])
     items = []
     for s in api.get_states():
@@ -303,7 +369,7 @@ def rollos_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
 def klima_set(api: HomeAssistantAPI, where: str, target_temp: float, confirm: bool) -> dict[str, Any]:
     target = resolve_where(api, where, "climate")
     if not target["entities"]:
-        return {"ok": False, "error": f"Keine Heizung gefunden für '{where}'", "match_kind": "none"}
+        return _no_match(target, "Heizung", where)
     cap = _check_cap(target, confirm)
     if cap:
         return cap
@@ -327,7 +393,7 @@ def klima_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
     if where:
         target = resolve_where(api, where, "climate")
         if not target["entities"]:
-            return {"ok": False, "error": f"Keine Heizung gefunden für '{where}'", "match_kind": "none"}
+            return _no_match(target, "Heizung", where)
         wanted = set(target["entities"])
     items = []
     for s in api.get_states():
@@ -388,7 +454,13 @@ def bereich_aus(api: HomeAssistantAPI, area: str, confirm: bool) -> dict[str, An
     scope = _entities_in_scope_across_domains(api, area, ["light", "switch"])
     total = sum(len(v) for v in scope.values())
     if total == 0:
-        return {"ok": False, "error": f"Keine Lichter/Steckdosen gefunden für Bereich '{area}'"}
+        # Cross-domain "did you mean?" — merge candidates from both domains.
+        states = api.get_states()
+        candidates = (_fuzzy_candidates(states, "light", area, max_results=3)
+                      + _fuzzy_candidates(states, "switch", area, max_results=2))
+        return {"ok": False,
+                "error": f"Keine Lichter/Steckdosen gefunden für Bereich '{area}'",
+                "candidates": candidates}
     if not confirm and total > MASS_ACTION_CAP:
         return {"ok": False, "error": f"Zu viele Treffer ({total}) — bitte enger eingrenzen oder --confirm",
                 "total": total, "entities_preview": [e for v in scope.values() for e in v][:5]}
@@ -448,7 +520,7 @@ def lights_status(api: HomeAssistantAPI, where: str | None, state_filter: str | 
     if where:
         target = resolve_where(api, where, "light")
         if not target["entities"]:
-            return {"ok": False, "error": f"Keine Lichter gefunden für '{where}'", "match_kind": "none"}
+            return _no_match(target, "Lichter", where)
         wanted = set(target["entities"])
     else:
         wanted = None  # all lights
