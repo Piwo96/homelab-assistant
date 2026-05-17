@@ -44,7 +44,23 @@ describe('parseUpdate', () => {
       messageId: 10,
       text: 'Hallo',
       ts: 1700000000,
+      firstName: 'P',
     });
+  });
+
+  it('omits firstName when Telegram did not send one', () => {
+    const u = parseUpdate({
+      update_id: 1,
+      message: {
+        message_id: 10,
+        chat: { id: 555, type: 'private' },
+        from: { id: 999, is_bot: false },
+        date: 1700000000,
+        text: 'Hallo',
+      },
+    });
+    expect(u).not.toBeNull();
+    expect(u).not.toHaveProperty('firstName');
   });
 
   it('returns null for callback queries (handled later)', () => {

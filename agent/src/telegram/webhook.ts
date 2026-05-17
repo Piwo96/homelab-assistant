@@ -8,6 +8,9 @@ export interface ParsedTextUpdate {
   messageId: number;
   text: string;
   ts: number;
+  /** Telegram-provided first name of the sender. Passed to the LLM so it
+   *  greets the actual user instead of conflating them with Philipp (owner). */
+  firstName?: string;
 }
 
 export type ParsedUpdate = ParsedTextUpdate;
@@ -53,6 +56,7 @@ export function parseUpdate(update: { update_id: number; message?: RawMessage; c
   if (!msg) return null;
   if (typeof msg.text !== 'string') return null;
   if (!msg.from) return null;
+  const firstName = msg.from.first_name?.trim();
   return {
     kind: 'text',
     updateId: update.update_id,
@@ -61,5 +65,6 @@ export function parseUpdate(update: { update_id: number; message?: RawMessage; c
     messageId: msg.message_id,
     text: msg.text,
     ts: msg.date,
+    ...(firstName ? { firstName } : {}),
   };
 }

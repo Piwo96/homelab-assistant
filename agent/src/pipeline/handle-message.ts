@@ -53,7 +53,7 @@ export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate):
     log.info('history_cleared', { chatId: update.chatId, removed });
     const tGen = Date.now();
     const out = await deps.generate({
-      system: buildWelcomePrompt(),
+      system: buildWelcomePrompt(update.firstName !== undefined ? { firstName: update.firstName } : {}),
       messages: [{ role: 'user', content: '/start' }],
       tools: {},
       reasoningEffort: 'low',
@@ -128,6 +128,7 @@ export async function handleMessage(deps: HandleDeps, update: ParsedTextUpdate):
   const system = buildSystemPrompt({
     skills: selectedSkills.map(s => ({ id: s.id, description: s.description })),
     hasTools,
+    ...(update.firstName !== undefined ? { firstName: update.firstName } : {}),
   });
 
   const history = recentMessages(deps.db, update.chatId, HISTORY_LIMIT)
