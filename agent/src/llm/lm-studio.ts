@@ -16,7 +16,7 @@ const debugFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters
   if (process.env.DUMP_LLM_REQUEST === '1' && init?.body) {
     try {
       const body = typeof init.body === 'string' ? init.body : '<non-string>';
-      writeFileSync('/tmp/llm-request.json', body);
+      writeFileSync(process.env.LLM_DUMP_PATH || '/tmp/llm-request.json', body);
     } catch {
       // best-effort diagnostic; ignore failures
     }

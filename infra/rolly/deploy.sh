@@ -55,11 +55,13 @@ PY
 # --- 1. Load + validate config ---
 load_config() {
     log "Loading config"
-    # Step A: load the project's root .env (skill creds — HOMEASSISTANT_*,
-    # PIHOLE_*, PROTECT_*, UNIFI_*, PROXMOX_*, TELEGRAM_*, LM_STUDIO_*, etc.)
-    [ -f "$REPO_ROOT/.env" ] || fail "Missing $REPO_ROOT/.env (skill credentials)"
-    load_env_file "$REPO_ROOT/.env"
-    ok "Loaded $REPO_ROOT/.env"
+    # Step A: load the agent's .env (canonical source of skill + agent creds:
+    # HOMEASSISTANT_*, PIHOLE_*, UNIFI_*, PROXMOX_*, TELEGRAM_*, LM_STUDIO_*,
+    # ADMIN_TELEGRAM_ID, ANTHROPIC_API_KEY, etc.)
+    AGENT_ENV="$REPO_ROOT/agent/.env"
+    [ -f "$AGENT_ENV" ] || fail "Missing $AGENT_ENV (agent credentials)"
+    load_env_file "$AGENT_ENV"
+    ok "Loaded $AGENT_ENV"
 
     # Step B: load infra/rolly/config.env (deploy-specific settings)
     [ -f "$SCRIPT_DIR/config.env" ] || fail "Missing $SCRIPT_DIR/config.env (copy from config.env.example)"
@@ -194,11 +196,11 @@ upload_artifacts() {
     local tmpdir
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
-    # The LXC's .env = the project's root .env (skill creds in their native names:
-    # HOMEASSISTANT_*, PIHOLE_*, PROTECT_*, UNIFI_*, PROXMOX_*, LM_STUDIO_*,
-    # TELEGRAM_*) plus the deploy-specific additions below.
+    # The LXC's .env = the agent's .env (single source of truth for skill +
+    # agent creds in their native names) plus the deploy-specific additions
+    # below.
     install -m 600 /dev/null "$tmpdir/.env"
-    cp "$REPO_ROOT/.env" "$tmpdir/.env"
+    cp "$AGENT_ENV" "$tmpdir/.env"
     chmod 600 "$tmpdir/.env"
     cat >> "$tmpdir/.env" <<EOF
 
