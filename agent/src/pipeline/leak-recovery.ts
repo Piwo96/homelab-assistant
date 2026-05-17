@@ -3,9 +3,9 @@
  * reply text instead of issuing a real function call. Three shapes observed
  * in prod / E2E tests:
  *
- *   {"tool_name": "homeassistant_get_state", "parameters": {...}}
- *   {"tool_calls": [{"function": "homeassistant_entities", "args": {...}}]}
- *   {"function": "homeassistant_turn_off", "arguments": {...}}
+ *   {"tool_name": "smart-home_lights-status", "parameters": {...}}
+ *   {"tool_calls": [{"function": "smart-home_rollos-status", "args": {...}}]}
+ *   {"function": "smart-home_lights-on", "arguments": {...}}
  *
  * Rather than asking the user to retry, we parse what the model meant,
  * normalize the tool name back to the registry's `skill__command` form, and
@@ -80,12 +80,12 @@ function extractFromParsed(parsed: unknown): RecoveredCall | null {
 /** Normalize the tool name the model wrote into the registry's
  *  `skill__command` form. Two transforms needed:
  *   1. Skill→command separator: Gemma writes single underscore
- *      ("homeassistant_get_state") but the registry uses double
- *      ("homeassistant__get_state"); convert the first one.
+ *      ("smart-home_lights-status") but the registry uses double
+ *      ("smart-home__lights-status"); convert the first one.
  *   2. Command word boundary: Python argparse subcommands use HYPHENS
- *      ("get-state", "turn-on", "call-service"); Gemma writes underscores
- *      ("get_state", "turn_on", "call_service"). After splitting the
- *      skill prefix, convert remaining underscores in the command part. */
+ *      ("lights-on", "rollos-status"); Gemma sometimes writes underscores
+ *      ("lights_on", "rollos_status"). After splitting the skill prefix,
+ *      convert remaining underscores in the command part. */
 function normalize(rawName: string, rawArgs: unknown): RecoveredCall | null {
   let name = rawName.includes('__') ? rawName : rawName.replace(/_/, '__');
   const idx = name.indexOf('__');
@@ -100,35 +100,40 @@ function normalize(rawName: string, rawArgs: unknown): RecoveredCall | null {
   return { toolName: name, args };
 }
 
-/** Format a tool's execution result as a short German reply for the user.
- *  Generic enough to handle entities lists, single states, and write actions
- *  without needing a second LLM call. */
+/** Format a smart-home tool result as a short German reply. Smart-home
+ *  commands return structured `{ok, action, entities_affected?, lights?,
+ *  rollos?, klimas?, error?, label?, ...}` — we surface the key fields
+ *  without needing a second LLM round-trip. */
 export function formatRecoveredResult(call: RecoveredCall, result: unknown): string {
-  const command = call.toolName.split('__')[1] ?? call.toolName;
-  if (command === 'entities') {
-    const list = Array.isArray(result) ? result as Array<{ entity_id: string; state: string; attributes?: Record<string, unknown> }> : [];
-    if (list.length === 0) return 'Keine passenden Entities gefunden.';
-    if (list.length > 15) return `${list.length} Treffer — bitte enger filtern (z.B. eine spezifische Area oder mit --state).`;
-    const lines = list.map(e => {
-      const fn = (e.attributes?.['friendly_name'] as string | undefined) ?? e.entity_id;
-      return `• ${fn} — ${e.state}`;
-    });
-    return lines.join('\n');
+  if (!result || typeof result !== 'object') {
+    return `Tool ${call.toolName} ausgeführt.`;
   }
-  if (command === 'get-state') {
-    if (result && typeof result === 'object' && 'state' in (result as Record<string, unknown>)) {
-      const r = result as { entity_id?: string; state: string; attributes?: Record<string, unknown> };
-      const fn = (r.attributes?.['friendly_name'] as string | undefined) ?? r.entity_id ?? call.args['entity_id'];
-      return `${fn}: ${r.state}`;
+  const r = result as Record<string, unknown>;
+  if (r.ok === false) {
+    const err = typeof r.error === 'string' ? r.error : 'Aktion fehlgeschlagen';
+    return `⚠️ ${err}`;
+  }
+  const action = typeof r.action === 'string' ? r.action : (call.toolName.split('__')[1] ?? call.toolName);
+
+  // Status-Listen: lights / rollos / klimas
+  for (const key of ['lights', 'rollos', 'klimas'] as const) {
+    if (Array.isArray(r[key])) {
+      const list = r[key] as Array<{ friendly_name?: string; entity_id?: string; state?: string }>;
+      if (list.length === 0) return `${action}: keine Treffer.`;
+      if (list.length > 15) return `${list.length} Treffer — bitte enger eingrenzen (--where).`;
+      return list.map(it => `• ${it.friendly_name ?? it.entity_id ?? '?'} — ${it.state ?? '?'}`).join('\n');
     }
   }
-  if (command === 'turn-on' || command === 'turn-off' || command === 'toggle') {
-    const verb = command === 'turn-on' ? 'eingeschaltet' : command === 'turn-off' ? 'ausgeschaltet' : 'umgeschaltet';
-    return `${call.args['entity_id'] ?? 'Entity'}: ${verb}.`;
+
+  // Write-Aktionen mit entities_affected
+  if (Array.isArray(r.entities_affected)) {
+    const n = (r.entities_affected as unknown[]).length;
+    const label = typeof r.label === 'string' ? r.label : action;
+    return `OK — ${action} auf "${label}" (${n} Entit${n === 1 ? 'y' : 'ies'}).`;
   }
-  // Fallback: short JSON preview, capped.
-  const preview = JSON.stringify(result).slice(0, 200);
-  return `Tool ${call.toolName} ausgeführt. Ergebnis: ${preview}`;
+
+  // Generischer Fallback
+  return `OK — ${action}.`;
 }
 
 // Recovery is gated to commands that map cleanly to "I wanted to {do X} on the
@@ -136,14 +141,18 @@ export function formatRecoveredResult(call: RecoveredCall, result: unknown): str
 // list-services, list-components, error-log, ...) just dumps raw data that's
 // useless for the user and was almost certainly NOT what they asked for.
 const RECOVERABLE_COMMANDS = new Set([
-  'entities', 'get-state',
-  'turn-on', 'turn-off', 'toggle',
-  'call-service',
-  'cover-open', 'cover-close', 'cover-set-position', 'cover-set-tilt',
-  'list-scenes', 'activate-scene',
-  'list-scripts', 'run-script', 'stop-script',
-  'list-automations', 'trigger', 'enable', 'disable',
-  'history', 'logbook',
+  // smart-home read/status
+  'lights-status', 'rollos-status', 'klima-status', 'gerät-status',
+  // smart-home write actions
+  'lights-on', 'lights-off', 'lights-set',
+  'rollos-open', 'rollos-close', 'rollos-set',
+  'klima-set',
+  // smart-home scenes
+  'szenen-aktivieren', 'szenen-liste',
+  // smart-home macros
+  'bereich-aus', 'etage-aus',
+  // smart-home escape-hatches
+  'gerät-an', 'gerät-aus', 'gerät-toggle',
 ]);
 
 /** Try to recover a leaked tool call from the model's reply: parse, find the

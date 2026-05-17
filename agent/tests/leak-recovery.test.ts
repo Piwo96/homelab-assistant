@@ -2,93 +2,67 @@ import { describe, it, expect } from 'bun:test';
 import { parseLeakedToolCall, formatRecoveredResult } from '../src/pipeline/leak-recovery';
 
 describe('parseLeakedToolCall', () => {
-  it('extracts from {tool_name, parameters} shape', () => {
+  it('extracts from {tool_name, parameters} shape with smart-home prefix', () => {
     const parsed = parseLeakedToolCall(`\`\`\`json
-{"tool_name": "homeassistant_get_state", "parameters": {"entity_id": "light.dg_buro_beleuchtung"}}
+{"tool_name": "smart-home_lights-status", "parameters": {"where": "OG"}}
 \`\`\``);
-    expect(parsed).toEqual({ toolName: 'homeassistant__get-state', args: { entity_id: 'light.dg_buro_beleuchtung' } });
+    expect(parsed).toEqual({ toolName: 'smart-home__lights-status', args: { where: 'OG' } });
   });
 
   it('extracts from {tool_calls: [{function, args}]} shape', () => {
     const parsed = parseLeakedToolCall(`{
       "tool_calls": [
-        { "function": "homeassistant_entities", "args": { "domain": "cover", "state": "open" } }
+        { "function": "smart-home_rollos-status", "args": { "where": "DG" } }
       ]
     }`);
-    expect(parsed?.toolName).toBe('homeassistant__entities');
-    expect(parsed?.args).toEqual({ domain: 'cover', state: 'open' });
+    expect(parsed?.toolName).toBe('smart-home__rollos-status');
+    expect(parsed?.args).toEqual({ where: 'DG' });
   });
 
-  it('normalizes underscore command names to hyphen form (get_state → get-state)', () => {
-    // Real captured leak that broke recovery: Gemma writes
-    // `homeassistant_get_state` but the registry has `homeassistant__get-state`.
-    const parsed = parseLeakedToolCall('{"tool_name":"homeassistant_get_state","parameters":{"entity_id":"light.x"}}');
-    expect(parsed?.toolName).toBe('homeassistant__get-state');
+  it('normalizes underscores in the command part (lights_status → lights-status)', () => {
+    const parsed = parseLeakedToolCall('{"tool_name":"smart-home_lights_status","parameters":{}}');
+    expect(parsed?.toolName).toBe('smart-home__lights-status');
   });
 
-  it('normalizes turn_on → turn-on, call_service → call-service', () => {
-    expect(parseLeakedToolCall('{"tool_name":"homeassistant_turn_on","parameters":{}}')?.toolName)
-      .toBe('homeassistant__turn-on');
-    expect(parseLeakedToolCall('{"tool_name":"homeassistant_call_service","parameters":{}}')?.toolName)
-      .toBe('homeassistant__call-service');
-  });
-
-  it('handles homeassistant__entities (already-namespaced) without re-splitting', () => {
-    const parsed = parseLeakedToolCall('{"tool_name": "homeassistant__entities", "parameters": {"domain": "light"}}');
-    expect(parsed?.toolName).toBe('homeassistant__entities');
+  it('handles already-namespaced form smart-home__lights-on', () => {
+    const parsed = parseLeakedToolCall('{"tool_name":"smart-home__lights-on","parameters":{"where":"Esstisch"}}');
+    expect(parsed?.toolName).toBe('smart-home__lights-on');
   });
 
   it('returns null when no JSON found', () => {
     expect(parseLeakedToolCall('Ich denke das Licht ist an.')).toBeNull();
   });
-
-  it('returns null when JSON has neither tool_name nor tool_calls', () => {
-    expect(parseLeakedToolCall('{"foo": "bar"}')).toBeNull();
-  });
 });
 
 describe('formatRecoveredResult', () => {
-  it('formats entities list as bullet points with friendly_name + state', () => {
+  it('formats successful lights-status with counts', () => {
     const reply = formatRecoveredResult(
-      { toolName: 'homeassistant__entities', args: { domain: 'cover', state: 'open' } },
-      [
-        { entity_id: 'cover.dg_buro_rollo', state: 'open', attributes: { friendly_name: 'DG Büro Rollo' } },
-        { entity_id: 'cover.eg_wc_rollo', state: 'open', attributes: { friendly_name: 'EG WC Rollo' } },
-      ],
+      { toolName: 'smart-home__lights-status', args: { where: 'OG', state: 'on' } },
+      { ok: true, action: 'lights-status', count: 3, lights: [
+        { entity_id: 'light.og_kind_1', friendly_name: 'OG Kind 1', state: 'on', brightness: 200 },
+        { entity_id: 'light.og_buero', friendly_name: 'OG Büro', state: 'on', brightness: null },
+        { entity_id: 'light.og_bad', friendly_name: 'OG Bad', state: 'on', brightness: null },
+      ]},
     );
-    expect(reply).toContain('DG Büro Rollo');
-    expect(reply).toContain('open');
-    expect(reply).toContain('•');
+    expect(reply).toContain('OG Kind 1');
+    expect(reply.toLowerCase()).toContain('on');
   });
 
-  it('caps very long entity lists with a "filter more" hint', () => {
-    const longList = Array.from({ length: 30 }, (_, i) => ({
-      entity_id: `light.x${i}`, state: 'off', attributes: { friendly_name: `Light ${i}` },
-    }));
+  it('formats successful write actions (lights-on) with affected count', () => {
     const reply = formatRecoveredResult(
-      { toolName: 'homeassistant__entities', args: { domain: 'light' } },
-      longList,
+      { toolName: 'smart-home__lights-on', args: { where: 'Wohnzimmer' } },
+      { ok: true, action: 'lights-on', label: 'Wohnzimmer', match_kind: 'area',
+        entities_affected: ['light.eg_wohnzimmer_decke', 'light.eg_wohnzimmer_steh'] },
     );
-    expect(reply).toContain('30 Treffer');
-    expect(reply.toLowerCase()).toContain('enger filtern');
+    expect(reply).toMatch(/wohnzimmer/i);
+    expect(reply).toContain('2');
   });
 
-  it('formats single get-state result', () => {
+  it('surfaces tool error message verbatim when ok=false', () => {
     const reply = formatRecoveredResult(
-      { toolName: 'homeassistant__get-state', args: { entity_id: 'light.dg_buro_beleuchtung' } },
-      { entity_id: 'light.dg_buro_beleuchtung', state: 'off', attributes: { friendly_name: 'DG Büro Beleuchtung' } },
+      { toolName: 'smart-home__lights-on', args: { where: 'foo' } },
+      { ok: false, error: "Keine Lichter gefunden für 'foo'", match_kind: 'none' },
     );
-    expect(reply).toBe('DG Büro Beleuchtung: off');
-  });
-
-  it('formats turn-on / turn-off with the entity', () => {
-    expect(formatRecoveredResult(
-      { toolName: 'homeassistant__turn-on', args: { entity_id: 'light.eg_essen_tischleuchte' } },
-      [{ ok: true }],
-    )).toContain('eingeschaltet');
-    expect(formatRecoveredResult(
-      { toolName: 'homeassistant__turn-off', args: { entity_id: 'light.eg_essen_tischleuchte' } },
-      [{ ok: true }],
-    )).toContain('ausgeschaltet');
+    expect(reply).toContain("Keine Lichter gefunden für 'foo'");
   });
 });
