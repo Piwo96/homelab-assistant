@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
-import { route, type Thresholds } from '../router/semantic';
+import type { LlmRouter } from '../router/llm-router';
+import type { SkillContextCache } from '../skills/context-cache';
 import { SkillRegistry } from '../skills/registry';
 import { defineSkillTool, inferPositionals } from '../tools/define-skill-tool';
 import { buildSystemPrompt, buildWelcomePrompt } from './system-prompt';
@@ -28,24 +29,20 @@ export interface GenerateOutput {
 export interface HandleDeps {
   db: Database;
   registry: SkillRegistry;
-  embedQuery: (text: string) => Promise<number[]>;
-  skillEmbeddings: Record<string, number[]>;
   generate: (input: GenerateInput) => Promise<GenerateOutput>;
-  thresholds: Thresholds;
+  /** Stage-1 LLM-based skill picker. Used only when >1 skill is loaded;
+   *  the fast-path (1 skill) skips this entirely. */
+  llmRouter: LlmRouter;
+  /** Lazy-loaded context blocks per skill, fetched via `--json context`. */
+  contextCache: SkillContextCache;
   /** Optional: quick reachability check for LM Studio (returns true if up). */
   healthCheck?: () => Promise<boolean>;
   /** Optional: triggers Wake-on-LAN + waits until LM Studio answers again. */
   wakeGamingPc?: () => Promise<{ success: boolean; ms: number }>;
-  /** Optional: side-channel to send a status message to the user mid-pipeline
-   *  (e.g. "PC schläft, wecke auf..."). Failures here must not abort the pipeline. */
+  /** Optional: side-channel to send a status message to the user mid-pipeline. */
   notifyStatus?: (chatId: number, text: string) => Promise<void>;
-  /** Optional: resolve a Telegram voice file_id to its transcribed German text.
-   *  Composes Telegram getFile + LM Studio Whisper in main.ts. */
+  /** Optional: resolve a Telegram voice file_id to its transcribed German text. */
   transcribeVoice?: (fileId: string) => Promise<string>;
-  /** Optional: snapshot of all controllable HA entities (area → entity_id +
-   *  friendly_name) captured at agent startup. Injected verbatim into the
-   *  system prompt to ground the LLM and prevent entity_id hallucination. */
-  entityCatalogue?: string;
 }
 
 const HISTORY_LIMIT = 20;
@@ -67,10 +64,10 @@ function looksLikeLeakedReasoning(text: string): boolean {
     // Gemma's function-calling sometimes flips into text-mode and writes the
     // *intended* tool call as JSON instead of issuing a real function call.
     // Three observed shapes — single tool_name, OpenAI-style tool_calls array,
-    // and bare function field with the homeassistant_ prefix.
+    // and bare function field with the smart-home_ prefix.
     /"tool_name"\s*:/i,
     /"tool_calls"\s*:\s*\[/i,
-    /"function"\s*:\s*"homeassistant_/i,
+    /"function"\s*:\s*"smart-home_/i,
     /"parameters"\s*:\s*\{[^}]*entity_id/i,
   ];
   return markers.some(re => re.test(t));
@@ -119,8 +116,7 @@ async function handleVoice(deps: HandleDeps, voice: ParsedVoiceUpdate): Promise<
 
 async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<string> {
   const t0 = Date.now();
-  const bypassRouter = process.env.BYPASS_ROUTER === '1';
-  log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length, bypassRouter });
+  log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length });
   const ts = update.ts ?? Math.floor(Date.now() / 1000);
 
   // /start: clear THIS chat's history (other chats untouched), then ask the
@@ -152,6 +148,11 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
 
   appendMessage(deps.db, { chatId: update.chatId, role: 'user', content: { text: update.text }, ts });
 
+  const history = recentMessages(deps.db, update.chatId, HISTORY_LIMIT)
+    .filter(m => m.role !== 'tool')
+    .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content.text ?? '' }))
+    .filter(m => m.content.length > 0);
+
   // Pre-flight: if LM Studio is unreachable and we have WoL wired up, wake the
   // Gaming PC before doing the embed/generate calls. Otherwise the entire
   // pipeline silently fails on fetch ECONNREFUSED.
@@ -175,26 +176,25 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
     }
   }
 
-  let selectedSkills;
-  if (bypassRouter) {
-    // Skip embedding + cosine routing: expose all tool-bearing skills to the LLM.
-    // Relies on the model (and its thinking mode + context) to pick the right tool.
-    selectedSkills = deps.registry.all();
-    log.info('routing_bypassed', { skillCount: selectedSkills.length });
-  } else {
-    const tEmbed = Date.now();
-    const queryEmbedding = await deps.embedQuery(update.text);
-    log.info('embed_done', { ms: Date.now() - tEmbed, dim: queryEmbedding.length });
-
-    const skills = deps.registry.all();
-    const routable = skills
-      .filter(s => deps.skillEmbeddings[s.id] !== undefined)
-      .map(s => ({ id: s.id, embedding: deps.skillEmbeddings[s.id]! }));
-    const routed = route(queryEmbedding, routable, deps.thresholds);
-    log.info('routed', { band: routed.band, selected: routed.selectedIds, topScore: routed.scores[0]?.score });
-
-    selectedSkills = deps.registry.all().filter(s => routed.selectedIds.includes(s.id));
+  const loaded = deps.registry.all();
+  let selectedSkill: ReturnType<SkillRegistry['all']>[number] | null = null;
+  if (loaded.length === 1) {
+    // Fast-path: single skill, skip Stage 1.
+    selectedSkill = loaded[0]!;
+    log.info('routing_fast_path', { skillId: selectedSkill.id });
+  } else if (loaded.length > 1) {
+    const picked = await deps.llmRouter.pick({
+      msg: update.text,
+      recentMessages: history.slice(-3),
+      candidates: loaded.map(s => ({ id: s.id, description: s.description })),
+    });
+    if (picked) {
+      selectedSkill = loaded.find(s => s.id === picked.skillId) ?? null;
+    }
+    log.info('routing_stage1', { picked: picked?.skillId ?? null, candidates: loaded.length });
   }
+
+  const selectedSkills = selectedSkill ? [selectedSkill] : [];
   const tools: Record<string, Tool> = {};
   for (const s of selectedSkills) {
     for (const t of s.tools) {
@@ -204,17 +204,21 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   const hasTools = Object.keys(tools).length > 0;
   log.info('tools_built', { count: Object.keys(tools).length, names: Object.keys(tools).slice(0, 5) });
 
+  // Fetch context blocks for routed skills (only those with hasContext=true).
+  const contextBlocks: string[] = [];
+  for (const s of selectedSkills) {
+    if (s.hasContext) {
+      const md = await deps.contextCache.get(s.id);
+      if (md) contextBlocks.push(md);
+    }
+  }
+
   const system = buildSystemPrompt({
     skills: selectedSkills.map(s => ({ id: s.id, description: s.description })),
     hasTools,
+    contextBlocks,
     ...(update.firstName !== undefined ? { firstName: update.firstName } : {}),
-    ...(deps.entityCatalogue !== undefined ? { entityCatalogue: deps.entityCatalogue } : {}),
   });
-
-  const history = recentMessages(deps.db, update.chatId, HISTORY_LIMIT)
-    .filter(m => m.role !== 'tool')
-    .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content.text ?? '' }))
-    .filter(m => m.content.length > 0);
 
   const tGen = Date.now();
   log.info('llm_call_start', { historyLen: history.length, hasTools });
@@ -253,7 +257,8 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   } else if (out.toolCalls.length > 0) {
     // Tools liefen, aber das Modell hat keinen finalen Text produziert — meist
     // weil es nach ein paar Calls die Übersicht verloren hat. Häufigster
-    // Auslöser: einzelne get-state-Schleife statt entities --state-Filter.
+    // Auslöser: einzelne gerät-status-Calls aufgereiht statt lights-status/
+    // rollos-status mit --where/--state.
     reply = '🤔 Ich hab die Daten geholt aber konnte sie nicht zusammenfassen. Frag bitte spezifischer (z.B. "welche Lichter sind an?" statt "was ist alles an?").';
   } else {
     reply = '🤔 Ich habe keine Antwort generiert. Bitte nochmal versuchen oder konkreter formulieren.';
