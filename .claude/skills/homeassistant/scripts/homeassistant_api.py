@@ -185,7 +185,18 @@ class HomeAssistantAPI:
         return self._request("GET", "/services")
 
     def call_service(self, domain: str, service: str, data: dict = None) -> List[dict]:
-        """Call a service."""
+        """Call a service.
+
+        HA's service endpoint silently returns 200 OK for non-existent
+        entity_ids, so we validate any entity_id in data via GET /states/<id>
+        first. Without this guard, a hallucinated entity_id would look like
+        a successful action to the caller (and to an LLM driving this tool).
+        """
+        if data:
+            target = data.get("entity_id")
+            ids = target if isinstance(target, list) else [target] if isinstance(target, str) else []
+            for eid in ids:
+                self.get_state(eid)  # raises RuntimeError('Not found: ...') on 404
         return self._request("POST", f"/services/{domain}/{service}", data)
 
     # Events
