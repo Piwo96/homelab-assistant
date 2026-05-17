@@ -44,3 +44,34 @@ export async function fetchHaCatalogue(skillsRoot: string, timeoutMs = 15_000): 
     return undefined;
   }
 }
+
+/**
+ * Refetch the HA entity catalogue on a fixed interval and call `onUpdate`
+ * with each fresh snapshot. Failed refreshes are logged and silently
+ * ignored — the agent keeps using the last good snapshot, so a brief HA
+ * blip never poisons the system prompt.
+ *
+ * Returns a `stop()` to clear the timer. The agent doesn't currently wire
+ * graceful shutdown, but having the handle keeps tests and future use
+ * straightforward.
+ */
+export interface CatalogueRefresh {
+  stop: () => void;
+}
+
+export function startCatalogueRefresh(
+  skillsRoot: string,
+  intervalMs: number,
+  onUpdate: (catalogue: string) => void,
+): CatalogueRefresh {
+  const timer = setInterval(async () => {
+    log.info('ha_catalogue_refresh_tick', { intervalMs });
+    const next = await fetchHaCatalogue(skillsRoot);
+    if (next) onUpdate(next);
+  }, intervalMs);
+  // Don't keep the event loop alive just for this refresher — the HTTP
+  // server is the real lifeline. If everything else exits, the process
+  // should be allowed to die.
+  if (typeof timer.unref === 'function') timer.unref();
+  return { stop: () => clearInterval(timer) };
+}

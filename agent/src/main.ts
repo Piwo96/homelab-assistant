@@ -11,7 +11,12 @@ import { wakeGamingPc } from './wol/wake';
 import { sendText } from './telegram/send';
 import { downloadTelegramFile } from './telegram/download';
 import { transcribeAudio } from './llm/transcribe';
-import { fetchHaCatalogue } from './skills/ha-catalogue';
+import { fetchHaCatalogue, startCatalogueRefresh } from './skills/ha-catalogue';
+
+// Refetch the HA entity catalogue every 30 min so new / renamed entities show
+// up without a deploy. Failed refreshes keep the previous snapshot in place
+// (see startCatalogueRefresh), so a transient HA blip never poisons the prompt.
+const CATALOGUE_REFRESH_MS = 30 * 60 * 1000;
 import { computeCacheKey, loadCache, saveCache } from './router/cache';
 import { buildGenerator } from './llm/generate';
 import { startServer } from './server';
@@ -68,33 +73,38 @@ async function main(): Promise<void> {
   // Pull a snapshot of all controllable HA entities (lights, switches, covers,
   // climates, scenes, scripts) grouped by area. The agent injects this into
   // the system prompt so the LLM never has to guess entity_ids.
-  const haCatalogue = await fetchHaCatalogue(skillsRoot);
+  const initialCatalogue = await fetchHaCatalogue(skillsRoot);
 
-  startServer({
-    env,
+  const handleDeps: import('./pipeline/handle-message').HandleDeps = {
     db,
-    handleDeps: {
-      db,
-      registry,
-      embedQuery: (text) => embed(text, { baseUrl: env.LM_STUDIO_URL, model: env.EMBEDDING_MODEL }),
-      skillEmbeddings: cache.bySkillId,
-      generate,
-      thresholds: { high: 0.75, med: 0.4 },
-      healthCheck: () => isLmStudioReachable({ baseUrl: env.LM_STUDIO_URL, timeoutMs: 3000 }),
-      wakeGamingPc: () => wakeGamingPc({ skillsRoot, timeoutMs: 150_000 }),
-      notifyStatus: async (chatId, text) => {
-        await sendText({ botToken: env.TELEGRAM_BOT_TOKEN }, chatId, text);
-      },
-      transcribeVoice: async (fileId) => {
-        const audio = await downloadTelegramFile({ botToken: env.TELEGRAM_BOT_TOKEN }, fileId);
-        return transcribeAudio(
-          { baseUrl: env.LM_STUDIO_URL, model: env.WHISPER_MODEL },
-          { data: audio.data, filename: audio.filename, mimeType: audio.mimeType },
-        );
-      },
-      ...(haCatalogue ? { entityCatalogue: haCatalogue } : {}),
+    registry,
+    embedQuery: (text) => embed(text, { baseUrl: env.LM_STUDIO_URL, model: env.EMBEDDING_MODEL }),
+    skillEmbeddings: cache.bySkillId,
+    generate,
+    thresholds: { high: 0.75, med: 0.4 },
+    healthCheck: () => isLmStudioReachable({ baseUrl: env.LM_STUDIO_URL, timeoutMs: 3000 }),
+    wakeGamingPc: () => wakeGamingPc({ skillsRoot, timeoutMs: 150_000 }),
+    notifyStatus: async (chatId, text) => {
+      await sendText({ botToken: env.TELEGRAM_BOT_TOKEN }, chatId, text);
     },
+    transcribeVoice: async (fileId) => {
+      const audio = await downloadTelegramFile({ botToken: env.TELEGRAM_BOT_TOKEN }, fileId);
+      return transcribeAudio(
+        { baseUrl: env.LM_STUDIO_URL, model: env.WHISPER_MODEL },
+        { data: audio.data, filename: audio.filename, mimeType: audio.mimeType },
+      );
+    },
+    ...(initialCatalogue ? { entityCatalogue: initialCatalogue } : {}),
+  };
+
+  // Background refresh: every CATALOGUE_REFRESH_MS, refetch and mutate
+  // handleDeps.entityCatalogue in place. The pipeline reads deps.entityCatalogue
+  // per-request, so the next message picks up the new snapshot automatically.
+  startCatalogueRefresh(skillsRoot, CATALOGUE_REFRESH_MS, (fresh) => {
+    handleDeps.entityCatalogue = fresh;
   });
+
+  startServer({ env, db, handleDeps });
 }
 
 function buildSkillEmbeddingInput(s: { description: string; triggers: string[]; intentHints: string[]; tools: Array<{ description: string }> }): string {
