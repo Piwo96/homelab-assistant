@@ -35,11 +35,18 @@ export function buildGenerator(cfg: LmStudioConfig) {
         });
       },
     });
-    // Aggregate tool calls across all steps (result.toolCalls only holds the last step's calls).
+    // Aggregate tool calls AND results across all steps. result.toolCalls /
+    // result.toolResults only hold the LAST step's; we need every call from
+    // the multi-step trace so the caller can persist a per-turn tool summary.
     const allToolCalls = result.steps?.flatMap(s => s.toolCalls ?? []) ?? result.toolCalls ?? [];
+    // AI SDK's StepResult typings widen toolResults to `never[]` when no
+    // tools are configured, so loose-cast each element before reading fields.
+    type ToolResultLike = { toolName: string; result: unknown };
+    const allToolResults: ToolResultLike[] = result.steps?.flatMap(s => (s.toolResults ?? []) as ToolResultLike[]) ?? (result.toolResults as ToolResultLike[] | undefined) ?? [];
     return {
       text: result.text,
       toolCalls: allToolCalls.map(tc => ({ toolName: tc.toolName, args: tc.args })),
+      toolResults: allToolResults.map(tr => ({ toolName: tr.toolName, result: tr.result })),
       finishReason: result.finishReason,
     };
   };

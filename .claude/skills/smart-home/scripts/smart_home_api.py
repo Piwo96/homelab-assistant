@@ -85,6 +85,44 @@ def _is_wildcard_where(where: str | None) -> bool:
     return where is None or _norm(where) in _WILDCARD_WHERE
 
 
+# Multi-floor concepts: User words that span multiple HA-Areas or floors.
+# When the user says "Treppenhauslichter", they mean every stair-related
+# light in the house, not the single HA-Area "Treppenhaus" in KG. Each entry
+# maps a normalized user word to a list of substrings; if ANY substring is
+# found in an entity's local id (light.kg_treppe_x → "kg_treppe_x"), the
+# entity is included.
+#
+# Kept narrow on purpose — only words for which the area/floor split is
+# genuinely ambiguous in the user's mental model. Don't add aliases that
+# legitimately resolve to a single area or floor.
+_CONCEPT_ALIASES: dict[str, list[str]] = {
+    "treppenhaus": ["treppe", "treppenbel"],
+    "treppenhauslichter": ["treppe", "treppenbel"],
+    "treppenlichter": ["treppe", "treppenbel"],
+    "treppenbeleuchtung": ["treppe", "treppenbel"],
+    "treppe": ["treppe", "treppenbel"],
+    "treppen": ["treppe", "treppenbel"],
+}
+
+
+def _concept_match(needle: str, states: list[dict], domain: str) -> list[str] | None:
+    """If the user word is a known cross-floor concept, return every domain
+    entity whose local id contains one of the registered stems. Otherwise
+    None so resolve_where falls through to its strict-match logic."""
+    stems = _CONCEPT_ALIASES.get(needle)
+    if not stems:
+        return None
+    out: list[str] = []
+    for s in states:
+        eid = s["entity_id"]
+        if not eid.startswith(f"{domain}."):
+            continue
+        local = eid.split(".", 1)[1].lower()
+        if any(stem in local for stem in stems):
+            out.append(eid)
+    return out or None
+
+
 def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, Any]:
     """Resolve a user-supplied `--where` string into a concrete target.
 
@@ -145,6 +183,14 @@ def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, A
         if ents:
             short, _ = FLOOR_LABELS[floor_key]
             return {"kind": "floor", "floor": floor_key, "entities": ents, "label": short}
+
+    # 2b. Cross-floor concept alias. "Treppenhauslichter" spans multiple
+    #     HA-Areas in our setup; the strict area match below would return
+    #     only the KG entries. Run BEFORE the area match so concept-aware
+    #     words pull every relevant entity across floors.
+    concept_ents = _concept_match(needle, states, domain)
+    if concept_ents:
+        return {"kind": "concept", "entities": concept_ents, "label": where}
 
     # 3. HA-Area: exact display name OR exact area_id.
     areas_raw = api.render_template("{{ areas() | sort | join(',') }}").strip()

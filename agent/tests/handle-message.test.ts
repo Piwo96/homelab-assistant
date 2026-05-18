@@ -37,7 +37,7 @@ function baseDeps(overrides: Partial<HandleDeps> = {}): HandleDeps {
   return {
     db,
     registry,
-    generate: async () => ({ text: 'OK', toolCalls: [], finishReason: 'stop' }),
+    generate: async () => ({ text: 'OK', toolCalls: [], toolResults: [], finishReason: 'stop' }),
     llmRouter: { pick: async () => ({ skillId: 'smart-home' }) },
     contextCache: { get: async () => null, start: () => {}, stop: () => {} },
     welcomeText: 'Hi Rolly Mitglied ☺️\n\n(test welcome)',
@@ -52,7 +52,7 @@ describe('handleMessage — fast-path (single skill)', () => {
       llmRouter: { pick: async () => { routerCalls++; return null; } },
       generate: async ({ tools }) => {
         expect(Object.keys(tools as object)).toContain('smart-home__lights-status');
-        return { text: 'Status: alles ok', toolCalls: [], finishReason: 'stop' };
+        return { text: 'Status: alles ok', toolCalls: [], toolResults: [], finishReason: 'stop' };
       },
     });
     const reply = await handleMessage(deps, {
@@ -68,7 +68,7 @@ describe('handleMessage — fast-path (single skill)', () => {
       contextCache: { get: async () => 'BEKANNTE ENTITIES (smart-home, Snapshot ...)', start: () => {}, stop: () => {} },
       generate: async ({ system }) => {
         receivedSystem = system;
-        return { text: 'OK', toolCalls: [], finishReason: 'stop' };
+        return { text: 'OK', toolCalls: [], toolResults: [], finishReason: 'stop' };
       },
     });
     await handleMessage(deps, {
@@ -79,7 +79,7 @@ describe('handleMessage — fast-path (single skill)', () => {
 
   it('explains "tools ran but no summary" when text empty after tool calls', async () => {
     const deps = baseDeps({
-      generate: async () => ({ text: '', toolCalls: [{ toolName: 'smart-home__lights-status', args: {} }], finishReason: 'stop' }),
+      generate: async () => ({ text: '', toolCalls: [{ toolName: 'smart-home__lights-status', args: {} }], toolResults: [], finishReason: 'stop' }),
     });
     const reply = await handleMessage(deps, {
       kind: 'text', updateId: 300, chatId: 700, userId: 999, messageId: 1, text: 'welche Rollos sind offen?', ts: 1,
@@ -90,7 +90,7 @@ describe('handleMessage — fast-path (single skill)', () => {
 
   it('explains truncation when model returns empty text + finishReason=length', async () => {
     const deps = baseDeps({
-      generate: async () => ({ text: '', toolCalls: [], finishReason: 'length' }),
+      generate: async () => ({ text: '', toolCalls: [], toolResults: [], finishReason: 'length' }),
     });
     const reply = await handleMessage(deps, {
       kind: 'text', updateId: 99, chatId: 300, userId: 999, messageId: 1, text: 'liste alles auf', ts: 1,
@@ -100,7 +100,7 @@ describe('handleMessage — fast-path (single skill)', () => {
 
   it('voice: transcribes, runs pipeline, prefixes reply with transcript', async () => {
     const deps = baseDeps({
-      generate: async () => ({ text: 'Esstisch ist an.', toolCalls: [], finishReason: 'stop' }),
+      generate: async () => ({ text: 'Esstisch ist an.', toolCalls: [], toolResults: [], finishReason: 'stop' }),
       transcribeVoice: async (fileId) => {
         expect(fileId).toBe('AwACAGV');
         return 'Mach das Esszimmerlicht an';
@@ -170,7 +170,7 @@ describe('handleMessage — multi-skill (router-driven)', () => {
       }},
       generate: async ({ tools }) => {
         toolNames = Object.keys(tools as object);
-        return { text: 'OK', toolCalls: [], finishReason: 'stop' };
+        return { text: 'OK', toolCalls: [], toolResults: [], finishReason: 'stop' };
       },
     });
     await handleMessage(deps, {
@@ -184,7 +184,7 @@ describe('handleMessage — multi-skill (router-driven)', () => {
       llmRouter: { pick: async () => null },
       generate: async ({ tools }) => {
         expect(Object.keys(tools as object)).toHaveLength(0);
-        return { text: 'Ich helfe beim Homelab — frag mich gern.', toolCalls: [], finishReason: 'stop' };
+        return { text: 'Ich helfe beim Homelab — frag mich gern.', toolCalls: [], toolResults: [], finishReason: 'stop' };
       },
     });
     const reply = await handleMessage(deps, {

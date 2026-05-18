@@ -20,6 +20,11 @@ export interface GenerateInput {
 export interface GenerateOutput {
   text: string;
   toolCalls: Array<{ toolName: string; args: unknown }>;
+  /** Tool results paired with the calls above (same order, same length).
+   *  Needed so the pipeline can persist a short "what scope / how many
+   *  entities were affected" annotation in the chat history, so follow-up
+   *  questions like "welche waren da noch an?" have the right context. */
+  toolResults: Array<{ toolName: string; result: unknown }>;
   /** Why the final LLM step stopped. 'length' = hit max output tokens
    *  (response was truncated); 'stop' = clean completion. Used by the
    *  pipeline to craft a useful fallback when text comes back empty. */
@@ -64,6 +69,55 @@ const lastStartByChat = new Map<number, number>();
  *  nothing (e.g. debounced /start). Server checks for this and cleans up
  *  the placeholder instead of editing it with empty text. */
 export const SUPPRESS_REPLY = '';
+
+/** Compact one-liner summary of a tool result so the LLM can read it back
+ *  in next turn's history. Surfaces the fields that matter for follow-up
+ *  questions: scope label, affected count + ids for writes; count + state
+ *  summary for reads. Falls back to "OK"/"Fehler" when shape is unknown. */
+function summarizeToolResult(result: unknown): string {
+  if (!result || typeof result !== 'object') return 'OK';
+  const r = result as Record<string, unknown>;
+  if (r.ok === false) {
+    const err = typeof r.error === 'string' ? r.error : 'fehlgeschlagen';
+    return `Fehler: ${err}`;
+  }
+  const affected = r.entities_affected;
+  if (Array.isArray(affected)) {
+    const ids = affected.slice(0, 8).map(String);
+    const more = affected.length > 8 ? ` (+${affected.length - 8} weitere)` : '';
+    return `${affected.length} Entit${affected.length === 1 ? 'y' : 'ies'} betroffen: ${ids.join(', ')}${more}`;
+  }
+  for (const key of ['lights', 'rollos', 'klimas'] as const) {
+    if (Array.isArray(r[key])) {
+      const list = r[key] as Array<{ entity_id?: unknown; state?: unknown }>;
+      const ids = list.slice(0, 8)
+        .map(it => typeof it.entity_id === 'string' ? it.entity_id : '?')
+        .join(', ');
+      const more = list.length > 8 ? ` (+${list.length - 8} weitere)` : '';
+      return `${list.length} ${key}: ${ids}${more}`;
+    }
+  }
+  return 'OK';
+}
+
+/** Format the tool-call/result trace from a single turn into a compact
+ *  block we append to the persisted assistant message (NOT shown to the
+ *  user via Telegram — they already got the reply text). The LLM reads
+ *  this back in subsequent turns and can ground "welche waren das?",
+ *  "wieder die gleichen", etc. on the actual scope it used last time. */
+function formatToolTrace(
+  calls: Array<{ toolName: string; args: unknown }>,
+  results: Array<{ toolName: string; result: unknown }>,
+): string | null {
+  if (calls.length === 0) return null;
+  const lines = calls.map((tc, i) => {
+    const argsStr = JSON.stringify(tc.args ?? {});
+    const matching = results[i];
+    const resultStr = matching ? summarizeToolResult(matching.result) : 'kein Result';
+    return `  • ${tc.toolName}(${argsStr}) → ${resultStr}`;
+  });
+  return `[Tool-Aufrufe in diesem Turn:\n${lines.join('\n')}]`;
+}
 
 /** Per-line patterns that mark a reasoning monologue (not user-facing text).
  *  Anchored with `^` and used line-by-line so the same patterns can split a
@@ -354,11 +408,18 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   }
   log.info('pipeline_done', { totalMs: Date.now() - t0, replyLen: reply.length });
 
+  // Persist the assistant turn. The text the USER sees is `reply`; what we
+  // store includes a compact tool-trace block underneath so the LLM has
+  // scope-grounding in future turns. The block is invisible to the user
+  // (Telegram already received the bare reply) and only flows through
+  // recentMessages() → next prompt.
+  const trace = formatToolTrace(out.toolCalls, out.toolResults);
+  const storedText = trace ? `${reply}\n\n${trace}` : reply;
   const primaryIntent = selectedSkills[0]?.id;
   appendMessage(deps.db, {
     chatId: update.chatId,
     role: 'assistant',
-    content: { text: reply },
+    content: { text: storedText },
     ...(primaryIntent !== undefined ? { intent: primaryIntent } : {}),
     success: true,
     ts: ts + 1,
