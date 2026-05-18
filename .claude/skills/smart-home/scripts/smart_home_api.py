@@ -250,16 +250,15 @@ def _fuzzy_candidates(states: list[dict], domain: str, needle: str,
     """Score-rank candidates by friendly_name / entity_id similarity to `needle`.
 
     Heuristics (case-insensitive, in priority order):
-      - substring of needle in friendly_name                            → 1.0
-      - substring of needle in entity_id (underscores→space)            → 0.8
+      - substring of needle in friendly_name              → 1.0
+      - substring of needle in entity_id (underscores→space) → 0.8
       - any prefix of needle (length ≥4) is the prefix of any haystack word → 0.5
 
-    Kept narrow on purpose. The LLM already sees the full BEKANNTE-ENTITIES
-    catalogue in the system prompt and is supposed to map user-slang like
-    "Esstisch" to "EG Essen Tischleuchte" itself before calling the tool.
-    Deeper fuzzy logic here (substring-anywhere etc.) was tried and pulled
-    in nonsense candidates: "schlafzimmerlampe" matched "Tischleuchte"
-    because both share the substring "schl" ("ti-schl-euchte"). Less is more.
+    The "prefix of needle" rule is what gets German near-misses across the
+    finish line: 'Tischlampe' → 'Tischleuchte' (common prefix 'Tischl' /
+    'Tisch'), 'Beleuchtung' → 'Beleuchtungsspots' (common prefix 'Beleucht'),
+    'Schlaf' → 'Schlafzimmer'. Underscores in entity_ids are split so words
+    inside 'light.eg_essen_tischleuchte' are individually matchable.
     """
     needle = needle.strip().lower()
     if not needle:
