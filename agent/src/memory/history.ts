@@ -4,18 +4,7 @@ export type MessageRole = 'user' | 'assistant' | 'tool';
 
 export interface MessageContent {
   text?: string;
-  /** All tool calls the model made in this turn. Stored so the next turn's
-   *  system prompt can show a "letzte aktionen" block — gives the LLM the
-   *  exact entity_ids it touched, so follow-ups like "die wieder aus" or
-   *  "noch heller" don't have to re-resolve scope. NOT mixed into the
-   *  assistant text (an earlier "[Tool-Aufrufe …]" inline block trained
-   *  the model to imitate the format in user-visible replies). */
-  toolCalls?: Array<{ name: string; args: unknown }>;
-  /** Paired 1:1 with toolCalls. Holds the structured JSON the tool returned. */
-  toolResults?: Array<{ name: string; result: unknown }>;
-  /** @deprecated single-tool fields kept for legacy DB rows. */
   toolCall?: { name: string; args: unknown };
-  /** @deprecated single-tool fields kept for legacy DB rows. */
   toolResult?: { name: string; result: unknown };
 }
 

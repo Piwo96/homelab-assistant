@@ -6,7 +6,6 @@ import { defineSkillTool, inferPositionals } from '../tools/define-skill-tool';
 import { buildSystemPrompt } from './system-prompt';
 import { recoverFromLeakedToolCall } from './leak-recovery';
 import { appendMessage, clearHistory, recentMessages } from '../memory/history';
-import { buildToolHistoryBlock } from './tool-history';
 import type { ParsedTextUpdate, ParsedUpdate, ParsedVoiceUpdate } from '../telegram/webhook';
 import type { Tool } from 'ai';
 import { log } from '../utils/logger';
@@ -322,12 +321,6 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
       if (md) contextBlocks.push(md);
     }
   }
-  // Inject a compact "letzte tool-aktionen" block from the last few assistant
-  // turns. Lives in SYSTEM context (not in messages) so the model has the
-  // concrete entity_ids for follow-ups like "die wieder aus" but won't
-  // imitate the format in its own user-visible replies.
-  const toolHistory = buildToolHistoryBlock(deps.db, update.chatId);
-  if (toolHistory) contextBlocks.push(toolHistory);
 
   const system = buildSystemPrompt({
     skills: selectedSkills.map(s => ({ id: s.id, description: s.description })),
@@ -396,23 +389,10 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   // injected into the SYSTEM prompt — never into the assistant text
   // the model sees in history (it will be copied).
   const primaryIntent = selectedSkills[0]?.id;
-  // Persist tool calls + results structurally (NOT in `text`) so the next
-  // turn's system prompt can show a "letzte tool-aktionen" block while the
-  // user-visible reply stays clean.
-  const toolCallsArr = out.toolCalls.length > 0
-    ? out.toolCalls.map(tc => ({ name: tc.toolName, args: tc.args }))
-    : undefined;
-  const toolResultsArr = out.toolResults.length > 0
-    ? out.toolResults.map(tr => ({ name: tr.toolName, result: tr.result }))
-    : undefined;
   appendMessage(deps.db, {
     chatId: update.chatId,
     role: 'assistant',
-    content: {
-      text: reply,
-      ...(toolCallsArr ? { toolCalls: toolCallsArr } : {}),
-      ...(toolResultsArr ? { toolResults: toolResultsArr } : {}),
-    },
+    content: { text: reply },
     ...(primaryIntent !== undefined ? { intent: primaryIntent } : {}),
     success: true,
     ts: ts + 1,
