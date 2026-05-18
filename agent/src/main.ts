@@ -15,6 +15,7 @@ import { createSkillContextCache } from './skills/context-cache';
 import { createLlmRouter } from './router/llm-router';
 import { buildGenerator } from './llm/generate';
 import { lmStudioModel } from './llm/lm-studio';
+import { buildWelcomeText } from './pipeline/welcome';
 import { startServer } from './server';
 import { log } from './utils/logger';
 
@@ -78,12 +79,16 @@ async function main(): Promise<void> {
     model: lmStudioModel({ baseUrl: env.LM_STUDIO_URL, modelId: env.LM_STUDIO_MODEL }),
   });
 
+  const welcomeText = buildWelcomeText(skills);
+  log.info('welcome_built', { chars: welcomeText.length, skillGroups: skills.flatMap(s => s.welcomeGroups).length });
+
   const handleDeps: import('./pipeline/handle-message').HandleDeps = {
     db,
     registry,
     generate,
     llmRouter,
     contextCache,
+    welcomeText,
     healthCheck: () => isLmStudioReachable({ baseUrl: env.LM_STUDIO_URL, timeoutMs: 3000 }),
     wakeGamingPc: () => wakeGamingPc({ skillsRoot, timeoutMs: 150_000 }),
     notifyStatus: async (chatId, text) => {

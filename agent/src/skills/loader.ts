@@ -21,6 +21,13 @@ export interface SkillTool {
   positionalArgs: string[];
 }
 
+export interface WelcomeGroup {
+  /** Section label shown in the welcome message ("Lichter", "Rollos", ...). */
+  heading: string;
+  /** User-facing example sentences for that section ("Wohnzimmer Licht an"). */
+  examples: string[];
+}
+
 export interface LoadedSkill {
   id: string;
   description: string;
@@ -31,6 +38,10 @@ export interface LoadedSkill {
   /** True iff the skill exposes a `context` subcommand that the agent should
    *  fetch and inject into the system prompt when this skill is routed. */
   hasContext: boolean;
+  /** Optional groups of example user sentences shown on /start. Each group
+   *  becomes a bullet line in the welcome text. Empty when the skill chose
+   *  not to advertise itself there. */
+  welcomeGroups: WelcomeGroup[];
 }
 
 interface Frontmatter {
@@ -38,6 +49,26 @@ interface Frontmatter {
   description?: string;
   triggers?: string[];
   intent_hints?: string[];
+  welcome?: Array<{ heading?: unknown; examples?: unknown }>;
+}
+
+/** Filter a YAML-parsed `welcome` list down to well-formed groups. Drops any
+ *  entry missing a heading or with a non-array `examples`. Keeping the loader
+ *  forgiving so a malformed frontmatter doesn't break bot startup. */
+function parseWelcomeGroups(raw: Frontmatter['welcome']): WelcomeGroup[] {
+  if (!Array.isArray(raw)) return [];
+  const groups: WelcomeGroup[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const heading = typeof entry.heading === 'string' ? entry.heading.trim() : '';
+    const examplesRaw = Array.isArray(entry.examples) ? entry.examples : [];
+    const examples = examplesRaw
+      .filter((e): e is string => typeof e === 'string')
+      .map(e => e.trim())
+      .filter(e => e.length > 0);
+    if (heading && examples.length > 0) groups.push({ heading, examples });
+  }
+  return groups;
 }
 
 async function listScriptFiles(dir: string): Promise<string[]> {
@@ -135,6 +166,7 @@ export async function loadSkills(skillsRoot: string, only?: string[]): Promise<L
       scriptPaths,
       tools,
       hasContext: skillHasContext,
+      welcomeGroups: parseWelcomeGroups(frontmatter.welcome),
     });
   }
   return result;

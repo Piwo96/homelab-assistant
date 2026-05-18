@@ -28,6 +28,28 @@ intent_hints:
   - Heizung auf Zieltemperatur stellen
   - Szenen aktivieren
   - Sammel-Aktionen "alle Lichter im OG aus" / "alle Rollos im EG zu"
+welcome:
+  - heading: Lichter
+    examples:
+      - Wohnzimmer Licht an
+      - alle Lichter im OG aus
+      - dim das Büro auf 30%
+  - heading: Rollos & Jalousien
+    examples:
+      - Rollos im Schlafzimmer hoch
+      - Lamellen auf 50% neigen
+  - heading: Heizung
+    examples:
+      - Bad auf 22 Grad
+      - wie warm ist es im Wohnzimmer?
+  - heading: Szenen
+    examples:
+      - starte Filmmodus
+      - welche Szenen gibt es?
+  - heading: Status
+    examples:
+      - welche Lichter sind an?
+      - sind irgendwo Rollos offen?
 ---
 
 # Smart Home Steuerung

@@ -35,6 +35,10 @@ export interface HandleDeps {
   llmRouter: LlmRouter;
   /** Lazy-loaded context blocks per skill, fetched via `--json context`. */
   contextCache: SkillContextCache;
+  /** Pre-rendered /start welcome text, assembled at startup from each loaded
+   *  skill's `welcome:` frontmatter. Passed through here (not computed in this
+   *  module) so the welcome reflects the exact skill set the bot booted with. */
+  welcomeText: string;
   /** Optional: quick reachability check for LM Studio (returns true if up). */
   healthCheck?: () => Promise<boolean>;
   /** Optional: triggers Wake-on-LAN + waits until LM Studio answers again. */
@@ -46,26 +50,6 @@ export interface HandleDeps {
 }
 
 const HISTORY_LIMIT = 20;
-
-/** Static welcome shown on /start. No LLM round-trip — Gemma 4B on the welcome
- *  prompt randomly leaked structured-reasoning bullets ("• Persona:", "• Goal:")
- *  and a wrapped *(Self-Correction)*-block before the greeting; the first
- *  interaction a new user sees must be reliable. List a few concrete examples
- *  of what Rolly can do today so the user immediately knows how to phrase
- *  their first command. */
-const STATIC_WELCOME = [
-  'Hi Rolly Mitglied ☺️',
-  '',
-  'Ich bin Rolly, dein Homelab-Assistent. Aktuell helfe ich dir beim Smart Home — sag einfach was du brauchst:',
-  '',
-  '• Lichter: „Wohnzimmer Licht an", „alle Lichter im OG aus", „dim das Büro auf 30%"',
-  '• Rollos & Jalousien: „Rollos im Schlafzimmer hoch", „Lamellen auf 50% neigen"',
-  '• Heizung: „Bad auf 22 Grad", „wie warm ist es im Wohnzimmer?"',
-  '• Szenen: „starte Filmmodus", „welche Szenen gibt es?"',
-  '• Status: „welche Lichter sind an?", „sind irgendwo Rollos offen?"',
-  '',
-  'Du kannst auch eine Sprachnachricht schicken — ich transkribiere und führe aus.',
-].join('\n');
 
 /** Per-line patterns that mark a reasoning monologue (not user-facing text).
  *  Anchored with `^` and used line-by-line so the same patterns can split a
@@ -208,7 +192,7 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   if (trimmed === '/start' || trimmed.startsWith('/start ')) {
     const removed = clearHistory(deps.db, update.chatId);
     log.info('history_cleared', { chatId: update.chatId, removed });
-    const reply = STATIC_WELCOME;
+    const reply = deps.welcomeText;
     // Persist just the welcome so the next turn has a single anchor message
     // showing the assistant just greeted.
     appendMessage(deps.db, {

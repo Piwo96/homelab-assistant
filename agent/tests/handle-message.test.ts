@@ -19,6 +19,7 @@ beforeEach(() => {
     intentHints: [],
     scriptPaths: ['/fake/smart_home_api.py'],
     hasContext: true,
+    welcomeGroups: [],
     tools: [{
       name: 'smart-home__lights-status',
       scriptPath: '/fake/smart_home_api.py',
@@ -39,6 +40,7 @@ function baseDeps(overrides: Partial<HandleDeps> = {}): HandleDeps {
     generate: async () => ({ text: 'OK', toolCalls: [], finishReason: 'stop' }),
     llmRouter: { pick: async () => ({ skillId: 'smart-home' }) },
     contextCache: { get: async () => null, start: () => {}, stop: () => {} },
+    welcomeText: 'Hi Rolly Mitglied ☺️\n\n(test welcome)',
     ...overrides,
   };
 }
@@ -124,6 +126,7 @@ describe('handleMessage — multi-skill (router-driven)', () => {
         intentHints: [],
         scriptPaths: ['/fake/unifi_protect_api.py'],
         hasContext: false,
+        welcomeGroups: [],
         tools: [{
           name: 'unifi-protect__cameras',
           scriptPath: '/fake/unifi_protect_api.py',
