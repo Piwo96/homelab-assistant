@@ -63,9 +63,9 @@ class WolAPI:
         self.mac = mac or os.environ.get("GAMING_PC_MAC", "")
         self.ip = ip or os.environ.get("GAMING_PC_IP", "")
         try:
-            self.wol_timeout = wol_timeout or int(os.environ.get("WOL_TIMEOUT", "120"))
+            self.wol_timeout = wol_timeout or int(os.environ.get("WOL_TIMEOUT", "240"))
         except ValueError:
-            self.wol_timeout = 120
+            self.wol_timeout = 240
 
         if lm_studio_url:
             self.lm_studio_url = lm_studio_url
@@ -138,18 +138,23 @@ class WolAPI:
         return result
 
     def _wait_for_lm_studio(self) -> dict[str, Any]:
-        """Poll until LM Studio becomes available or timeout."""
+        """Poll until LM Studio becomes available or wol_timeout wall-clock
+        seconds have elapsed. Wall-clock (time.time()) instead of summing
+        poll_interval because each _check_lm_studio() can block up to 5s
+        on connect timeout when the PC is still booting — counting only
+        the sleeps would let the real wait silently grow to ~2x the
+        configured timeout."""
         poll_interval = 5
-        elapsed = 0
+        start = time.time()
 
-        while elapsed < self.wol_timeout:
+        while True:
             if self._check_lm_studio():
-                return {"available": True, "waited_seconds": elapsed}
+                return {"available": True, "waited_seconds": int(time.time() - start)}
+            elapsed = int(time.time() - start)
+            if elapsed >= self.wol_timeout:
+                return {"available": False, "waited_seconds": elapsed, "timeout": True}
             time.sleep(poll_interval)
-            elapsed += poll_interval
-            print(f"  Warte auf LM Studio... ({elapsed}s/{self.wol_timeout}s)", file=sys.stderr)
-
-        return {"available": False, "waited_seconds": elapsed, "timeout": True}
+            print(f"  Warte auf LM Studio... ({int(time.time() - start)}s/{self.wol_timeout}s)", file=sys.stderr)
 
     def _check_lm_studio(self) -> bool:
         """Check if LM Studio API is responding."""

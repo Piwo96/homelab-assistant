@@ -90,7 +90,7 @@ async function main(): Promise<void> {
     contextCache,
     welcomeText,
     healthCheck: () => isLmStudioReachable({ baseUrl: env.LM_STUDIO_URL, timeoutMs: 3000 }),
-    wakeGamingPc: () => wakeGamingPc({ skillsRoot, timeoutMs: 150_000 }),
+    wakeGamingPc: () => wakeGamingPc({ skillsRoot, timeoutMs: 270_000 }),
     notifyStatus: async (chatId, text) => {
       await sendText({ botToken: env.TELEGRAM_BOT_TOKEN }, chatId, text);
     },

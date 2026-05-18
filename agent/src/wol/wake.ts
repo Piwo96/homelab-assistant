@@ -26,7 +26,7 @@ export interface WakeOptions {
 
 export async function wakeGamingPc(opts: WakeOptions): Promise<WakeResult> {
   const scriptPath = join(opts.skillsRoot, 'wol', 'scripts', 'wol_api.py');
-  const timeoutMs = opts.timeoutMs ?? 150_000;
+  const timeoutMs = opts.timeoutMs ?? 270_000;
   const start = Date.now();
 
   const proc = Bun.spawn({
