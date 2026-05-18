@@ -107,71 +107,6 @@ function replyClaimsAction(text: string): boolean {
   return ACTION_CLAIM_PATTERNS.some(re => re.test(t));
 }
 
-/** Map smart-home write-tool names to a German past-participle verb so we can
- *  synthesise an honest confirmation when the model emitted a successful tool
- *  call but no text. ESCAPE-HATCH gerät-* tools and the szenen-/bereich-/etage-
- *  macros are covered too. Returns null for read tools (lights-status etc.)
- *  where a generic "geschaltet" would be misleading. */
-function writeToolVerb(toolName: string): string | null {
-  const cmd = toolName.split('__')[1] ?? toolName;
-  switch (cmd) {
-    case 'lights-on':
-    case 'gerät-an':
-      return 'eingeschaltet';
-    case 'lights-off':
-    case 'gerät-aus':
-      return 'ausgeschaltet';
-    case 'lights-set':
-      return 'gedimmt';
-    case 'rollos-open':
-      return 'hochgefahren';
-    case 'rollos-close':
-      return 'heruntergefahren';
-    case 'rollos-set':
-      return 'gesetzt';
-    case 'klima-set':
-      return 'auf die gewünschte Temperatur gesetzt';
-    case 'bereich-aus':
-    case 'etage-aus':
-      return 'ausgeschaltet';
-    case 'gerät-toggle':
-      return 'geschaltet';
-    case 'szenen-aktivieren':
-      return 'aktiviert';
-    default:
-      return null;
-  }
-}
-
-/** When the model produced no text but at least one write-tool call returned
- *  ok:true, synthesise a short German confirmation from the tool results.
- *  Returns null if no write-success is in the trace, so the caller can fall
- *  back to a status-flavoured apology message. */
-function synthesizeWriteConfirmation(
-  toolResults: Array<{ toolName: string; result: unknown }>,
-): string | null {
-  for (let i = toolResults.length - 1; i >= 0; i--) {
-    const tr = toolResults[i];
-    if (!tr) continue;
-    const verb = writeToolVerb(tr.toolName);
-    if (!verb) continue;
-    const r = tr.result as Record<string, unknown> | null;
-    if (!r || r.ok === false) continue;
-    const affected = Array.isArray(r.entities_affected) ? (r.entities_affected as string[]) : [];
-    const label = typeof r.label === 'string' ? r.label : null;
-    if (affected.length === 0 && !label) continue;
-    if (affected.length === 1 && label) {
-      return `✅ ${label} ${verb}.`;
-    }
-    if (affected.length > 1 && label) {
-      return `✅ ${affected.length} Entities in „${label}" ${verb}.`;
-    }
-    if (label) return `✅ ${label} ${verb}.`;
-    return `✅ ${affected.length} Entit${affected.length === 1 ? 'y' : 'ies'} ${verb}.`;
-  }
-  return null;
-}
-
 /** Per-line patterns that mark a reasoning monologue (not user-facing text).
  *  Anchored with `^` and used line-by-line so the same patterns can split a
  *  reasoning prefix away from the actual answer the model wrote afterwards. */
@@ -504,14 +439,11 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   } else if (out.finishReason === 'length') {
     reply = '⚠️ Antwort wurde abgeschnitten — der Output war zu lang. Bitte spezifischer fragen (z.B. nur eine Area oder nur eine Domäne auf einmal).';
   } else if (out.toolCalls.length > 0) {
-    // Tools liefen, aber das Modell hat keinen finalen Text produziert.
-    // Wenn ein write-tool (lights-on/off, rollos-*, klima-set, ...) erfolgreich
-    // war, synthesisiere eine ehrliche Bestätigung statt der "ich konnte nicht
-    // zusammenfassen"-Apologie. Wichtig nach dem force-retry-Pfad, der oft mit
-    // finishReason=tool-calls aufhört: der echte Schalt-Vorgang ist passiert,
-    // wir müssen es nur dem User sagen.
-    reply = synthesizeWriteConfirmation(out.toolResults)
-      ?? '🤔 Ich hab die Daten geholt aber konnte sie nicht zusammenfassen. Frag bitte spezifischer (z.B. "welche Lichter sind an?" statt "was ist alles an?").';
+    // Tools liefen, aber das Modell hat keinen finalen Text produziert — meist
+    // weil es nach ein paar Calls die Übersicht verloren hat. Häufigster
+    // Auslöser: einzelne gerät-status-Calls aufgereiht statt lights-status/
+    // rollos-status mit --where/--state.
+    reply = '🤔 Ich hab die Daten geholt aber konnte sie nicht zusammenfassen. Frag bitte spezifischer (z.B. "welche Lichter sind an?" statt "was ist alles an?").';
   } else {
     reply = '🤔 Ich habe keine Antwort generiert. Bitte nochmal versuchen oder konkreter formulieren.';
   }
