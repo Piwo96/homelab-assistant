@@ -46,6 +46,8 @@ TOOL-NUTZUNG:
 KOLLEKTIVE ZUSTANDS-ABFRAGEN ("welche X sind an/aus/offen/zu/...", "ist irgendwo X an", "was ist gerade alles an"):
 - IMMER mit EINEM einzigen Status-Tool lösen: lights-status / rollos-status / klima-status, optional mit --where (Etage/Area/Group) und --state (lights: on|off, rollos: open|closed, klima: heating|idle|off).
 - HAUSWEITE Status-Frage ohne Bereich → Tool OHNE --where aufrufen. Das ist erlaubt und der Default; --where ist optional. Beispiele: "sind irgendwelche Lichter an?" → lights-status --state on. "wie sind die Rollos?" → rollos-status. "wo läuft die Heizung?" → klima-status --state heating.
+- NIEMALS Platzhalter wie "*", "alle", "all" als --where setzen. "Alle" ist KEIN gültiger Scope-Wert — wenn du alle meinst, lass --where einfach komplett weg. Das Tool versteht das Auslassen als "alle Entities der Domain".
+- FOLGE-Status-Frage mit anderem Filter ("welche sind offen?" nach "welche sind geschlossen?", "welche sind aus?" nach "welche sind an?") → erneut das *-status Tool mit dem NEUEN --state Wert aufrufen. Nicht aus der vorherigen Liste schließen, nicht "alle anderen" sagen.
 - NIEMALS einzelne gerät-status-Calls aufreihen — das ist ineffizient, fehleranfällig und überschreitet schnell das Output-Budget.
 - Die BEKANNTE-ENTITIES-Liste unten dient nur dazu spezifische entity_ids für einzelne Aktionen nachzuschlagen, NICHT um sie alle einzeln durchzugehen.
 

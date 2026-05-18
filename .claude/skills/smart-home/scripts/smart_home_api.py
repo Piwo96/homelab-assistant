@@ -73,6 +73,18 @@ def _norm(s: str) -> str:
     return s.strip().lower()
 
 
+# Scope-strings the LLM passes meaning "no scope = all entities". The status
+# tools treat these as if --where were omitted entirely. Without this guard,
+# Gemma's "where=*" call hit resolve_where, matched nothing, and surfaced as a
+# spurious "Keine X gefunden für '*'" failure even though the user asked an
+# unscoped status question.
+_WILDCARD_WHERE = {"", "*", "alle", "all", "any", "*all*"}
+
+
+def _is_wildcard_where(where: str | None) -> bool:
+    return where is None or _norm(where) in _WILDCARD_WHERE
+
+
 def resolve_where(api: HomeAssistantAPI, where: str, domain: str) -> dict[str, Any]:
     """Resolve a user-supplied `--where` string into a concrete target.
 
@@ -341,7 +353,7 @@ def _cover_action(api: HomeAssistantAPI, where: str, confirm: bool,
 def rollos_status(api: HomeAssistantAPI, where: str | None,
                   state_filter: str | None = None) -> dict[str, Any]:
     wanted = None
-    if where:
+    if where and not _is_wildcard_where(where):
         target = resolve_where(api, where, "cover")
         if not target["entities"]:
             return _no_match(target, "Rollos", where)
@@ -402,7 +414,7 @@ def klima_set(api: HomeAssistantAPI, where: str, target_temp: float, confirm: bo
 def klima_status(api: HomeAssistantAPI, where: str | None,
                  state_filter: str | None = None) -> dict[str, Any]:
     wanted = None
-    if where:
+    if where and not _is_wildcard_where(where):
         target = resolve_where(api, where, "climate")
         if not target["entities"]:
             return _no_match(target, "Heizung", where)
@@ -543,7 +555,7 @@ def szenen_liste(api: HomeAssistantAPI) -> dict[str, Any]:
 
 
 def lights_status(api: HomeAssistantAPI, where: str | None, state_filter: str | None) -> dict[str, Any]:
-    if where:
+    if where and not _is_wildcard_where(where):
         target = resolve_where(api, where, "light")
         if not target["entities"]:
             return _no_match(target, "Lichter", where)
