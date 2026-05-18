@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { verifySecret, isDuplicate, markProcessed, parseUpdate } from './telegram/webhook';
-import { sendText, editText, sendChatAction } from './telegram/send';
+import { sendText, editText, sendChatAction, deleteMessage } from './telegram/send';
 import type { HandleDeps } from './pipeline/handle-message';
 import { handleMessage } from './pipeline/handle-message';
 import { log } from './utils/logger';
@@ -78,6 +78,15 @@ async function handleWebhook(req: Request, deps: ServerDeps, allowed: Set<number
     handleMessage(deps.handleDeps, parsed)
       .then(async reply => {
         clearInterval(typingInterval);
+        if (!reply) {
+          // Pipeline suppressed the response (e.g. debounced duplicate
+          // /start). Clean up the placeholder so the chat doesn't show
+          // a stale "⌛" bubble.
+          if (placeholderId) {
+            await deleteMessage(sendOpts, parsed.chatId, placeholderId);
+          }
+          return;
+        }
         if (placeholderId) {
           await editText(sendOpts, parsed.chatId, placeholderId, reply);
         } else {

@@ -39,6 +39,29 @@ export async function editText(
   }
 }
 
+/**
+ * Best-effort: delete a previously-sent bot message. Used to clean up the
+ * "⌛ Ich kümmere mich darum..." placeholder when the pipeline decides to
+ * suppress its reply (e.g. a debounced duplicate /start). Errors are
+ * swallowed — failing to delete a stale placeholder is annoying but not
+ * worth aborting the request flow.
+ */
+export async function deleteMessage(
+  opts: SendOptions,
+  chatId: number,
+  messageId: number,
+): Promise<void> {
+  try {
+    await fetch(`https://api.telegram.org/bot${opts.botToken}/deleteMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+    });
+  } catch {
+    // best-effort cleanup; ignore failures
+  }
+}
+
 export interface BotCommand {
   command: string;
   description: string;

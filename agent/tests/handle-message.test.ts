@@ -113,6 +113,27 @@ describe('handleMessage — fast-path (single skill)', () => {
     expect(reply).toContain('Esszimmerlicht');
     expect(reply).toContain('Esstisch');
   });
+
+  it('/start returns the pre-rendered welcome text and debounces duplicates', async () => {
+    // Some Telegram clients fire /start twice (menu tap + auto-start);
+    // the pipeline must suppress the second one within the burst window.
+    const deps = baseDeps({ welcomeText: 'Hi Rolly Mitglied ☺️\n\nbeispiel-welcome' });
+    const first = await handleMessage(deps, {
+      kind: 'text', updateId: 1000, chatId: 7777, userId: 999, messageId: 1, text: '/start', ts: 1,
+    });
+    expect(first).toContain('Hi Rolly Mitglied');
+
+    const second = await handleMessage(deps, {
+      kind: 'text', updateId: 1001, chatId: 7777, userId: 999, messageId: 2, text: '/start', ts: 2,
+    });
+    expect(second).toBe('');
+
+    // Different chat is unaffected.
+    const otherChat = await handleMessage(deps, {
+      kind: 'text', updateId: 1002, chatId: 8888, userId: 999, messageId: 3, text: '/start', ts: 3,
+    });
+    expect(otherChat).toContain('Hi Rolly Mitglied');
+  });
 });
 
 describe('handleMessage — multi-skill (router-driven)', () => {

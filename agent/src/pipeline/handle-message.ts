@@ -51,6 +51,20 @@ export interface HandleDeps {
 
 const HISTORY_LIMIT = 20;
 
+/** Suppress duplicate /start commands that arrive in quick succession. Some
+ *  Telegram clients fire /start twice when the user taps it from the "Menü"
+ *  button (once as the command, once as the bot-open deep-link), and a
+ *  genuine double-tap looks the same. Either way, the second welcome message
+ *  is just noise. In-memory map is fine — only matters within the burst, and
+ *  Telegram never retries old updates after a server restart. */
+const START_DEBOUNCE_MS = 3000;
+const lastStartByChat = new Map<number, number>();
+
+/** Sentinel returned from handleMessage when the pipeline decided to send
+ *  nothing (e.g. debounced /start). Server checks for this and cleans up
+ *  the placeholder instead of editing it with empty text. */
+export const SUPPRESS_REPLY = '';
+
 /** Per-line patterns that mark a reasoning monologue (not user-facing text).
  *  Anchored with `^` and used line-by-line so the same patterns can split a
  *  reasoning prefix away from the actual answer the model wrote afterwards. */
@@ -190,6 +204,16 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   // the user immediately knows what to ask.
   const trimmed = update.text.trim();
   if (trimmed === '/start' || trimmed.startsWith('/start ')) {
+    // Debounce: some Telegram clients fire /start twice (menu tap + auto-
+    // start). Suppress the second one within the burst window so the user
+    // only sees one welcome.
+    const now = Date.now();
+    const last = lastStartByChat.get(update.chatId) ?? 0;
+    if (now - last < START_DEBOUNCE_MS) {
+      log.info('start_debounced', { chatId: update.chatId, sinceLastMs: now - last });
+      return SUPPRESS_REPLY;
+    }
+    lastStartByChat.set(update.chatId, now);
     const removed = clearHistory(deps.db, update.chatId);
     log.info('history_cleared', { chatId: update.chatId, removed });
     const reply = deps.welcomeText;
