@@ -20,6 +20,7 @@ beforeEach(() => {
     scriptPaths: ['/fake/smart_home_api.py'],
     hasContext: true,
     welcomeGroups: [],
+    body: '',
     tools: [{
       name: 'smart-home__lights-status',
       scriptPath: '/fake/smart_home_api.py',
@@ -148,6 +149,7 @@ describe('handleMessage — multi-skill (router-driven)', () => {
         scriptPaths: ['/fake/unifi_protect_api.py'],
         hasContext: false,
         welcomeGroups: [],
+        body: '',
         tools: [{
           name: 'unifi-protect__cameras',
           scriptPath: '/fake/unifi_protect_api.py',

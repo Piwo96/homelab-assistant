@@ -42,6 +42,12 @@ export interface LoadedSkill {
    *  becomes a bullet line in the welcome text. Empty when the skill chose
    *  not to advertise itself there. */
   welcomeGroups: WelcomeGroup[];
+  /** Raw markdown body of SKILL.md (everything after the frontmatter block).
+   *  Injected as a system-prompt contextBlock when the skill is routed, so
+   *  Goal/Wohnungs-Struktur/Edge-Cases stay a single source of truth for
+   *  both developers and the runtime LLM — same pattern Claude Code and
+   *  Codex use for their skills. Empty when SKILL.md has no body content. */
+  body: string;
 }
 
 interface Frontmatter {
@@ -113,9 +119,12 @@ export async function loadSkills(skillsRoot: string, only?: string[]): Promise<L
     const skillDir = join(skillsRoot, name);
     const skillMdPath = join(skillDir, 'SKILL.md');
     let frontmatter: Frontmatter = {};
+    let body = '';
     try {
       const md = await readFile(skillMdPath, 'utf8');
-      frontmatter = matter(md).data as Frontmatter;
+      const parsed = matter(md);
+      frontmatter = parsed.data as Frontmatter;
+      body = parsed.content.trim();
     } catch {
       continue; // not a skill dir
     }
@@ -167,6 +176,7 @@ export async function loadSkills(skillsRoot: string, only?: string[]): Promise<L
       tools,
       hasContext: skillHasContext,
       welcomeGroups: parseWelcomeGroups(frontmatter.welcome),
+      body,
     });
   }
   return result;

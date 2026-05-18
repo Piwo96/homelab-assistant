@@ -313,9 +313,17 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   const hasTools = Object.keys(tools).length > 0;
   log.info('tools_built', { count: Object.keys(tools).length, names: Object.keys(tools).slice(0, 5) });
 
-  // Fetch context blocks for routed skills (only those with hasContext=true).
+  // Build context blocks for routed skills:
+  //   1. Skill body — the SKILL.md markdown (Goal / Wohnungs-Struktur /
+  //      Commands / Edge Cases). Static single source of truth, same
+  //      pattern Claude Code & Codex use to load skills as instructions.
+  //   2. Dynamic context — for skills with a `context` subcommand
+  //      (smart-home exposes the live HA entity catalogue here).
   const contextBlocks: string[] = [];
   for (const s of selectedSkills) {
+    if (s.body) {
+      contextBlocks.push(`# Skill-Doku (${s.id})\n\n${s.body}`);
+    }
     if (s.hasContext) {
       const md = await deps.contextCache.get(s.id);
       if (md) contextBlocks.push(md);

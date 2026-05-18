@@ -12,6 +12,7 @@ function skill(id: string, welcomeGroups: LoadedSkill['welcomeGroups']): LoadedS
     tools: [],
     hasContext: false,
     welcomeGroups,
+    body: '',
   };
 }
 
