@@ -40,6 +40,19 @@ export function defineSkillTool(skillTool: SkillTool, opts: DefineOptions = {}):
         opts.positionalArgs ?? [],
       );
       if (!result.success) {
+        // If the script emitted a structured {ok:false, error, ...} on stdout
+        // (Python main() returns exit 1 when result.ok is False, so the
+        // *informative* JSON arrives via stdout — error message, candidates,
+        // match_kind), forward THAT to the model. Falling back to a generic
+        // stderr-derived summary loses every actionable field.
+        if (result.data && typeof result.data === 'object' && 'ok' in result.data) {
+          log.warn('skill_tool_structured_failure', {
+            tool: skillTool.name,
+            exitCode: result.exitCode,
+            error: (result.data as { error?: unknown }).error,
+          });
+          return result.data;
+        }
         const summary = extractErrorSummary(result.stderr, result.timedOut);
         log.warn('skill_tool_failed', { tool: skillTool.name, exitCode: result.exitCode, summary, stderr: result.stderr });
         // Return as a structured tool result instead of throwing. The AI SDK

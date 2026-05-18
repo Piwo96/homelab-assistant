@@ -72,9 +72,10 @@ export async function runSkillCommand(
   if (timedOut) {
     return { success: false, stdout, stderr, exitCode: -1, timedOut: true };
   }
-  if (exitCode !== 0) {
-    return { success: false, stdout, stderr, exitCode };
-  }
+  // Parse stdout regardless of exit code. Skill scripts (e.g. smart_home_api.py)
+  // return exit 1 by design when their result is {ok:false}, even though the
+  // structured JSON on stdout is fully informative (error message, candidates,
+  // match_kind). Discarding stdout in that case loses the only useful signal.
   let data: unknown = undefined;
   if (stdout.trim()) {
     try {
@@ -82,6 +83,9 @@ export async function runSkillCommand(
     } catch {
       data = stdout;
     }
+  }
+  if (exitCode !== 0) {
+    return { success: false, data, stdout, stderr, exitCode };
   }
   return { success: true, data, stdout, stderr, exitCode };
 }
