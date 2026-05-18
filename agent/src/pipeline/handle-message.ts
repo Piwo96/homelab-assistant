@@ -16,9 +16,10 @@ export interface GenerateInput {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   tools: Record<string, Tool>;
   reasoningEffort: 'low' | 'high';
-  /** When 'required', the LLM MUST emit a tool call. Used to retry after a
+  /** When 'required', the LLM MUST emit any tool call. Object form pins it
+   *  to a specific tool — used to force the right action after a
    *  hallucinated action-claim with empty toolCalls. */
-  toolChoice?: 'auto' | 'required';
+  toolChoice?: 'auto' | 'required' | { type: 'tool'; toolName: string };
 }
 
 export interface GenerateOutput {
@@ -107,12 +108,36 @@ function replyClaimsAction(text: string): boolean {
   return ACTION_CLAIM_PATTERNS.some(re => re.test(t));
 }
 
+/** Guess which smart-home write-tool the user wants from their message text.
+ *  Used to pin toolChoice when force-retrying after a hallucination — without
+ *  this, Gemma 4B under toolChoice='required' often picks any tool (e.g. asked
+ *  to turn lights OFF, retried with lights-on, lamp ends up wrongly on). */
+function inferTargetTool(userText: string): string | null {
+  const t = userText.toLowerCase();
+  if (/\baus\b|\bausmachen\b|\bausschalt|\bschalt\w*\s+aus\b|\bmach\w*\s+aus\b|\bweg\b/i.test(t)) {
+    return 'smart_home__lights-off';
+  }
+  if (/\ban\b|\banmachen\b|\beinschalt|\bschalt\w*\s+(ein|an)\b|\bmach\w*\s+an\b/i.test(t)) {
+    return 'smart_home__lights-on';
+  }
+  if (/\bdimm|\bauf\s+\d+\s*%|\bhelligkeit\b/i.test(t)) {
+    return 'smart_home__lights-set';
+  }
+  if (/\brollo\w*\s+hoch|\boff(ne|en)\b|\bauf(\s+ganz)?\s*(machen)?\b/i.test(t)) {
+    return 'smart_home__rollos-open';
+  }
+  if (/\brollo\w*\s+runter|\bzu(\s+ganz)?\s*(machen)?\b|\bschlie(ß|ss)/i.test(t)) {
+    return 'smart_home__rollos-close';
+  }
+  return null;
+}
+
 /** Map smart-home write-tool names to a German past-participle verb so we can
  *  synthesise an honest confirmation when the model emitted a successful tool
- *  call but no text. ESCAPE-HATCH gerät-* tools and the szenen-/bereich-/etage-
- *  macros are covered too. Returns null for read tools (lights-status etc.)
- *  where a generic "geschaltet" would be misleading. */
-function writeToolVerb(toolName: string): string | null {
+ *  call but no text. lights-set is brightness-aware (0=aus, 100=voll an,
+ *  sonst "auf X% gedimmt"). Returns null for read tools where a generic
+ *  "geschaltet" would be misleading. */
+function writeToolVerb(toolName: string, args: unknown): string | null {
   const cmd = toolName.split('__')[1] ?? toolName;
   switch (cmd) {
     case 'lights-on':
@@ -121,8 +146,13 @@ function writeToolVerb(toolName: string): string | null {
     case 'lights-off':
     case 'gerät-aus':
       return 'ausgeschaltet';
-    case 'lights-set':
+    case 'lights-set': {
+      const b = (args as { brightness?: unknown } | null)?.brightness;
+      if (b === 0) return 'ausgeschaltet';
+      if (b === 100) return 'voll eingeschaltet';
+      if (typeof b === 'number') return `auf ${b}% gedimmt`;
       return 'gedimmt';
+    }
     case 'rollos-open':
       return 'hochgefahren';
     case 'rollos-close':
@@ -144,16 +174,19 @@ function writeToolVerb(toolName: string): string | null {
 }
 
 /** When the model produced no text but at least one write-tool call returned
- *  ok:true, synthesise a short German confirmation from the tool results.
- *  Returns null if no write-success is in the trace, so the caller can fall
- *  back to a status-flavoured apology message. */
+ *  ok:true, synthesise a short German confirmation from the tool calls+results.
+ *  Args are needed for verb selection (e.g. lights-set with brightness=0). */
 function synthesizeWriteConfirmation(
+  toolCalls: Array<{ toolName: string; args: unknown }>,
   toolResults: Array<{ toolName: string; result: unknown }>,
 ): string | null {
+  // Walk in reverse so the LAST successful write wins (multi-step traces
+  // sometimes contain a failed status probe before the actual action).
   for (let i = toolResults.length - 1; i >= 0; i--) {
     const tr = toolResults[i];
     if (!tr) continue;
-    const verb = writeToolVerb(tr.toolName);
+    const matchingCall = toolCalls[i] ?? toolCalls.find(c => c.toolName === tr.toolName);
+    const verb = writeToolVerb(tr.toolName, matchingCall?.args);
     if (!verb) continue;
     const r = tr.result as Record<string, unknown> | null;
     if (!r || r.ok === false) continue;
@@ -440,9 +473,20 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   // the action-claim + empty toolCalls combo and retry ONCE with
   // tool_choice='required' so the model must pick a tool.
   if (hasTools && out.toolCalls.length === 0 && replyClaimsAction(out.text)) {
+    // Pin the retry to the specific tool the user asked for if we can
+    // infer it. Brutally forcing toolChoice='required' alone lets Gemma 4B
+    // pick the wrong action (asked "aus", retried with lights-on → light
+    // ends up on briefly). Falls back to plain 'required' when intent
+    // is ambiguous, so the model still must call SOMETHING.
+    const targetTool = inferTargetTool(update.text);
+    const retryToolChoice: 'required' | { type: 'tool'; toolName: string } =
+      targetTool && targetTool in tools
+        ? { type: 'tool', toolName: targetTool }
+        : 'required';
     log.warn('llm_action_claim_no_tool', {
       reply: out.text.slice(0, 120),
       retrying: true,
+      targetTool: typeof retryToolChoice === 'object' ? retryToolChoice.toolName : retryToolChoice,
     });
     const tRetry = Date.now();
     const forced = await deps.generate({
@@ -450,7 +494,7 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
       messages: history,
       tools,
       reasoningEffort: 'low',
-      toolChoice: 'required',
+      toolChoice: retryToolChoice,
     });
     log.info('llm_call_forced_retry_done', {
       ms: Date.now() - tRetry,
@@ -510,7 +554,7 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
     // zusammenfassen"-Apologie. Wichtig nach dem force-retry-Pfad, der oft mit
     // finishReason=tool-calls aufhört: der echte Schalt-Vorgang ist passiert,
     // wir müssen es nur dem User sagen.
-    reply = synthesizeWriteConfirmation(out.toolResults)
+    reply = synthesizeWriteConfirmation(out.toolCalls, out.toolResults)
       ?? '🤔 Ich hab die Daten geholt aber konnte sie nicht zusammenfassen. Frag bitte spezifischer (z.B. "welche Lichter sind an?" statt "was ist alles an?").';
   } else {
     reply = '🤔 Ich habe keine Antwort generiert. Bitte nochmal versuchen oder konkreter formulieren.';
