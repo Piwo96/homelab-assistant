@@ -110,4 +110,34 @@ describe('extractActualReply', () => {
     const out = extractActualReply(leaked);
     expect(out).toBe('Im OG ist gerade alles aus.');
   });
+
+  it('recovers /start greeting from a structured-bullet + self-correction leak', () => {
+    // Golden case from another real screenshot: the model emitted bullet
+    // fields ("• Persona:", "• Goal:", "• Constraints:") plus a wrapped
+    // *(Self-Correction/Check: ...)* block whose closing `)*` sits on the
+    // same line as the actual greeting ("Ja.)*Hallo Philipp!..."). Both
+    // shapes must be scrubbed.
+    const leaked = [
+      '• Persona: Rolly, Homelab-Assistent im Haushalt von Philipp.',
+      '• Recipient: Philipp (muss immer so angesprochen werden).',
+      '• Context: Frisch gestarteter Chat (/start).',
+      '• Goal: Begrüßen, mich vorstellen (Rolly), kurz und locker bleiben.',
+      '• Constraints: Keine Bullet Points, keine langen Featurelistenkataloge.',
+      '',
+      '*(Self-Correction/Check: Habe ich Philipp direkt angesprochen? Ja. Bin ich locker und kurz geblieben? Ja.)*Hallo Philipp! Schön, dich wieder im Chat zu sehen 😊 Ich bin Rolly, dein Homelab-Assistent.',
+    ].join('\n');
+    const out = extractActualReply(leaked);
+    expect(out).not.toBeNull();
+    expect(out!).toContain('Hallo Philipp');
+    expect(out!).toContain('Rolly');
+    expect(out!).not.toContain('Persona:');
+    expect(out!).not.toContain('Self-Correction');
+    expect(out!).not.toContain(')*');
+  });
+
+  it('strips inline *(Self-Correction)* even without surrounding context', () => {
+    const leaked = '*(Self-Correction: Habe ich alles? Ja.)* Im OG sind alle Lichter aus.';
+    const out = extractActualReply(leaked);
+    expect(out).toBe('Im OG sind alle Lichter aus.');
+  });
 });

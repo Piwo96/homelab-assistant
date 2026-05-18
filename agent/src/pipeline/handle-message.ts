@@ -60,7 +60,22 @@ const REASONING_LINE_MARKERS: RegExp[] = [
   /^\s*Die\s+Antwort\s+muss\b/i,
   /^\s*Daher\s+(kann|muss|sollte|wird)\b/i,
   /\bGemäß\s+Regel\b/i,
+  // Structured-reasoning bullets Gemma emits before /start replies:
+  //   "• Persona: ...", "• Goal: ...", "• Constraints: ..."
+  /^\s*[•\-*]\s*(Persona|Recipient|Context|Goal|Constraints|Output|Format|Task|Role|Style|Tone|Audience|Scope|Final[\s-]+output)\s*:/i,
+  // Self-correction wrapper. When the closing `)*` is on the SAME line as the
+  // user-facing answer (Gemma often writes "Ja.)*Hallo Philipp!"), Strategy 1
+  // in extractActualReply splits mid-line. This line marker only catches the
+  // multi-line shape.
+  /^\s*\*?\s*\(\s*Self-Correction/i,
+  /^\s*\*?\s*\(\s*Check\b.*:/i,
 ];
+
+/** Matches the wrapped self-correction / final-check block Gemma sometimes
+ *  emits inline: `*(Self-Correction/Check: ...)*`. The actual answer follows
+ *  the closing `)*` — possibly on the same line, so we can't rely on
+ *  newline-splitting. Greedy across newlines so a multi-line block is captured. */
+const WRAPPED_REASONING_BLOCK = /\*\(\s*(?:Self-Correction|Check|Final[\s-]+Check|Self[\s-]+Check)[\s\S]*?\)\*+/i;
 
 /** Detects when the LLM's "final reply" is actually leaked chain-of-thought
  *  — e.g. Gemma narrating "Gemäß Regel F..." or "Tool-Aufruf: ..." instead
@@ -84,15 +99,27 @@ function looksLikeLeakedReasoning(text: string): boolean {
   return jsonMarkers.some(re => re.test(t));
 }
 
-/** When the model writes a reasoning monologue AND then the actual answer
- *  (observed pattern: "Die Anfrage ist... Plan: ... \n Mir geht es gut..."),
- *  scrub the reasoning and surface just the trailing user-facing text.
+/** When the model writes a reasoning monologue AND then the actual answer,
+ *  scrub the reasoning and surface just the user-facing text.
  *
- *  Strategy: walk lines from the END until we hit a reasoning marker; the
- *  collected suffix is the actual reply. Returns null if no clean tail
- *  exists (entire text is reasoning, or trailing portion is empty). */
+ *  Two observed shapes:
+ *    A) Multi-line: "Die Anfrage ist... Plan: ... \n Mir geht es gut..."
+ *    B) Inline wrapper: "*(Self-Correction: ...Ja.)*Hallo Philipp! Schön..."
+ *       — the closing `)*` sits on the same line as the answer, so we can't
+ *       just split on newlines.
+ *
+ *  Strategy: first remove any wrapped `*(Self-Correction...)*` blocks (B);
+ *  then walk lines from the END until we hit a reasoning-marker line (A).
+ *  The collected suffix is the actual reply. Returns null if nothing clean
+ *  remains (entire text was reasoning, or trailing portion is too short). */
 export function extractActualReply(text: string): string | null {
-  const lines = text.split(/\n/);
+  // Strategy 1: strip wrapped self-correction blocks so the answer that
+  // immediately follows the closing `)*` is recoverable. Apply globally in
+  // case the model emits more than one block.
+  const stripped = text.replace(new RegExp(WRAPPED_REASONING_BLOCK.source, 'gi'), '\n');
+
+  // Strategy 2: walk lines from the end, break at first reasoning marker.
+  const lines = stripped.split(/\n/);
   const tail: string[] = [];
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] ?? '';
@@ -167,7 +194,20 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
       reasoningEffort: 'low',
     });
     log.info('welcome_generated', { ms: Date.now() - tGen, textLen: out.text.length });
-    const reply = out.text.trim() || 'Hallo, ich bin Rolly. Sag mir was du brauchst.';
+    const rawText = out.text.trim();
+    let reply: string;
+    if (rawText && looksLikeLeakedReasoning(rawText)) {
+      // Welcome path leaks have a different shape (structured bullets +
+      // *(Self-Correction)* wrapper) than the main pipeline's tool-call
+      // leaks, but extractActualReply handles both — the actual greeting
+      // sits after the reasoning prefix. Falls back to a static welcome
+      // if scrubbing leaves nothing usable.
+      const cleaned = extractActualReply(rawText);
+      log.warn('welcome_reasoning_leaked', { from: rawText.length, to: cleaned?.length ?? 0 });
+      reply = cleaned ?? 'Hallo, ich bin Rolly. Sag mir was du brauchst.';
+    } else {
+      reply = rawText || 'Hallo, ich bin Rolly. Sag mir was du brauchst.';
+    }
     // Persist just the welcome so the next turn has a single anchor message
     // showing the assistant just greeted.
     appendMessage(deps.db, {
