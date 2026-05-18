@@ -70,53 +70,17 @@ const lastStartByChat = new Map<number, number>();
  *  the placeholder instead of editing it with empty text. */
 export const SUPPRESS_REPLY = '';
 
-/** Compact one-liner summary of a tool result so the LLM can read it back
- *  in next turn's history. Surfaces the fields that matter for follow-up
- *  questions: scope label, affected count + ids for writes; count + state
- *  summary for reads. Falls back to "OK"/"Fehler" when shape is unknown. */
-function summarizeToolResult(result: unknown): string {
-  if (!result || typeof result !== 'object') return 'OK';
-  const r = result as Record<string, unknown>;
-  if (r.ok === false) {
-    const err = typeof r.error === 'string' ? r.error : 'fehlgeschlagen';
-    return `Fehler: ${err}`;
-  }
-  const affected = r.entities_affected;
-  if (Array.isArray(affected)) {
-    const ids = affected.slice(0, 8).map(String);
-    const more = affected.length > 8 ? ` (+${affected.length - 8} weitere)` : '';
-    return `${affected.length} Entit${affected.length === 1 ? 'y' : 'ies'} betroffen: ${ids.join(', ')}${more}`;
-  }
-  for (const key of ['lights', 'rollos', 'klimas'] as const) {
-    if (Array.isArray(r[key])) {
-      const list = r[key] as Array<{ entity_id?: unknown; state?: unknown }>;
-      const ids = list.slice(0, 8)
-        .map(it => typeof it.entity_id === 'string' ? it.entity_id : '?')
-        .join(', ');
-      const more = list.length > 8 ? ` (+${list.length - 8} weitere)` : '';
-      return `${list.length} ${key}: ${ids}${more}`;
-    }
-  }
-  return 'OK';
-}
-
-/** Format the tool-call/result trace from a single turn into a compact
- *  block we append to the persisted assistant message (NOT shown to the
- *  user via Telegram — they already got the reply text). The LLM reads
- *  this back in subsequent turns and can ground "welche waren das?",
- *  "wieder die gleichen", etc. on the actual scope it used last time. */
-function formatToolTrace(
-  calls: Array<{ toolName: string; args: unknown }>,
-  results: Array<{ toolName: string; result: unknown }>,
-): string | null {
-  if (calls.length === 0) return null;
-  const lines = calls.map((tc, i) => {
-    const argsStr = JSON.stringify(tc.args ?? {});
-    const matching = results[i];
-    const resultStr = matching ? summarizeToolResult(matching.result) : 'kein Result';
-    return `  • ${tc.toolName}(${argsStr}) → ${resultStr}`;
-  });
-  return `[Tool-Aufrufe in diesem Turn:\n${lines.join('\n')}]`;
+/** Strip any "[Tool-Aufrufe in diesem Turn: ...]" block from an assistant
+ *  message before feeding it back to the LLM. An earlier version baked
+ *  these traces into the persisted reply text to ground follow-ups; the
+ *  4B model promptly started imitating the format AND even hallucinated
+ *  trace blocks for tool calls it never actually issued (user thought
+ *  the light was on, it wasn't). Old DB rows still contain those
+ *  blocks — sanitize on read so the model can't see the pattern. */
+function stripToolTrace(text: string): string {
+  const i = text.indexOf('[Tool-Aufrufe in diesem Turn:');
+  if (i < 0) return text;
+  return text.slice(0, i).trimEnd();
 }
 
 /** Per-line patterns that mark a reasoning monologue (not user-facing text).
@@ -286,7 +250,16 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
 
   const history = recentMessages(deps.db, update.chatId, HISTORY_LIMIT)
     .filter(m => m.role !== 'tool')
-    .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content.text ?? '' }))
+    .map(m => ({
+      role: m.role as 'user' | 'assistant',
+      // Strip any legacy "[Tool-Aufrufe in diesem Turn:...]" annotations the
+      // pipeline used to bake into assistant.content. Their presence in
+      // recent history teaches the 4B model to imitate (and hallucinate)
+      // them in its own replies.
+      content: m.role === 'assistant'
+        ? stripToolTrace(m.content.text ?? '')
+        : (m.content.text ?? ''),
+    }))
     .filter(m => m.content.length > 0);
 
   // Pre-flight: if LM Studio is unreachable and we have WoL wired up, wake the
@@ -408,18 +381,18 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   }
   log.info('pipeline_done', { totalMs: Date.now() - t0, replyLen: reply.length });
 
-  // Persist the assistant turn. The text the USER sees is `reply`; what we
-  // store includes a compact tool-trace block underneath so the LLM has
-  // scope-grounding in future turns. The block is invisible to the user
-  // (Telegram already received the bare reply) and only flows through
-  // recentMessages() → next prompt.
-  const trace = formatToolTrace(out.toolCalls, out.toolResults);
-  const storedText = trace ? `${reply}\n\n${trace}` : reply;
+  // Persist just the user-visible reply. A previous version baked a
+  // "[Tool-Aufrufe in diesem Turn: ...]" trace alongside it to give the
+  // LLM scope-grounding in follow-up turns; the model promptly started
+  // imitating that block in its own replies, so the trace leaked into
+  // Telegram. If we need tool-context grounding again, it must be
+  // injected into the SYSTEM prompt — never into the assistant text
+  // the model sees in history (it will be copied).
   const primaryIntent = selectedSkills[0]?.id;
   appendMessage(deps.db, {
     chatId: update.chatId,
     role: 'assistant',
-    content: { text: storedText },
+    content: { text: reply },
     ...(primaryIntent !== undefined ? { intent: primaryIntent } : {}),
     success: true,
     ts: ts + 1,

@@ -85,41 +85,55 @@ def _is_wildcard_where(where: str | None) -> bool:
     return where is None or _norm(where) in _WILDCARD_WHERE
 
 
-# Multi-floor concepts: User words that span multiple HA-Areas or floors.
-# When the user says "Treppenhauslichter", they mean every stair-related
-# light in the house, not the single HA-Area "Treppenhaus" in KG. Each entry
-# maps a normalized user word to a list of substrings; if ANY substring is
-# found in an entity's local id (light.kg_treppe_x → "kg_treppe_x"), the
-# entity is included.
+# Cross-floor concept aliases. User words that span multiple HA-Areas or
+# floors and need explicit semantics. Each entry has:
+#   include: substrings that, if found in an entity's local id, MAY match
+#   exclude: substrings that, if found, ALWAYS disqualify the entity
 #
-# Kept narrow on purpose — only words for which the area/floor split is
-# genuinely ambiguous in the user's mental model. Don't add aliases that
-# legitimately resolve to a single area or floor.
-_CONCEPT_ALIASES: dict[str, list[str]] = {
-    "treppenhaus": ["treppe", "treppenbel"],
-    "treppenhauslichter": ["treppe", "treppenbel"],
-    "treppenlichter": ["treppe", "treppenbel"],
-    "treppenbeleuchtung": ["treppe", "treppenbel"],
-    "treppe": ["treppe", "treppenbel"],
-    "treppen": ["treppe", "treppenbel"],
+# Specific user intent (from Philipp, 2026-05-18):
+#   - "Treppenhaus" generisch  → only the main stairwell ceiling light
+#     (light.eg_og_treppenbel, light.dg_treppenhausleuchte), NOT the
+#     Keller-Treppen-Stufenlicht and NOT the Treppenstufenbeleuchtung.
+#   - "Keller-Treppe"          → must be referenced explicitly with KG/
+#     Keller — handled via the normal floor alias path (kg + Treppe area),
+#     not via this table.
+#   - "Treppenstufen"          → only the dedicated Stufenbeleuchtung
+#     entity, never the broader stairwell lights.
+_CONCEPT_ALIASES: dict[str, dict[str, list[str]]] = {
+    # Generic "Treppenhaus" — the singular ceiling lamp(s), excluding the
+    # KG stair-step light and the dedicated Treppenstufenbeleuchtung.
+    "treppenhaus":           {"include": ["treppenhaus", "treppenbel"], "exclude": ["stufen", "kg_treppe"]},
+    "treppenhausbeleuchtung":{"include": ["treppenhaus", "treppenbel"], "exclude": ["stufen", "kg_treppe"]},
+    "treppenhauslichter":    {"include": ["treppenhaus", "treppenbel"], "exclude": ["stufen", "kg_treppe"]},
+    "treppenhauslicht":      {"include": ["treppenhaus", "treppenbel"], "exclude": ["stufen", "kg_treppe"]},
+    # Explicit Treppenstufen — only the stair-step light entity.
+    "treppenstufen":           {"include": ["treppenstufen", "stufenbel"], "exclude": []},
+    "treppenstufenbeleuchtung":{"include": ["treppenstufen", "stufenbel"], "exclude": []},
+    "stufenbeleuchtung":       {"include": ["treppenstufen", "stufenbel"], "exclude": []},
 }
 
 
 def _concept_match(needle: str, states: list[dict], domain: str) -> list[str] | None:
     """If the user word is a known cross-floor concept, return every domain
-    entity whose local id contains one of the registered stems. Otherwise
-    None so resolve_where falls through to its strict-match logic."""
-    stems = _CONCEPT_ALIASES.get(needle)
-    if not stems:
+    entity whose local id contains one of the include-stems AND none of the
+    exclude-stems. Otherwise None so resolve_where falls through to its
+    strict-match logic."""
+    spec = _CONCEPT_ALIASES.get(needle)
+    if not spec:
         return None
+    include = spec.get("include") or []
+    exclude = spec.get("exclude") or []
     out: list[str] = []
     for s in states:
         eid = s["entity_id"]
         if not eid.startswith(f"{domain}."):
             continue
         local = eid.split(".", 1)[1].lower()
-        if any(stem in local for stem in stems):
-            out.append(eid)
+        if not any(stem in local for stem in include):
+            continue
+        if any(stem in local for stem in exclude):
+            continue
+        out.append(eid)
     return out or None
 
 
