@@ -18,9 +18,7 @@ export function buildGenerator(cfg: LmStudioConfig) {
       system: input.system,
       messages: input.messages.map(m => ({ role: m.role, content: m.content })),
       tools: input.tools,
-      toolChoice: Object.keys(input.tools).length > 0
-        ? (input.toolChoice ?? 'auto')
-        : 'none',
+      toolChoice: Object.keys(input.tools).length > 0 ? 'auto' : 'none',
       maxSteps: MAX_STEPS,
       maxTokens: MAX_OUTPUT_TOKENS,
       experimental_providerMetadata: {

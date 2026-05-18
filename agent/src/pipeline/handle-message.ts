@@ -16,9 +16,6 @@ export interface GenerateInput {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   tools: Record<string, Tool>;
   reasoningEffort: 'low' | 'high';
-  /** When 'required', the LLM MUST emit a tool call. Used to retry after a
-   *  hallucinated action-claim with empty toolCalls. */
-  toolChoice?: 'auto' | 'required';
 }
 
 export interface GenerateOutput {
@@ -85,26 +82,6 @@ function stripToolTrace(text: string): string {
   const i = text.indexOf('[Tool-Aufrufe in diesem Turn:');
   if (i < 0) return text;
   return text.slice(0, i).trimEnd();
-}
-
-/** German action-claim phrases the model uses to report successful smart-home
- *  changes ("Ich habe das Licht eingeschaltet."). When such a phrase shows up
- *  in the reply but the model didn't actually call any tool, it's a
- *  hallucination — we caught the 4B model doing this on follow-up "mach sie
- *  wieder aus" turns, claiming success on lights that stayed on in reality. */
-const ACTION_CLAIM_PATTERNS: RegExp[] = [
-  /\bIch\s+habe\b[^.]{0,80}\b(ein|aus|um)?(geschaltet|geschalten|gedimmt|aktiviert|deaktiviert|gestartet|gestoppt|gesetzt|hochgefahren|heruntergefahren|geöffnet|geschlossen)\b/i,
-  /\bIch\s+schalte\b/i,
-  /\bIch\s+stelle\s+[^.]{0,40}\s+auf\b/i,
-  /\bIch\s+(öffne|schließe|fahre|dimm)\b/i,
-  /\bDie\s+\w[^.]*\s+(ist|sind)\s+(nun|jetzt)\b/i,  // "Die Lichter sind nun aus."
-  /\b(wurde|wurden)\s+(eingeschaltet|ausgeschaltet|aktiviert|geöffnet|geschlossen|gedimmt|gesetzt)\b/i,
-];
-
-function replyClaimsAction(text: string): boolean {
-  const t = text.trim();
-  if (!t) return false;
-  return ACTION_CLAIM_PATTERNS.some(re => re.test(t));
 }
 
 /** Per-line patterns that mark a reasoning monologue (not user-facing text).
@@ -361,51 +338,13 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
 
   const tGen = Date.now();
   log.info('llm_call_start', { historyLen: history.length, hasTools });
-  let out = await deps.generate({
+  const out = await deps.generate({
     system,
     messages: history,
     tools,
     reasoningEffort: 'low',
   });
   log.info('llm_call_done', { ms: Date.now() - tGen, textLen: out.text.length, toolCallCount: out.toolCalls.length, finishReason: out.finishReason });
-
-  // Hallucination guard: 4B Gemma sometimes says "Ich habe X eingeschaltet"
-  // on follow-up turns ("die wieder aus") without actually emitting a tool
-  // call. The user trusts the bot, the light stays in the wrong state. Detect
-  // the action-claim + empty toolCalls combo and retry ONCE with
-  // tool_choice='required' so the model must pick a tool.
-  if (hasTools && out.toolCalls.length === 0 && replyClaimsAction(out.text)) {
-    log.warn('llm_action_claim_no_tool', {
-      reply: out.text.slice(0, 120),
-      retrying: true,
-    });
-    const tRetry = Date.now();
-    const forced = await deps.generate({
-      system,
-      messages: history,
-      tools,
-      reasoningEffort: 'low',
-      toolChoice: 'required',
-    });
-    log.info('llm_call_forced_retry_done', {
-      ms: Date.now() - tRetry,
-      textLen: forced.text.length,
-      toolCallCount: forced.toolCalls.length,
-      finishReason: forced.finishReason,
-    });
-    if (forced.toolCalls.length > 0) {
-      out = forced;
-    } else {
-      // Forced retry still produced no tool call — fail loudly to the user
-      // rather than relaying the original hallucination.
-      out = {
-        ...out,
-        text: '⚠️ Ich konnte die Aktion nicht ausführen — bitte nochmal mit konkreter Lampe oder Bereich (z.B. "EG Küche Spots 1 aus" oder "Küche aus").',
-        toolCalls: [],
-        toolResults: [],
-      };
-    }
-  }
 
   const trimmedText = out.text.trim();
   let reply: string;
