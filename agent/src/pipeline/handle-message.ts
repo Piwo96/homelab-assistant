@@ -47,6 +47,21 @@ export interface HandleDeps {
 
 const HISTORY_LIMIT = 20;
 
+/** Per-line patterns that mark a reasoning monologue (not user-facing text).
+ *  Anchored with `^` and used line-by-line so the same patterns can split a
+ *  reasoning prefix away from the actual answer the model wrote afterwards. */
+const REASONING_LINE_MARKERS: RegExp[] = [
+  /^\s*Plan:\s/i,                       // "Plan: ..."
+  /^\s*Schritt\s+\d+:/i,                // "Schritt 1: ..."
+  /^\s*Tool-Aufruf:\s/i,                // "Tool-Aufruf: ..."
+  /^\s*Argumente:\s/i,                  // "Argumente: ..."
+  /^\s*Ich\s+muss\b/i,                  // "Ich muss jetzt ..."
+  /^\s*Die\s+Anfrage\s+(ist|enthält|betrifft|passt|bezieht)\b/i,
+  /^\s*Die\s+Antwort\s+muss\b/i,
+  /^\s*Daher\s+(kann|muss|sollte|wird)\b/i,
+  /\bGemäß\s+Regel\b/i,
+];
+
 /** Detects when the LLM's "final reply" is actually leaked chain-of-thought
  *  — e.g. Gemma narrating "Gemäß Regel F..." or "Tool-Aufruf: ..." instead
  *  of issuing a proper tool call. The prompt is supposed to prevent this,
@@ -55,22 +70,40 @@ const HISTORY_LIMIT = 20;
 function looksLikeLeakedReasoning(text: string): boolean {
   const t = text.trim();
   if (t.length === 0) return false;
-  const markers: RegExp[] = [
-    /\bTool-Aufruf:\s/i,
-    /\bArgumente:\s/i,
-    /Gemäß Regel\b/i,
-    /^Ich muss\b/m,
-    /^Schritt \d+:/m,
-    // Gemma's function-calling sometimes flips into text-mode and writes the
-    // *intended* tool call as JSON instead of issuing a real function call.
-    // Three observed shapes — single tool_name, OpenAI-style tool_calls array,
-    // and bare function field with the smart-home_ prefix.
+  // Line-level reasoning markers (split on \n so anchors work).
+  for (const line of t.split(/\n/)) {
+    if (REASONING_LINE_MARKERS.some(re => re.test(line))) return true;
+  }
+  // JSON tool-call leak shapes (whole-text patterns, not per-line).
+  const jsonMarkers: RegExp[] = [
     /"tool_name"\s*:/i,
     /"tool_calls"\s*:\s*\[/i,
     /"function"\s*:\s*"smart-home_/i,
     /"parameters"\s*:\s*\{[^}]*"entity(?:_id)?"\s*:/i,
   ];
-  return markers.some(re => re.test(t));
+  return jsonMarkers.some(re => re.test(t));
+}
+
+/** When the model writes a reasoning monologue AND then the actual answer
+ *  (observed pattern: "Die Anfrage ist... Plan: ... \n Mir geht es gut..."),
+ *  scrub the reasoning and surface just the trailing user-facing text.
+ *
+ *  Strategy: walk lines from the END until we hit a reasoning marker; the
+ *  collected suffix is the actual reply. Returns null if no clean tail
+ *  exists (entire text is reasoning, or trailing portion is empty). */
+export function extractActualReply(text: string): string | null {
+  const lines = text.split(/\n/);
+  const tail: string[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? '';
+    if (REASONING_LINE_MARKERS.some(re => re.test(line))) break;
+    tail.unshift(line);
+  }
+  const result = tail.join('\n').trim();
+  // Sanity floor: a 1-word "Ja." after pages of reasoning probably isn't the
+  // real answer — likely a stray sentence the model wrote mid-reasoning. The
+  // 12-char threshold keeps "Mir geht es gut" (15 chars) and rejects "Ja."
+  return result.length >= 12 ? result : null;
 }
 
 export async function handleMessage(deps: HandleDeps, input: ParsedUpdate): Promise<string> {
@@ -242,13 +275,20 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
     const recovered = hasTools ? await recoverFromLeakedToolCall(trimmedText, deps.registry) : null;
     if (recovered) {
       reply = recovered.reply;
-    } else if (!hasTools) {
-      // Smalltalk mode: model leaked a phantom tool call but had no tools
-      // available anyway. Give a friendly, on-brand fallback instead of the
-      // generic "Gedanken ausgegeben" warning — the user just wanted to chat.
-      reply = 'Ich bin Rolly, dein Homelab-Assistent. Ich kann dir mit Smart Home (Lichter, Heizung, Rollos), Kameras, Netzwerk, VMs und Wake-on-LAN helfen — frag einfach.';
     } else {
-      reply = '⚠️ Das Modell hat statt einer Aktion seine Gedanken ausgegeben. Bitte versuch es nochmal, gerne spezifischer formuliert.';
+      // Prose-leak recovery: model wrote its reasoning AND then the actual
+      // answer. Strip the reasoning prefix and surface just the trailing
+      // user-facing text. Falls back to the friendly smalltalk message or
+      // a generic warning if no clean tail can be extracted.
+      const actualReply = extractActualReply(trimmedText);
+      if (actualReply) {
+        log.info('llm_reply_prose_leak_recovered', { from: trimmedText.length, to: actualReply.length });
+        reply = actualReply;
+      } else if (!hasTools) {
+        reply = 'Ich bin Rolly, dein Homelab-Assistent. Ich kann dir mit Smart Home (Lichter, Heizung, Rollos), Kameras, Netzwerk, VMs und Wake-on-LAN helfen — frag einfach.';
+      } else {
+        reply = '⚠️ Das Modell hat statt einer Aktion seine Gedanken ausgegeben. Bitte versuch es nochmal, gerne spezifischer formuliert.';
+      }
     }
   } else if (trimmedText) {
     reply = trimmedText;

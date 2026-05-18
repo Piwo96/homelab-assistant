@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { parseLeakedToolCall, formatRecoveredResult } from '../src/pipeline/leak-recovery';
+import { extractActualReply } from '../src/pipeline/handle-message';
 
 describe('parseLeakedToolCall', () => {
   it('extracts from {tool_name, parameters} shape with smart-home prefix', () => {
@@ -64,5 +65,49 @@ describe('formatRecoveredResult', () => {
       { ok: false, error: "Keine Lichter gefunden für 'foo'", match_kind: 'none' },
     );
     expect(reply).toContain("Keine Lichter gefunden für 'foo'");
+  });
+});
+
+describe('extractActualReply', () => {
+  it('recovers the trailing answer from a Gemma reasoning-prose leak', () => {
+    // Golden case from a real Telegram screenshot: model emitted three lines of
+    // reasoning ("Die Anfrage ist...", "Daher kann...", "Die Antwort muss...")
+    // plus a "Plan: ..." line, THEN the actual answer. The user saw all of it.
+    const leaked = [
+      'Die Anfrage ist eine allgemeine Begrüßung ("Wie geht es dir?") und betrifft keine Steuerung von Smart-Home-Geräten.',
+      'Daher kann kein Tool aufgerufen werden.',
+      'Die Antwort muss freundlich, aber sachlich im Rahmen der Rolle als Homelab-Assistent sein.',
+      '',
+      'Plan: Freundliche Rückmeldung geben und das Thema zurück zur Haussteuerung lenken.',
+      'Mir geht es gut, danke der Nachfrage. Ich bin bereit, dir bei deinen Smart-Home-Aufgaben zu helfen. Was kann ich für dich tun?',
+    ].join('\n');
+    const out = extractActualReply(leaked);
+    expect(out).not.toBeNull();
+    expect(out!).toContain('Mir geht es gut');
+    expect(out!).not.toContain('Plan:');
+    expect(out!).not.toContain('Die Anfrage');
+    expect(out!).not.toContain('Daher kann');
+  });
+
+  it('returns null when everything looks like reasoning (no clean tail)', () => {
+    const allReasoning = 'Plan: A.\nSchritt 1: B.\nIch muss C.';
+    expect(extractActualReply(allReasoning)).toBeNull();
+  });
+
+  it('returns null when the trailing tail is too short to be a real reply', () => {
+    // "Ja." after pages of reasoning is almost certainly a mid-thought
+    // utterance, not the user-facing answer.
+    expect(extractActualReply('Plan: schalten.\nJa.')).toBeNull();
+  });
+
+  it('passes through a clean reply unchanged (no markers anywhere)', () => {
+    const clean = 'Im Erdgeschoss sind momentan die Küche Spots 1 und Küche Spots 2 eingeschaltet.';
+    expect(extractActualReply(clean)).toBe(clean);
+  });
+
+  it('strips "Tool-Aufruf:" / "Argumente:" prefix and returns the actual text after', () => {
+    const leaked = 'Tool-Aufruf: lights-status\nArgumente: --where OG\nIm OG ist gerade alles aus.';
+    const out = extractActualReply(leaked);
+    expect(out).toBe('Im OG ist gerade alles aus.');
   });
 });
