@@ -338,7 +338,8 @@ def _cover_action(api: HomeAssistantAPI, where: str, confirm: bool,
     }
 
 
-def rollos_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
+def rollos_status(api: HomeAssistantAPI, where: str | None,
+                  state_filter: str | None = None) -> dict[str, Any]:
     wanted = None
     if where:
         target = resolve_where(api, where, "cover")
@@ -351,6 +352,16 @@ def rollos_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
             continue
         if wanted is not None and s["entity_id"] not in wanted:
             continue
+        if state_filter:
+            # HA reports cover state as open/closed/opening/closing. Treat
+            # transitional states as their target ("opening" counts as open).
+            st = s["state"]
+            is_open = st in ("open", "opening")
+            is_closed = st in ("closed", "closing")
+            if state_filter == "open" and not is_open:
+                continue
+            if state_filter == "closed" and not is_closed:
+                continue
         attrs = s["attributes"]
         items.append({
             "entity_id": s["entity_id"],
@@ -388,7 +399,8 @@ def klima_set(api: HomeAssistantAPI, where: str, target_temp: float, confirm: bo
     }
 
 
-def klima_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
+def klima_status(api: HomeAssistantAPI, where: str | None,
+                 state_filter: str | None = None) -> dict[str, Any]:
     wanted = None
     if where:
         target = resolve_where(api, where, "climate")
@@ -402,10 +414,24 @@ def klima_status(api: HomeAssistantAPI, where: str | None) -> dict[str, Any]:
         if wanted is not None and s["entity_id"] not in wanted:
             continue
         attrs = s["attributes"]
+        # HA reports two relevant fields:
+        #   state            = hvac_mode (off/heat/auto/...)
+        #   hvac_action attr = what the unit is doing right now (heating/idle/off)
+        # For "wo läuft die Heizung?" we filter on hvac_action; "off" matches
+        # either hvac_action=off or hvac_mode=off so a fully-off entity is hit.
+        if state_filter:
+            hvac_action = attrs.get("hvac_action")
+            if state_filter == "heating" and hvac_action != "heating":
+                continue
+            if state_filter == "idle" and hvac_action != "idle":
+                continue
+            if state_filter == "off" and not (hvac_action == "off" or s["state"] == "off"):
+                continue
         items.append({
             "entity_id": s["entity_id"],
             "friendly_name": attrs.get("friendly_name") or s["entity_id"],
             "state": s["state"],
+            "hvac_action": attrs.get("hvac_action"),
             "current_temperature": attrs.get("current_temperature"),
             "target_temperature": attrs.get("temperature"),
         })
@@ -639,10 +665,13 @@ def build_parser() -> argparse.ArgumentParser:
     rstat = sub.add_parser(
         "rollos-status",
         help=("Live-Status der Rollos abfragen (Position + Lamellen-Neigung). "
-              "Ohne --where: alle. Mit --where: nur Scope. Nutze für 'welche "
-              "Rollos sind offen?', 'wie weit ist das Rollo im X?'."),
+              "Ohne --where: alle. Mit --where: nur Scope. Optional --state "
+              "open/closed zum Filtern. Nutze für 'welche Rollos sind offen?', "
+              "'sind irgendwo Rollos offen?', 'wie weit ist das Rollo im X?'."),
     )
     rstat.add_argument("--where", help="optional Scope (Etage / Area / Group / Name)")
+    rstat.add_argument("--state", choices=["open", "closed"],
+                       help="optional Filter: nur 'open' oder 'closed' Rollos")
 
     # ----- Klima / Heizung -----
     kset = sub.add_parser(
@@ -658,10 +687,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     kstat = sub.add_parser(
         "klima-status",
-        help=("Live-Status der Heizung: aktuelle und Ziel-Temperatur. Nutze für "
-              "'wie warm ist es im X?', 'auf welche Temperatur ist Y eingestellt?'."),
+        help=("Live-Status der Heizung: aktuelle und Ziel-Temperatur plus "
+              "hvac_action (heating/idle/off). Ohne --where: alle. Optional "
+              "--state heating/idle/off filtert auf die hvac_action. Nutze für "
+              "'wie warm ist es im X?', 'wo läuft die Heizung gerade?', 'auf "
+              "welche Temperatur ist Y eingestellt?'."),
     )
     kstat.add_argument("--where", help="optional Scope")
+    kstat.add_argument("--state", choices=["heating", "idle", "off"],
+                       help="optional Filter: hvac_action heating/idle, oder komplett off")
 
     # ----- Szenen -----
     sact = sub.add_parser(
@@ -777,11 +811,11 @@ def main() -> int:
                 result = _cover_action(api, args.where, args.confirm,
                                        position=args.position, tilt=args.tilt)
         elif args.command == "rollos-status":
-            result = rollos_status(api, args.where)
+            result = rollos_status(api, args.where, args.state)
         elif args.command == "klima-set":
             result = klima_set(api, args.where, args.target, args.confirm)
         elif args.command == "klima-status":
-            result = klima_status(api, args.where)
+            result = klima_status(api, args.where, args.state)
         elif args.command == "szenen-aktivieren":
             result = szenen_aktivieren(api, args.name)
         elif args.command == "szenen-liste":

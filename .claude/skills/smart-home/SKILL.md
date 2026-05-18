@@ -1,6 +1,6 @@
 ---
 name: smart-home
-description: Smart Home in Philipp's Haushalt steuern — Lichter, Rollos/Jalousien, Heizung, Szenen pro Etage (KG/EG/OG/DG), Bereich oder Einzelgerät. Optimiert für deutsche Alltagskommandos ('alle OG-Lichter aus', 'Rollos im Schlafzimmer hoch', 'Lamellen auf 50%').
+description: Smart Home in Philipp's und Sophias' Haushalt steuern — Lichter, Rollos/Jalousien, Heizung, Szenen pro Etage (KG/EG/OG/DG), Bereich oder Einzelgerät. Optimiert für deutsche Alltagskommandos ('alle OG-Lichter aus', 'Rollos im Schlafzimmer hoch', 'Lamellen auf 50%').
 triggers:
   - licht
   - lampe
@@ -19,6 +19,9 @@ triggers:
   - erdgeschoss
   - keller
   - dachgeschoss
+requires:
+  - python3
+  - requests
 intent_hints:
   - Lichter ein/ausschalten in einem Bereich oder einer ganzen Etage
   - Rollos öffnen/schließen oder Position/Lamellen-Neigung setzen
@@ -72,7 +75,11 @@ smart_home_api.py lights-set --where "Büro" --brightness 50
 smart_home_api.py lights-status                    # alle Lichter
 smart_home_api.py lights-status --where "OG"       # nur OG
 smart_home_api.py lights-status --state on         # nur die die an sind
+smart_home_api.py rollos-status --state open       # nur offene Rollos (öffnend → zählt als offen)
+smart_home_api.py klima-status --state heating     # nur aktiv heizende Geräte
 ```
+
+> **Note**: `--state` is the counterweight to the write-cap. Without a filter, scope-less status queries on a 4B LLM tend to mis-trigger the write safety rule and refuse the call.
 
 ## Wohnungs-Struktur
 
@@ -90,7 +97,7 @@ Die `--where` Auflösung versucht in dieser Reihenfolge:
 3. **HA-Area** (Display-Name oder area_id)
 4. **Friendly-Name-Fragment** (case-insensitive Substring)
 
-## Commands (v1: Lichter)
+## Commands (v1: Lichter, Rollos, Klima)
 
 | Command | Args | Zweck |
 |---|---|---|
@@ -98,6 +105,8 @@ Die `--where` Auflösung versucht in dieser Reihenfolge:
 | `lights-off` | `--where <X>` | Lichter ausschalten |
 | `lights-set` | `--where <X> --brightness N` | Helligkeit setzen (0-100%) |
 | `lights-status` | `[--where <X>] [--state on\|off]` | Live-Status auflisten |
+| `rollos-status` | `[--where <X>] [--state open\|closed]` | Rollenstatus auflisten; `opening`→`open`, `closing`→`closed` |
+| `klima-status` | `[--where <X>] [--state heating\|idle\|off]` | Klimastatus auflisten; filtert auf `hvac_action`; `off` trifft auch `hvac_mode=off`; Response enthält `hvac_action` je Entity |
 
 ## Migrations-Backlog (aus homeassistant Skill zu übernehmen)
 
@@ -105,8 +114,8 @@ Stand Mai 2026: Lichter laufen via smart_home_api.py. Folgende Capabilities aus 
 
 | Bereich | Was übernehmen | Quelle |
 |---|---|---|
-| Rollos | `cover-open/close/set-position/set-tilt` mit `--where`-Auflösung + Lamellen-vs-Position-Vokabular | `homeassistant_api.py` (cover-* commands) |
-| Klima | `klima-set --target N --where X` mit set_cover_temperature | `homeassistant_api.py call-service climate.set_temperature` |
+| Rollos | `cover-open/close/set-position/set-tilt` mit `--where`-Auflösung + Lamellen-vs-Position-Vokabular (**`rollos-status --state` done**) | `homeassistant_api.py` (cover-* commands) |
+| Klima | `klima-set --target N --where X` mit set_cover_temperature (**`klima-status --state` + `hvac_action` done**) | `homeassistant_api.py call-service climate.set_temperature` |
 | Szenen | `szenen-aktivieren <name>`, `szenen-liste` mit Fuzzy-Match | `homeassistant_api.py activate-scene, list-scenes` |
 | Bereich-aus | `bereich-aus <area>` — alle lights/switches/covers in Area aus | neu, kombiniert |
 | Etage-aus | `etage-aus <floor>` — gleicher Pattern, Stockwerk-Scope | neu, kombiniert |

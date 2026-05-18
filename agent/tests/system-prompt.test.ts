@@ -105,6 +105,22 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('NIEMALS einzelne gerät-status-Calls');
   });
 
+  it('explicitly allows scope-less reads so "ist irgendwo X an?" works', () => {
+    // Regression: Gemma was applying the write safety-cap rule
+    // ("UNBESCHRÄNKTE Mehrzahl → Rückfrage") to a read like "ob irgendwelche
+    // Lichter an sind", refusing the call and hallucinating a technical
+    // error. The fix: the write rule explicitly excludes reads, and the
+    // status section lists positive scope-less examples for all domains.
+    const p = buildSystemPrompt({ skills: [{ id: 'x', description: 'y' }], hasTools: true, contextBlocks: [] });
+    // Status section names scope-less use across all three domains.
+    expect(p).toContain('OHNE --where');
+    expect(p).toContain('rollos-status');
+    expect(p).toContain('klima-status');
+    // Write rule must defang itself for reads.
+    expect(p).toMatch(/NUR für schreibende|nur für schreibende/);
+    expect(p).toContain('Status-');
+  });
+
   it('anchors the output format so the model does not leak its reasoning', () => {
     // Without this anchor the 4B model produced visible Chain-of-Thought
     // monologues ("Gemäß Regel F...", "Tool-Aufruf:") instead of a tool call
