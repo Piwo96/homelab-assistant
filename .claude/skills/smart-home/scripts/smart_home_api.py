@@ -654,19 +654,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     lon = sub.add_parser(
         "lights-on",
-        help=("Lichter EINSCHALTEN im angegebenen Scope. --where braucht "
-              "EXAKT einen Wert aus dem Catalogue: Etage-Alias ('OG', "
-              "'Erdgeschoss', 'DG'), HA-Area-Name ('Wohnzimmer', 'Büro', "
-              "'Felix'), exakter friendly_name ('EG Essen Tischleuchte'), "
-              "entity_id ('light.eg_essen_tischleuchte'), oder group-id "
-              "('group.og_lichter'). KEIN User-Slang ('Esstisch', "
-              "'Tischlampe') — das Tool macht KEINEN Fuzzy-Match."),
+        help=("Lichter EINSCHALTEN im angegebenen Scope. Scope ist eine Etage "
+              "('OG', 'EG', 'KG', 'DG', 'Außen'), eine HA-Area "
+              "('Wohnzimmer', 'Felix', 'Büro'), eine HA-Group entity_id, oder "
+              "ein Friendly-Name-Fragment ('Esstisch'). Nutze für 'Licht an', "
+              "'mach das Licht im X an', 'alle Lichter im OG einschalten'."),
     )
     lon.add_argument("--where", required=True,
-                     help=("EXAKTER Catalogue-Wert. Erlaubt: Etage-Alias, "
-                           "HA-Area-Name, friendly_name, entity_id, group-id. "
-                           "Beispiele: 'OG', 'Wohnzimmer', 'EG Essen Tischleuchte', "
-                           "'light.eg_essen_tischleuchte'. KEIN Slang."))
+                     help="Etage / Area / Group / Name-Fragment, z.B. 'OG', 'Wohnzimmer', 'Büro', 'Esstisch'")
     lon.add_argument("--brightness", type=int,
                      help="Helligkeit 0-100 (Prozent). Wenn ausgelassen: aktuelle/Default-Helligkeit.")
     lon.add_argument("--confirm", action="store_true",
@@ -675,23 +670,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     loff = sub.add_parser(
         "lights-off",
-        help=("Lichter AUSSCHALTEN im angegebenen Scope. --where braucht "
-              "EXAKT einen Catalogue-Wert wie bei lights-on (Etage / Area / "
-              "friendly_name / entity_id / group-id). KEIN Slang."),
+        help=("Lichter AUSSCHALTEN im angegebenen Scope. Scope wie bei lights-on. "
+              "Nutze für 'Licht aus', 'alle Lichter im EG aus', 'mach das Wohnzimmerlicht aus'."),
     )
     loff.add_argument("--where", required=True,
-                      help=("EXAKTER Catalogue-Wert. Beispiele: 'OG', 'Wohnzimmer', "
-                            "'EG Essen Tischleuchte', 'light.eg_essen_tischleuchte'."))
+                      help="Etage / Area / Group / Name-Fragment, z.B. 'OG', 'Esstisch', 'Wohnzimmer'")
     loff.add_argument("--confirm", action="store_true",
                       help="Sicherheits-Cap (>10 Treffer) übergehen — nur bei explizitem User-Wunsch setzen.")
     loff.set_defaults(_is_write=True)
 
     lset = sub.add_parser(
         "lights-set",
-        help=("Lichter EIN und auf eine bestimmte HELLIGKEIT setzen. --where "
-              "wie bei lights-on (EXAKTER Catalogue-Wert, kein Slang). Nutze "
-              "für 'dim das Wohnzimmer auf 30%', 'EG Essen Tischleuchte auf "
-              "50%', 'Wohnzimmer voll an' (brightness=100)."),
+        help=("Lichter EIN und auf eine bestimmte HELLIGKEIT setzen. Nutze für "
+              "'dim Esstischlicht auf 30%', 'Licht im Büro auf 50%', "
+              "'Wohnzimmer voll an' (brightness=100)."),
     )
     lset.add_argument("--where", required=True, help="Scope wie bei lights-on")
     lset.add_argument("--brightness", type=int, required=True, help="Helligkeit 0-100 (Prozent)")
