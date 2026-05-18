@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { buildSystemPrompt, buildWelcomePrompt } from '../src/pipeline/system-prompt';
+import { buildSystemPrompt } from '../src/pipeline/system-prompt';
 
 describe('buildSystemPrompt', () => {
   it('lists tool-bearing skills with their descriptions', () => {
@@ -132,19 +132,6 @@ describe('buildSystemPrompt', () => {
     // Labeled rules ("Regel A", "Regel F") invite the model to quote them
     // back. The new prompt must NOT use them.
     expect(p).not.toMatch(/Regel\s+[A-G]\b/);
-  });
-});
-
-describe('buildWelcomePrompt', () => {
-  it('uses the supplied firstName as greeting target', () => {
-    const p = buildWelcomePrompt({ firstName: 'Sophia' });
-    expect(p).toContain('Sophia');
-    expect(p).toContain('/start');
-  });
-
-  it('falls back gracefully when no firstName is known', () => {
-    const p = buildWelcomePrompt();
-    expect(p).toContain('unbekannt');
   });
 });
 

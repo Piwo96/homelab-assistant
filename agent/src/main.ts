@@ -7,7 +7,7 @@ import { loadSkills } from './skills/loader';
 import { SkillRegistry } from './skills/registry';
 import { isLmStudioReachable } from './llm/health';
 import { wakeGamingPc } from './wol/wake';
-import { sendText } from './telegram/send';
+import { sendText, setMyCommands } from './telegram/send';
 import { downloadTelegramFile } from './telegram/download';
 import { transcribeAudio } from './llm/transcribe';
 import { runSkillCommand } from './skills/executor';
@@ -97,6 +97,14 @@ async function main(): Promise<void> {
       );
     },
   };
+
+  // Register the slash-menu /commands. Idempotent (Telegram replaces the
+  // existing list on each call), so safe to run on every bootstrap.
+  // Best-effort: a transient Telegram-API blip shouldn't block startup.
+  setMyCommands(
+    { botToken: env.TELEGRAM_BOT_TOKEN },
+    [{ command: 'start', description: 'Rolly begrüßen und Beispiele anzeigen' }],
+  ).catch(err => log.warn('set_my_commands_failed', { err: String(err) }));
 
   startServer({ env, db, handleDeps });
 }

@@ -39,6 +39,27 @@ export async function editText(
   }
 }
 
+export interface BotCommand {
+  command: string;
+  description: string;
+}
+
+/**
+ * Register a list of /commands so Telegram shows them in the slash-menu and
+ * autocomplete. Idempotent — Telegram replaces the existing list on every
+ * call, so it's safe to run on every bot startup.
+ */
+export async function setMyCommands(opts: SendOptions, commands: BotCommand[]): Promise<void> {
+  const res = await fetch(`https://api.telegram.org/bot${opts.botToken}/setMyCommands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commands }),
+  });
+  if (!res.ok) {
+    throw new Error(`setMyCommands failed: ${res.status} ${await res.text()}`);
+  }
+}
+
 /**
  * Show "...is typing" in Telegram for ~5s. Best-effort: errors are swallowed
  * so a flaky network never aborts the surrounding pipeline.

@@ -3,7 +3,7 @@ import type { LlmRouter } from '../router/llm-router';
 import type { SkillContextCache } from '../skills/context-cache';
 import { SkillRegistry } from '../skills/registry';
 import { defineSkillTool, inferPositionals } from '../tools/define-skill-tool';
-import { buildSystemPrompt, buildWelcomePrompt } from './system-prompt';
+import { buildSystemPrompt } from './system-prompt';
 import { recoverFromLeakedToolCall } from './leak-recovery';
 import { appendMessage, clearHistory, recentMessages } from '../memory/history';
 import type { ParsedTextUpdate, ParsedUpdate, ParsedVoiceUpdate } from '../telegram/webhook';
@@ -46,6 +46,26 @@ export interface HandleDeps {
 }
 
 const HISTORY_LIMIT = 20;
+
+/** Static welcome shown on /start. No LLM round-trip — Gemma 4B on the welcome
+ *  prompt randomly leaked structured-reasoning bullets ("• Persona:", "• Goal:")
+ *  and a wrapped *(Self-Correction)*-block before the greeting; the first
+ *  interaction a new user sees must be reliable. List a few concrete examples
+ *  of what Rolly can do today so the user immediately knows how to phrase
+ *  their first command. */
+const STATIC_WELCOME = [
+  'Hi Rolly Mitglied ☺️',
+  '',
+  'Ich bin Rolly, dein Homelab-Assistent. Aktuell helfe ich dir beim Smart Home — sag einfach was du brauchst:',
+  '',
+  '• Lichter: „Wohnzimmer Licht an", „alle Lichter im OG aus", „dim das Büro auf 30%"',
+  '• Rollos & Jalousien: „Rollos im Schlafzimmer hoch", „Lamellen auf 50% neigen"',
+  '• Heizung: „Bad auf 22 Grad", „wie warm ist es im Wohnzimmer?"',
+  '• Szenen: „starte Filmmodus", „welche Szenen gibt es?"',
+  '• Status: „welche Lichter sind an?", „sind irgendwo Rollos offen?"',
+  '',
+  'Du kannst auch eine Sprachnachricht schicken — ich transkribiere und führe aus.',
+].join('\n');
 
 /** Per-line patterns that mark a reasoning monologue (not user-facing text).
  *  Anchored with `^` and used line-by-line so the same patterns can split a
@@ -179,35 +199,16 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   log.info('pipeline_start', { updateId: update.updateId, chatId: update.chatId, textLen: update.text.length });
   const ts = update.ts ?? Math.floor(Date.now() / 1000);
 
-  // /start: clear THIS chat's history (other chats untouched), then ask the
-  // LLM to generate a fresh welcome. No tools, no prior history fed in —
-  // the welcome is the first turn of the new conversation.
+  // /start: clear THIS chat's history (other chats untouched), then return
+  // a static welcome message. No LLM call — a 4B model on this prompt would
+  // randomly leak its reasoning bullets ("• Persona:", "• Goal:") and the
+  // welcome must be reliable. Keep the example list short and concrete so
+  // the user immediately knows what to ask.
   const trimmed = update.text.trim();
   if (trimmed === '/start' || trimmed.startsWith('/start ')) {
     const removed = clearHistory(deps.db, update.chatId);
     log.info('history_cleared', { chatId: update.chatId, removed });
-    const tGen = Date.now();
-    const out = await deps.generate({
-      system: buildWelcomePrompt(update.firstName !== undefined ? { firstName: update.firstName } : {}),
-      messages: [{ role: 'user', content: '/start' }],
-      tools: {},
-      reasoningEffort: 'low',
-    });
-    log.info('welcome_generated', { ms: Date.now() - tGen, textLen: out.text.length });
-    const rawText = out.text.trim();
-    let reply: string;
-    if (rawText && looksLikeLeakedReasoning(rawText)) {
-      // Welcome path leaks have a different shape (structured bullets +
-      // *(Self-Correction)* wrapper) than the main pipeline's tool-call
-      // leaks, but extractActualReply handles both — the actual greeting
-      // sits after the reasoning prefix. Falls back to a static welcome
-      // if scrubbing leaves nothing usable.
-      const cleaned = extractActualReply(rawText);
-      log.warn('welcome_reasoning_leaked', { from: rawText.length, to: cleaned?.length ?? 0 });
-      reply = cleaned ?? 'Hallo, ich bin Rolly. Sag mir was du brauchst.';
-    } else {
-      reply = rawText || 'Hallo, ich bin Rolly. Sag mir was du brauchst.';
-    }
+    const reply = STATIC_WELCOME;
     // Persist just the welcome so the next turn has a single anchor message
     // showing the assistant just greeted.
     appendMessage(deps.db, {
