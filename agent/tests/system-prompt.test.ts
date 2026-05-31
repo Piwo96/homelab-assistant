@@ -83,11 +83,15 @@ describe('buildSystemPrompt', () => {
     expect(p.toLowerCase()).toContain('keine aktuellen zustände');
   });
 
-  it('teaches the model which cover tool to use (height vs tilt)', () => {
-    const p = buildSystemPrompt({ skills: [{ id: 'homeassistant', description: 'Smart Home' }], hasTools: true, contextBlocks: [] });
-    // Prompt should point at the dedicated tools, NOT leak HA service names.
-    expect(p).toContain('cover-set-position');
-    expect(p).toContain('cover-set-tilt');
+  it('teaches the model which rollo tool to use (height vs tilt)', () => {
+    const p = buildSystemPrompt({ skills: [{ id: 'smart-home', description: 'Smart Home' }], hasTools: true, contextBlocks: [] });
+    // Prompt must point at the REAL smart_home_api.py command (rollos-set) and
+    // its two axes — NOT the non-existent cover-* names nor raw HA service names.
+    expect(p).toContain('rollos-set');
+    expect(p).toContain('--position');
+    expect(p).toContain('--tilt');
+    expect(p).not.toContain('cover-set-position');
+    expect(p).not.toContain('cover-set-tilt');
     expect(p).not.toMatch(/set_cover_tilt_position|set_cover_position/);
     // Vocabulary mapping for German user phrasing.
     expect(p.toLowerCase()).toContain('neigen');

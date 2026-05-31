@@ -119,7 +119,9 @@ Die `--where` Auflösung versucht in dieser Reihenfolge:
 3. **HA-Area** (Display-Name oder area_id)
 4. **Friendly-Name-Fragment** (case-insensitive Substring)
 
-## Commands (v1: Lichter, Rollos, Klima)
+## Commands
+
+**Lichter**
 
 | Command | Args | Zweck |
 |---|---|---|
@@ -127,30 +129,51 @@ Die `--where` Auflösung versucht in dieser Reihenfolge:
 | `lights-off` | `--where <X>` | Lichter ausschalten |
 | `lights-set` | `--where <X> --brightness N` | Helligkeit setzen (0-100%) |
 | `lights-status` | `[--where <X>] [--state on\|off]` | Live-Status auflisten |
+
+**Rollos / Jalousien** — zwei Achsen: `--position` (Höhe, 0=zu/unten … 100=auf/oben) und `--tilt` (Lamellen-Neigung, 0=zu … 100=offen)
+
+| Command | Args | Zweck |
+|---|---|---|
+| `rollos-open` | `--where <X>` | Rollo(s) ganz hochfahren/öffnen |
+| `rollos-close` | `--where <X>` | Rollo(s) ganz runterfahren/schließen |
+| `rollos-set` | `--where <X> [--position N] [--tilt N]` | Höhe und/oder Lamellen-Neigung setzen (beides in EINEM Call möglich) |
 | `rollos-status` | `[--where <X>] [--state open\|closed]` | Rollenstatus auflisten; `opening`→`open`, `closing`→`closed` |
+
+**Heizung / Klima**
+
+| Command | Args | Zweck |
+|---|---|---|
+| `klima-set` | `--where <X> --target N` | Zieltemperatur setzen |
 | `klima-status` | `[--where <X>] [--state heating\|idle\|off]` | Klimastatus auflisten; filtert auf `hvac_action`; `off` trifft auch `hvac_mode=off`; Response enthält `hvac_action` je Entity |
 
-## Migrations-Backlog (aus homeassistant Skill zu übernehmen)
+**Szenen**
 
-Stand Mai 2026: Lichter laufen via smart_home_api.py. Folgende Capabilities aus dem `homeassistant` Skill sind noch dort und sollten in dieses Skill wandern, da sie domain-spezifisch optimiert sind:
-
-| Bereich | Was übernehmen | Quelle |
+| Command | Args | Zweck |
 |---|---|---|
-| Rollos | `cover-open/close/set-position/set-tilt` mit `--where`-Auflösung + Lamellen-vs-Position-Vokabular (**`rollos-status --state` done**) | `homeassistant_api.py` (cover-* commands) |
-| Klima | `klima-set --target N --where X` mit set_cover_temperature (**`klima-status --state` + `hvac_action` done**) | `homeassistant_api.py call-service climate.set_temperature` |
-| Szenen | `szenen-aktivieren <name>`, `szenen-liste` mit Fuzzy-Match | `homeassistant_api.py activate-scene, list-scenes` |
-| Bereich-aus | `bereich-aus <area>` — alle lights/switches/covers in Area aus | neu, kombiniert |
-| Etage-aus | `etage-aus <floor>` — gleicher Pattern, Stockwerk-Scope | neu, kombiniert |
-| Haus-modus | `haus-modus <heim\|abwesend\|nacht\|aufstehen>` Macros | neu, ggf. via HA-Szenen |
-| Catalogue | `smart_home_catalogue.py` — Floor-grouped, mit Groups-Hint | `homeassistant_catalogue.py` (1:1 übernehmen oder Symlink) |
+| `szenen-aktivieren` | `--name <X>` | Szene per Fuzzy-Match aktivieren |
+| `szenen-liste` | — | Verfügbare Szenen auflisten |
 
-Der **gute Stoff aus `homeassistant`** der hier rein gehört:
-- Floor-Logik (kg/eg/og/dg/aussen Prefix-Mapping) — bereits in resolve_where()
-- Structured `{ok: true, ...}` Returns statt HA's leerem `[]` — bereits in v1
-- Entity-Validation vor service call — funktioniert weil wir HomeAssistantAPI.call_service() nutzen
-- Cover-Tilt-Vokabular im Prompt + dedizierte Tools für die zwei Achsen
+**Sammel- & Einzel-Aktionen**
 
-Der **rohe HA-Layer** bleibt im `homeassistant` Skill (entities, get-state, call-service als Fallback wenn smart-home noch keinen Befehl hat).
+| Command | Args | Zweck |
+|---|---|---|
+| `bereich-aus` | `--area <X>` | Alle Lichter/Steckdosen/Rollos in einer HA-Area aus |
+| `etage-aus` | `--floor <X>` | Gleiches für eine ganze Etage |
+| `gerät-an` / `gerät-aus` / `gerät-toggle` | `--entity <id>` | Eine einzelne Entity schalten (entity_id) |
+| `gerät-status` | `--entity <id>` | Live-Status einer einzelnen Entity |
+
+> Alle Schreib-Commands akzeptieren `--confirm`. `--where`/`--area`/`--floor`-Auflösung siehe oben; bei >10 Treffern bricht die Aktion zur Sicherheit ab.
+
+## Backlog (offen)
+
+Lichter, Rollos (Höhe + Lamellen), Klima, Szenen, `bereich-aus`/`etage-aus` und die `gerät-*`-Einzelbefehle sind **implementiert** (siehe Commands oben). Noch offen:
+
+| Idee | Skizze |
+|---|---|
+| Haus-Modus-Macros | `haus-modus <heim\|abwesend\|nacht\|aufstehen>` — ggf. nur dünne Wrapper um bestehende HA-Szenen |
+| HA-Gruppen | Falls `group.*`-Entities angelegt werden: in `resolve_where()` bevorzugen (ein Service-Call statt n) — aktuell existieren keine Gruppen |
+
+Der **rohe HA-Layer** bleibt im `homeassistant` Skill (entities, get-state, call-service als Fallback, wenn smart-home noch keinen passenden Befehl hat).
 
 ## Edge Cases
 
