@@ -111,6 +111,9 @@ wol_api.py ping                  # Einfacher Ping zum Gaming-PC
 | Timeout beim Warten | PC braucht länger als `WOL_TIMEOUT` | Timeout erhöhen oder PC manuell prüfen |
 | Netzwerk-Broadcast blockiert | Magic Packet erreicht PC nicht | Subnet-Broadcast statt 255.255.255.255 nutzen |
 | `ping -W` ist plattformabhängig | macOS BSD `ping` interpretiert `-W` als **Millisekunden**, Linux als **Sekunden** — `-W 2` auf macOS = 2 ms → Timeout sofort | `scripts/wol_api.py` branched auf `sys.platform == "darwin"` → `"2000"` ms, sonst `"2"` s |
+| `--json` vor Subcommand (argparse) | `wake` kannte `--json` nicht → argparse exit code 2, kein Packet gesendet | `--json` ist jetzt globales no-op-Flag am Parent-Parser; `wake.ts` übergibt es nicht mehr an `wol_api.py` |
+| S5-Shutdown + Fast Startup (Windows) | Normales Herunterfahren wird zum Hybrid-Hibernate; NIC ignoriert Magic Packet | Windows Fast Startup deaktivieren — häufigste Ursache wenn WoL aus Sleep aber nicht aus Shutdown funktioniert |
+| Kalter Start (S5) braucht >240s | WOL_TIMEOUT 240s reicht nicht für Kaltstart + LM Studio Modell-Load | Default auf 360s erhöht; `wake.ts`-Cap entsprechend angepasst |
 
 ## Related Skills
 

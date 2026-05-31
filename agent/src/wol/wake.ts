@@ -26,11 +26,17 @@ export interface WakeOptions {
 
 export async function wakeGamingPc(opts: WakeOptions): Promise<WakeResult> {
   const scriptPath = join(opts.skillsRoot, 'wol', 'scripts', 'wol_api.py');
-  const timeoutMs = opts.timeoutMs ?? 270_000;
+  // Outer bound must exceed the python WOL_TIMEOUT (default 360s) so we don't
+  // SIGKILL the wait mid-boot; a cold start incl. LM Studio model load is slow.
+  const timeoutMs = opts.timeoutMs ?? 390_000;
   const start = Date.now();
 
+  // NB: the wol skill's `wake` subcommand only accepts `--wait`; it always emits
+  // JSON on stdout. Passing a `--json` flag here makes argparse exit(2) with
+  // "unrecognized arguments" *before any magic packet is sent*, so every wake
+  // silently failed. Do not re-add it.
   const proc = Bun.spawn({
-    cmd: ['python', scriptPath, 'wake', '--wait', '--json'],
+    cmd: ['python', scriptPath, 'wake', '--wait'],
     stdout: 'pipe',
     stderr: 'pipe',
   });
@@ -54,11 +60,18 @@ export async function wakeGamingPc(opts: WakeOptions): Promise<WakeResult> {
     log.warn('wol_exit_nonzero', { exitCode, stderr: stderr.trim() });
     return { success: false, ms, stderr: stderr.trim() };
   }
-  // Parse JSON output; the python script reports lm_studio_available when --wait succeeds.
+  // Parse JSON output. With `--wait`, the script nests the readiness result under
+  // `lm_studio.available` (NOT a top-level `lm_studio_available`). A sent packet
+  // returns success:true even if LM Studio never answered, so we must inspect the
+  // nested flag — otherwise a wake where the PC powered on but LM Studio timed out
+  // would be reported as success and we'd proceed into a failing generate call.
   let success = true;
   try {
-    const j = JSON.parse(stdout) as { lm_studio_available?: boolean; success?: boolean };
-    if (j.lm_studio_available === false || j.success === false) success = false;
+    const j = JSON.parse(stdout) as { lm_studio?: { available?: boolean }; success?: boolean };
+    // We always pass --wait, so the script must report lm_studio.available === true.
+    // Treat a missing/non-true field as failure (safe default): better to say "kommt
+    // nicht hoch" than to proceed into a generate call that hits ECONNREFUSED.
+    if (j.success === false || j.lm_studio?.available !== true) success = false;
   } catch {
     // Non-JSON output — fall back to exit code, which was 0, so consider success.
   }

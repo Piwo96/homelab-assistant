@@ -63,9 +63,9 @@ class WolAPI:
         self.mac = mac or os.environ.get("GAMING_PC_MAC", "")
         self.ip = ip or os.environ.get("GAMING_PC_IP", "")
         try:
-            self.wol_timeout = wol_timeout or int(os.environ.get("WOL_TIMEOUT", "240"))
+            self.wol_timeout = wol_timeout or int(os.environ.get("WOL_TIMEOUT", "360"))
         except ValueError:
-            self.wol_timeout = 240
+            self.wol_timeout = 360
 
         if lm_studio_url:
             self.lm_studio_url = lm_studio_url
@@ -94,7 +94,12 @@ class WolAPI:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         try:
-            sock.sendto(magic, (broadcast, 9))
+            # Retransmit on both standard WoL ports: UDP broadcasts can be dropped,
+            # and some NICs listen on 7 rather than 9. Cheap insurance for a packet
+            # that either wakes the PC or harmlessly no-ops if it's already on.
+            for _ in range(3):
+                for port in (9, 7):
+                    sock.sendto(magic, (broadcast, port))
         finally:
             sock.close()
 
@@ -128,7 +133,7 @@ class WolAPI:
             return {"success": False, "error": f"Failed to send magic packet: {e}"}
         result = {
             "success": True,
-            "message": f"Magic Packet gesendet an {self.mac} (via {broadcast}:9)",
+            "message": f"Magic Packet gesendet an {self.mac} (via {broadcast}, Ports 9+7, 3x)",
             "mac": self.mac,
         }
 
@@ -279,6 +284,10 @@ def execute(command: str, args: dict = None) -> Any:
 
 def main():
     parser = argparse.ArgumentParser(description="Wake-on-LAN & LM Studio Management")
+    # Accepted for compatibility with the skill CLI contract (`script --json <command>`).
+    # Output is always JSON, so this flag is a no-op — but tolerating it means a
+    # caller that passes --json won't crash with an argparse error.
+    parser.add_argument("--json", action="store_true", help="Output JSON (always on)")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # wake
