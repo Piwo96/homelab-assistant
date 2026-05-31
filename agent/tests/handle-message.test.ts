@@ -152,6 +152,13 @@ describe('handleMessage — fast-path (single skill)', () => {
     expect(reply).toContain('gelöscht');
     // History is empty afterwards — no persisted confirmation anchor.
     expect(recentMessages(db, 5555, 20)).toHaveLength(0);
+
+    // Telegram menu taps can fire /clear twice; the burst-window duplicate
+    // is suppressed so the user sees only one confirmation.
+    const dup = await handleMessage(deps, {
+      kind: 'text', updateId: 2002, chatId: 5555, userId: 999, messageId: 3, text: '/clear', ts: 3,
+    });
+    expect(dup).toBe('');
   });
 });
 

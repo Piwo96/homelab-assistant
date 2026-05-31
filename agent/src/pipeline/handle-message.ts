@@ -56,14 +56,16 @@ export interface HandleDeps {
 
 const HISTORY_LIMIT = 20;
 
-/** Suppress duplicate /start commands that arrive in quick succession. Some
- *  Telegram clients fire /start twice when the user taps it from the "Menü"
- *  button (once as the command, once as the bot-open deep-link), and a
- *  genuine double-tap looks the same. Either way, the second welcome message
- *  is just noise. In-memory map is fine — only matters within the burst, and
+/** Suppress duplicate /start and /clear commands that arrive in quick
+ *  succession. Some Telegram clients fire bot commands twice when tapped from
+ *  the "Menü" button (once as the command, once as the bot-open deep-link),
+ *  and a genuine double-tap looks identical. Either way, the second message
+ *  is just noise. In-memory maps are fine — only matter within the burst, and
  *  Telegram never retries old updates after a server restart. */
 const START_DEBOUNCE_MS = 3000;
 const lastStartByChat = new Map<number, number>();
+const CLEAR_DEBOUNCE_MS = 3000;
+const lastClearByChat = new Map<number, number>();
 
 /** Sentinel returned from handleMessage when the pipeline decided to send
  *  nothing (e.g. debounced /start). Server checks for this and cleans up
@@ -249,8 +251,16 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
   // /clear: wipe THIS chat's history so the next turn starts fresh, then
   // return a short static confirmation. No LLM call (same reasoning as
   // /start: a 4B model would randomly leak reasoning bullets) and no
-  // persisted anchor — the whole point is an empty history.
+  // persisted anchor — the whole point is an empty history. Debounced for
+  // the same reason as /start: menu taps can fire the command twice.
   if (trimmed === '/clear' || trimmed.startsWith('/clear ')) {
+    const now = Date.now();
+    const last = lastClearByChat.get(update.chatId) ?? 0;
+    if (now - last < CLEAR_DEBOUNCE_MS) {
+      log.info('clear_debounced', { chatId: update.chatId, sinceLastMs: now - last });
+      return SUPPRESS_REPLY;
+    }
+    lastClearByChat.set(update.chatId, now);
     const removed = clearHistory(deps.db, update.chatId);
     log.info('history_cleared', { chatId: update.chatId, removed, via: 'clear' });
     return '🧹 Alles klar, ich habe unseren bisherigen Verlauf gelöscht. Frischer Start!';
