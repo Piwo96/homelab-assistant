@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { initDb } from '../src/memory/db';
+import { recentMessages } from '../src/memory/history';
 import { handleMessage, type HandleDeps } from '../src/pipeline/handle-message';
 import { SkillRegistry } from '../src/skills/registry';
 import { z } from 'zod';
@@ -134,6 +135,23 @@ describe('handleMessage — fast-path (single skill)', () => {
       kind: 'text', updateId: 1002, chatId: 8888, userId: 999, messageId: 3, text: '/start', ts: 3,
     });
     expect(otherChat).toContain('Hi Rolly Mitglied');
+  });
+
+  it('/clear wipes this chat\'s history and confirms, without an LLM call', async () => {
+    const deps = baseDeps();
+
+    // Seed some history via a normal turn.
+    await handleMessage(deps, {
+      kind: 'text', updateId: 2000, chatId: 5555, userId: 999, messageId: 1, text: 'mach licht an', ts: 1,
+    });
+    expect(recentMessages(db, 5555, 20).length).toBeGreaterThan(0);
+
+    const reply = await handleMessage(deps, {
+      kind: 'text', updateId: 2001, chatId: 5555, userId: 999, messageId: 2, text: '/clear', ts: 2,
+    });
+    expect(reply).toContain('gelöscht');
+    // History is empty afterwards — no persisted confirmation anchor.
+    expect(recentMessages(db, 5555, 20)).toHaveLength(0);
   });
 });
 

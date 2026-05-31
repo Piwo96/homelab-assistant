@@ -246,6 +246,16 @@ async function handleText(deps: HandleDeps, update: ParsedTextUpdate): Promise<s
     return reply;
   }
 
+  // /clear: wipe THIS chat's history so the next turn starts fresh, then
+  // return a short static confirmation. No LLM call (same reasoning as
+  // /start: a 4B model would randomly leak reasoning bullets) and no
+  // persisted anchor — the whole point is an empty history.
+  if (trimmed === '/clear' || trimmed.startsWith('/clear ')) {
+    const removed = clearHistory(deps.db, update.chatId);
+    log.info('history_cleared', { chatId: update.chatId, removed, via: 'clear' });
+    return '🧹 Alles klar, ich habe unseren bisherigen Verlauf gelöscht. Frischer Start!';
+  }
+
   appendMessage(deps.db, { chatId: update.chatId, role: 'user', content: { text: update.text }, ts });
 
   const history = recentMessages(deps.db, update.chatId, HISTORY_LIMIT)

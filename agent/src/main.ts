@@ -108,7 +108,10 @@ async function main(): Promise<void> {
   // Best-effort: a transient Telegram-API blip shouldn't block startup.
   setMyCommands(
     { botToken: env.TELEGRAM_BOT_TOKEN },
-    [{ command: 'start', description: 'Rolly begrüßen und Beispiele anzeigen' }],
+    [
+      { command: 'start', description: 'Rolly begrüßen und Beispiele anzeigen' },
+      { command: 'clear', description: 'Verlauf löschen und neu starten' },
+    ],
   ).catch(err => log.warn('set_my_commands_failed', { err: String(err) }));
 
   startServer({ env, db, handleDeps });
