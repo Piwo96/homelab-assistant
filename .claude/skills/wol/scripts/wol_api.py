@@ -91,15 +91,27 @@ class WolAPI:
         if not broadcast:
             broadcast = self._get_subnet_broadcast()
 
+        # Send to BOTH the subnet broadcast and the host's unicast IP. When the
+        # sender sits in a different VLAN than the target (Rolly's LXC is on
+        # VLAN10 192.168.10.x, the Gaming-PC on VLAN1 192.168.1.x), the gateway
+        # does NOT forward a directed broadcast across the subnet — but it DOES
+        # route the unicast packet, as long as it can resolve the target's MAC.
+        # A DHCP fixed-IP reservation keeps that IP<->MAC binding alive while the
+        # PC is off. On the same subnet the broadcast continues to do the job.
+        targets = [broadcast]
+        if self.ip and self.ip != broadcast:
+            targets.append(self.ip)
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         try:
-            # Retransmit on both standard WoL ports: UDP broadcasts can be dropped,
+            # Retransmit on both standard WoL ports: UDP datagrams can be dropped,
             # and some NICs listen on 7 rather than 9. Cheap insurance for a packet
             # that either wakes the PC or harmlessly no-ops if it's already on.
             for _ in range(3):
-                for port in (9, 7):
-                    sock.sendto(magic, (broadcast, port))
+                for dest in targets:
+                    for port in (9, 7):
+                        sock.sendto(magic, (dest, port))
         finally:
             sock.close()
 
@@ -133,7 +145,7 @@ class WolAPI:
             return {"success": False, "error": f"Failed to send magic packet: {e}"}
         result = {
             "success": True,
-            "message": f"Magic Packet gesendet an {self.mac} (via {broadcast}, Ports 9+7, 3x)",
+            "message": f"Magic Packet gesendet an {self.mac} (Broadcast {broadcast} + Unicast {self.ip}, Ports 9+7, 3x)",
             "mac": self.mac,
         }
 
