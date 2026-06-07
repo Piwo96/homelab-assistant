@@ -330,6 +330,98 @@ ws://<homeassistant-ip>:8123/api/websocket
 }
 ```
 
+### Registry Operations (WebSocket)
+
+Area and entity registry mutations are **only available via WebSocket** — the REST API has no equivalent.
+
+**List area registry:**
+```json
+{ "id": 10, "type": "config/area_registry/list" }
+```
+Returns array of `{ area_id, name, aliases, ... }`. `area_id` is the stable identifier and never changes on rename.
+
+**Rename an area (display name only, area_id stays unchanged):**
+```json
+{ "id": 11, "type": "config/area_registry/update", "area_id": "kinderzimmer_1", "name": "Maila" }
+```
+All entity area references are preserved automatically — no automation breakage.
+
+**List entity registry:**
+```json
+{ "id": 12, "type": "config/entity_registry/list" }
+```
+Returns array of `{ entity_id, original_name, name, area_id, ... }`. `name` is the user override; `original_name` is the integration default and stays untouched.
+
+**Override entity friendly name:**
+```json
+{ "id": 13, "type": "config/entity_registry/update", "entity_id": "light.kinderzimmer_1", "name": "Maila Licht" }
+```
+`state_attr(entity_id, 'friendly_name')` reflects the override immediately. Set `name` to `null` to revert to `original_name`.
+
+> **Note**: `config_entries/reload` does NOT exist as a WebSocket command — use the REST endpoint below.
+
+### Config Entry Management (REST)
+
+**List all config entries (metadata only):**
+```bash
+GET /api/config/config_entries/entry
+```
+Returns `entry_id`, `domain`, `title`, `state`. The internal `options` dict (e.g. HomeKit filter, port) is not exposed by the API at all — modify it via the options flow in the UI.
+
+**Reload a config entry (e.g. HomeKit Bridge after registry changes):**
+```bash
+POST /api/config/config_entries/entry/{entry_id}/reload
+```
+Returns `{"require_restart": false}` on success. Use this to make integrations re-sync after area/entity renames.
+
+> **Tip**: To find the HomeKit Bridge `entry_id`, `GET /api/config/config_entries/entry` and filter by `domain == "homekit"`. Note: the `homekit` component appearing in `GET /api/components` only means the integration code is loaded — a configured bridge requires an actual config entry.
+
+### KNX Integration (WebSocket)
+
+The KNX integration exposes WebSocket commands for project metadata, monitor, and **entity CRUD**.
+
+**Read-only (safe to probe):**
+- `knx/get_knx_project` — full ETS project: `info`, `communication_objects`, `group_addresses`
+- `knx/group_monitor_info` — `project_loaded` flag + recent telegrams
+- `knx/subscribe_telegrams` — live telegram stream
+- `knx/get_entity_config` — current config for a KNX entity (requires `entity_id`)
+
+**Mutating (use only with explicit approval):**
+- `knx/update_entity` — update a KNX entity's config. Required: `entity_id`, `platform`, `data`.
+- `knx/create_entity` — create a new KNX entity. Required: `platform`, `data`.
+- `knx/project_file_process` — upload a `.knxproj` file (replaces current project).
+- `knx/project_file_remove` — **DESTRUCTIVE**: removes imported ETS project. Never invoke speculatively.
+
+**Adding tilt support to a KNX cover (raffstore):**
+
+The KNX cover entity uses a combined `ga_angle` field containing BOTH `write` and `state` GA addresses (not separate `ga_angle_set` / `ga_angle_state` fields):
+
+```json
+{
+  "type": "knx/update_entity",
+  "entity_id": "cover.foo",
+  "platform": "cover",
+  "data": {
+    "entity": { "name": "Foo", "device_info": null, "entity_category": null },
+    "knx": {
+      "ga_up_down": { "write": "3/0/N", "passive": [] },
+      "ga_stop": { "write": "3/1/N", "passive": [] },
+      "ga_position_set": { "write": "3/2/N", "passive": [] },
+      "ga_position_state": { "state": "3/3/N", "passive": [] },
+      "ga_angle": { "write": "3/4/N", "state": "3/5/N", "passive": [] },
+      "travelling_time_up": 25.0,
+      "travelling_time_down": 25.0,
+      "sync_state": true,
+      "invert_updown": false,
+      "invert_position": false,
+      "invert_angle": false
+    }
+  }
+}
+```
+
+After update, `supported_features` jumps from 15 → 207 (adds `SET_TILT_POSITION` 128 and `STOP_TILT` 64). HA reads `current_tilt_position` from the state GA. Reload the HomeKit Bridge config entry (REST POST `/api/config/config_entries/entry/<id>/reload`) so Apple Home picks up the new tilt slider.
+
 ### Dashboard Management (Lovelace)
 
 Dashboard operations require WebSocket API (not available via REST).

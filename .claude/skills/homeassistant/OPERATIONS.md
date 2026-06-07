@@ -409,6 +409,41 @@ dashboard_api.py get -o backup_$(date +%Y%m%d).json
 dashboard_api.py set backup_20260129.json
 ```
 
+### 9. Registry Renames and HomeKit Bridge Refresh
+
+Use this workflow when renaming HA rooms or entity display names and expecting HomeKit/Apple Home to reflect the changes.
+
+#### Step 1 — Rename areas (rooms) via WebSocket
+```python
+# One-off WebSocket call; no CLI command exists yet
+# type: config/area_registry/update
+# payload: { area_id: "<stable_id>", name: "<new display name>" }
+```
+The `area_id` is stable and never changes. Find it via `config/area_registry/list`.
+
+#### Step 2 — Rename entity friendly names via WebSocket
+```python
+# type: config/entity_registry/update
+# payload: { entity_id: "light.kinderzimmer_1", name: "Maila Licht" }
+# Set name: null to revert to original_name
+```
+Affects all entities in bulk by iterating `config/entity_registry/list` and filtering by `area_id`.
+
+#### Step 3 — Reload the HomeKit Bridge config entry
+```bash
+# Find the entry_id first:
+GET /api/config/config_entries/entry  # filter: domain == "homekit"
+
+# Then reload:
+POST /api/config/config_entries/entry/<entry_id>/reload
+# Returns: {"require_restart": false}
+```
+This causes the bridge to re-publish all accessories with updated room and name info.
+
+#### Step 4 — Verify in Apple Home
+Open Apple Home → the room and accessory names should update within a few seconds.
+If iOS doesn't pick up the new room assignment, see TROUBLESHOOTING.md.
+
 ## Best Practices
 
 1. **Use scenes for complex state changes**

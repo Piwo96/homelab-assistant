@@ -2,13 +2,17 @@
 """
 Home Assistant API Client
 
-Comprehensive CLI tool for managing your smart home via Home Assistant API.
-Supports: entities, automations, scenes, scripts, services.
+Low-level CLI for Home Assistant administration (REST API).
+Surfaces every HA primitive: entities, services, automations, scenes,
+scripts, history, logbook. No domain logic — user-facing smart-home
+commands (rooms, floors, German aliases) live in the `smart-home` skill.
 
 Usage:
     python homeassistant_api.py status
     python homeassistant_api.py entities --domain light
-    python homeassistant_api.py turn-on light.living_room --brightness 200
+    python homeassistant_api.py turn-on light.living_room
+    python homeassistant_api.py call-service climate set_temperature \\
+        --entity climate.foo --data '{"temperature": 21}'
 """
 
 import argparse
@@ -359,24 +363,6 @@ def execute(action: str, args: dict) -> Any:
                 extra = json.loads(extra)
             data.update(extra)
         return api.call_service(args["domain"], args["service"], data)
-    elif action in ("cover-open", "cover_open"):
-        # HA's call_service returns [] on success. Wrap in a structured object
-        # so the LLM doesn't misread "[]" as failure.
-        api.call_service("cover", "open_cover", {"entity_id": args["entity_id"]})
-        return {"ok": True, "entity_id": args["entity_id"], "action": "open"}
-    elif action in ("cover-close", "cover_close"):
-        api.call_service("cover", "close_cover", {"entity_id": args["entity_id"]})
-        return {"ok": True, "entity_id": args["entity_id"], "action": "close"}
-    elif action in ("cover-set-position", "cover_set_position"):
-        pos = int(args["position"])
-        api.call_service("cover", "set_cover_position",
-                         {"entity_id": args["entity_id"], "position": pos})
-        return {"ok": True, "entity_id": args["entity_id"], "position": pos}
-    elif action in ("cover-set-tilt", "cover_set_tilt"):
-        tilt = int(args["tilt_position"])
-        api.call_service("cover", "set_cover_tilt_position",
-                         {"entity_id": args["entity_id"], "tilt_position": tilt})
-        return {"ok": True, "entity_id": args["entity_id"], "tilt_position": tilt}
     elif action == "list-automations":
         automations = api.list_automations()
         limit = int(args["limit"]) if args.get("limit") else 50
@@ -424,40 +410,17 @@ def execute(action: str, args: dict) -> Any:
 
 
 def _name_matches(needle: str, *texts: str) -> bool:
-    """Fuzzy substring/prefix match used by the `entities --name` filter.
-
-    Strategy (case-insensitive, applied across the union of all provided texts
-    with underscores treated as word separators):
-      1. Plain substring match against the haystack (handles 'wandleuchten'
-         finding 'Wandleuchten Schlafzimmer').
-      2. Word-prefix match: any prefix of the needle ≥3 chars matches the
-         start of any word in the haystack. This handles German compounds:
-         'esszimmer' (needle) → tries prefixes 'esszi', 'essz', 'ess' → 'ess'
-         matches words 'ess' and 'essen' in HA's naming.
-    """
+    """Case-insensitive substring match across the union of all provided texts
+    (entity_id underscores treated as spaces). Used by `entities --name`."""
     if not needle:
         return False
-    n = needle.lower()
     haystack = " ".join(texts).lower().replace("_", " ")
-    if n in haystack:
-        return True
-    if len(n) >= 3:
-        words = haystack.split()
-        for length in range(min(len(n), 8), 2, -1):
-            prefix = n[:length]
-            for w in words:
-                if w.startswith(prefix):
-                    return True
-    return False
+    return needle.lower() in haystack
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description=(
-            "Smart Home via Home Assistant (HA / HASS): control lights, heating, "
-            "blinds (rollos/jalousien), switches, plugs, sensors, scenes, "
-            "automations across all rooms."
-        )
+        description="Home Assistant REST API CLI: entities, services, automations, scenes, scripts, history, logbook.",
     )
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--help-json", action="store_true", help="Print JSON command spec and exit")
@@ -465,271 +428,94 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # System
-    subparsers.add_parser(
-        "status",
-        help=(
-            "Check whether the Home Assistant instance is reachable and report its API health. "
-            "Use this when the user asks 'ist Home Assistant online?', 'wie ist der HA Status?', "
-            "'läuft HASS noch?' — any health/reachability question."
-        ),
-    )
-    subparsers.add_parser(
-        "config",
-        help=(
-            "Get Home Assistant base configuration (HA version, location, time zone, unit system, "
-            "components loaded). Use for 'welche HA Version läuft?', 'Home Assistant Konfiguration', "
-            "'wo steht HA / welche Zeitzone'."
-        ),
-    )
-    subparsers.add_parser(
-        "components",
-        help=(
-            "List all Home Assistant components (integrations) currently loaded. "
-            "Use for 'welche Integrationen sind aktiv', 'welche Komponenten laufen in HA'."
-        ),
-    )
+    subparsers.add_parser("status", help="Check HA reachability and report API health.")
+    subparsers.add_parser("config", help="Get HA configuration (version, location, time zone, unit system).")
+    subparsers.add_parser("components", help="List loaded HA integrations.")
 
     # Entities
     entities = subparsers.add_parser(
         "entities",
-        help=(
-            "List/discover Home Assistant entities. Filter by domain, area, state, and/or name. "
-            "DISCOVERY STRATEGY when the user names a room and you don't know the exact entity_id: "
-            "1) FIRST try --area with the German room name ('Esszimmer', 'Wohnzimmer', 'Küche', "
-            "'Schlafzimmer', 'Kinderzimmer 1', 'Bad Eltern', 'Garage', etc.) — this is "
-            "authoritative because the user has configured HA areas properly. "
-            "2) ONLY if --area returns 0 results, fall back to --name (substring/prefix match "
-            "against entity_id + friendly_name) for older entities that aren't assigned to an "
-            "area. Always also pass --domain (e.g. light, switch, cover, climate) to scope. "
-            "Once you have the exact entity_id, call turn-on / turn-off / toggle / call-service."
-        ),
+        help="List/discover HA entities. Filter by domain, area, state, and/or name.",
     )
-    entities.add_argument("--domain", help="HA domain filter: light, switch, sensor, cover (rollos/jalousien), climate (heating), media_player, scene, automation, script, ...")
+    entities.add_argument("--domain", help="Domain filter: light, switch, sensor, cover, climate, scene, automation, script, ...")
     entities.add_argument("--state", help="State filter: on, off, home, away, unavailable, ...")
-    entities.add_argument("--area", help="HA area filter. Accepts EITHER the area display name ('Esszimmer', 'Wohnzimmer', 'Küche') OR the area_id ('esszimmer', 'wohnzimmer', 'kueche'). Resolved server-side via HA's area_entities() template — works for areas configured via Settings → Areas & Zones even when entities don't expose area_id in their state attributes.")
-    entities.add_argument("--name", help="Case-insensitive substring matched against entity_id AND friendly_name. Best fallback when the exact id is unknown.")
+    entities.add_argument("--area", help="Area filter. Accepts the area display name or area_id. Resolved server-side via HA's area_entities() template.")
+    entities.add_argument("--name", help="Case-insensitive substring match against entity_id and friendly_name.")
 
-    get_state = subparsers.add_parser(
-        "get-state",
-        help=(
-            "Get the current state and attributes of one specific entity. "
-            "Use for 'wie warm ist es im Wohnzimmer', 'ist das Licht in der Küche an', "
-            "'was zeigt der Bewegungssensor Eingang'. Returns state + all attributes."
-        ),
-    )
-    get_state.add_argument("entity_id", help="Entity ID in domain.object form, e.g. light.wohnzimmer, sensor.temperatur_kueche")
+    get_state = subparsers.add_parser("get-state", help="Get current state and attributes of one entity.")
+    get_state.add_argument("entity_id", help="Entity ID in domain.object form")
 
     # Control
     turn_on = subparsers.add_parser(
         "turn-on",
-        help=(
-            "Turn ON a Home Assistant entity: lights, switches, plugs, fans, media players, etc. "
-            "Use whenever the user wants something ON: 'mach das Licht an', 'Lampe Wohnzimmer "
-            "einschalten', 'Steckdose Küche an', 'Fernseher an', 'Heizung Bad an'. "
-            "For lights also supports --brightness (0-255) and --color-temp (mireds)."
-        ),
+        help="Turn ON an entity (light, switch, etc.). Optional --brightness/--color-temp for lights.",
     )
-    turn_on.add_argument("entity_id", help="Entity ID, e.g. light.wohnzimmer, switch.steckdose_kueche")
+    turn_on.add_argument("entity_id", help="Entity ID")
     turn_on.add_argument("--brightness", type=int, help="Brightness 0-255 (lights only)")
     turn_on.add_argument("--color-temp", type=int, help="Color temperature in mireds (lights only)")
     turn_on.set_defaults(_is_write=True)
 
-    turn_off = subparsers.add_parser(
-        "turn-off",
-        help=(
-            "Turn OFF a Home Assistant entity: lights, switches, plugs, fans, media players, etc. "
-            "Use whenever the user wants something OFF: 'mach das Licht aus', 'Wohnzimmer Lampe "
-            "aus', 'Steckdose Küche aus', 'alle Lichter aus', 'Heizung Bad aus'."
-        ),
-    )
-    turn_off.add_argument("entity_id", help="Entity ID, e.g. light.wohnzimmer, switch.steckdose_kueche")
+    turn_off = subparsers.add_parser("turn-off", help="Turn OFF an entity.")
+    turn_off.add_argument("entity_id", help="Entity ID")
     turn_off.set_defaults(_is_write=True)
 
-    toggle = subparsers.add_parser(
-        "toggle",
-        help=(
-            "Toggle a Home Assistant entity between ON and OFF. "
-            "Use when the user says 'X umschalten', 'X toggeln', 'Licht im Bad an wenn aus, sonst aus'."
-        ),
-    )
-    toggle.add_argument("entity_id", help="Entity ID, e.g. light.wohnzimmer")
+    toggle = subparsers.add_parser("toggle", help="Toggle an entity between ON and OFF.")
+    toggle.add_argument("entity_id", help="Entity ID")
     toggle.set_defaults(_is_write=True)
 
     # Services
     call_service = subparsers.add_parser(
         "call-service",
-        help=(
-            "Call an arbitrary Home Assistant service. Use this for actions that don't map to "
-            "turn-on/turn-off/toggle — e.g. set thermostat temperature (climate.set_temperature), "
-            "open/close blinds (cover.open_cover / cover.close_cover / cover.set_cover_position), "
-            "send notifications, run shell commands. Examples: 'Heizung Wohnzimmer auf 21 Grad', "
-            "'Rollo Schlafzimmer auf 50%', 'Jalousie Bad runter'."
-        ),
+        help="Call an arbitrary HA service. Use for anything that doesn't map to turn-on/off/toggle.",
     )
-    call_service.add_argument("domain", help="HA service domain, e.g. climate, cover, light, notify")
+    call_service.add_argument("domain", help="Service domain, e.g. climate, cover, light, notify")
     call_service.add_argument("service", help="Service name, e.g. set_temperature, open_cover, set_cover_position")
-    call_service.add_argument("--entity", help="Target entity_id, e.g. climate.wohnzimmer, cover.rollo_schlafzimmer")
-    call_service.add_argument("--data", help="JSON-encoded service data, e.g. '{\"temperature\": 21}' or '{\"position\": 50}'")
+    call_service.add_argument("--entity", help="Target entity_id")
+    call_service.add_argument("--data", help="JSON-encoded service data, e.g. '{\"temperature\": 21}'")
     call_service.set_defaults(_is_write=True)
 
-    # Cover (Rollos / Jalousien) — dedicated commands so the LLM doesn't have to
-    # know HA service names. Two independent axes per cover: position (Höhe) and
-    # tilt (Lamellen-Neigung). Both 0..100.
-    cover_open = subparsers.add_parser(
-        "cover-open",
-        help=(
-            "Rollo/Jalousie komplett HOCHFAHREN (ganz öffnen, position=100). "
-            "Nutze für 'Rollo hochfahren', 'Rollo öffnen', 'Jalousie ganz auf'."
-        ),
-    )
-    cover_open.add_argument("entity_id", help="z.B. cover.dg_schlafen_rollo")
-    cover_open.set_defaults(_is_write=True)
-
-    cover_close = subparsers.add_parser(
-        "cover-close",
-        help=(
-            "Rollo/Jalousie komplett HERUNTERFAHREN (ganz schließen, position=0). "
-            "Nutze für 'Rollo runter', 'Rollo zu', 'Jalousie schließen', '100% runter'."
-        ),
-    )
-    cover_close.add_argument("entity_id", help="z.B. cover.dg_schlafen_rollo")
-    cover_close.set_defaults(_is_write=True)
-
-    cover_set_pos = subparsers.add_parser(
-        "cover-set-position",
-        help=(
-            "Rollo/Jalousie auf eine bestimmte Höhe fahren. position=0 ist ganz unten "
-            "(geschlossen), position=100 ganz oben (offen). Nutze für 'halb runter' (50), "
-            "'auf 30% offen' (30), 'zu 70% heruntergefahren' (30 — Inversion!)."
-        ),
-    )
-    cover_set_pos.add_argument("entity_id", help="z.B. cover.dg_schlafen_rollo")
-    cover_set_pos.add_argument("--position", type=int, required=True,
-                               help="0 (ganz zu/unten) bis 100 (ganz auf/oben)")
-    cover_set_pos.set_defaults(_is_write=True)
-
-    cover_set_tilt = subparsers.add_parser(
-        "cover-set-tilt",
-        help=(
-            "Lamellen-Neigung einer Jalousie setzen (Tilt, unabhängig von der Position!). "
-            "tilt_position=0 = Lamellen geschlossen (vertikal, blockt Licht), "
-            "tilt_position=100 = Lamellen offen (horizontal, lässt Licht durch). "
-            "Nutze für 'auf 50% neigen', 'Lamellen halb offen', 'Lamellen kippen'."
-        ),
-    )
-    cover_set_tilt.add_argument("entity_id", help="z.B. cover.og_kind_3_rollo_1")
-    cover_set_tilt.add_argument("--tilt-position", type=int, required=True,
-                                help="0 (Lamellen zu) bis 100 (Lamellen offen)")
-    cover_set_tilt.set_defaults(_is_write=True)
-
     # Automations
-    subparsers.add_parser(
-        "list-automations",
-        help=(
-            "List all Home Assistant automations with their state (on/off). "
-            "Use for 'welche Automationen gibt es', 'zeig mir alle HA Automationen'."
-        ),
-    )
+    subparsers.add_parser("list-automations", help="List all automations with their state.")
 
     trigger = subparsers.add_parser(
         "trigger",
-        help=(
-            "Manually trigger an automation, ignoring its triggers but respecting its conditions. "
-            "Use for 'starte Automation X', 'Automation Aufstehen jetzt auslösen'."
-        ),
+        help="Manually trigger an automation (ignores triggers, respects conditions).",
     )
-    trigger.add_argument("automation_id", help="Automation entity ID, e.g. automation.aufstehen")
+    trigger.add_argument("automation_id", help="Automation entity ID")
     trigger.set_defaults(_is_write=True)
 
-    enable_auto = subparsers.add_parser(
-        "enable",
-        help=(
-            "Enable a Home Assistant automation (turn it ON so its triggers fire). "
-            "Use for 'aktiviere Automation X', 'Automation Y einschalten'."
-        ),
-    )
-    enable_auto.add_argument("automation_id", help="Automation entity ID, e.g. automation.heizung_morgens")
+    enable_auto = subparsers.add_parser("enable", help="Enable an automation.")
+    enable_auto.add_argument("automation_id", help="Automation entity ID")
     enable_auto.set_defaults(_is_write=True)
 
-    disable_auto = subparsers.add_parser(
-        "disable",
-        help=(
-            "Disable a Home Assistant automation (turn it OFF so its triggers do not fire). "
-            "Use for 'deaktiviere Automation X', 'Automation Y abschalten / pausieren'."
-        ),
-    )
-    disable_auto.add_argument("automation_id", help="Automation entity ID, e.g. automation.heizung_morgens")
+    disable_auto = subparsers.add_parser("disable", help="Disable an automation.")
+    disable_auto.add_argument("automation_id", help="Automation entity ID")
     disable_auto.set_defaults(_is_write=True)
 
-    subparsers.add_parser(
-        "reload-automations",
-        help="Reload all automations from the automations.yaml file (admin / maintenance operation).",
-    )
+    subparsers.add_parser("reload-automations", help="Reload all automations from automations.yaml.")
 
     # Scenes
-    subparsers.add_parser(
-        "list-scenes",
-        help=(
-            "List all Home Assistant scenes. Use for 'welche Szenen gibt es', "
-            "'zeig mir alle Stimmungen / Szenen'."
-        ),
-    )
-
-    activate = subparsers.add_parser(
-        "activate-scene",
-        help=(
-            "Activate a Home Assistant scene (applies the saved entity states). "
-            "Use for 'aktiviere Szene X', 'Stimmung Filmabend', 'Szene Gute Nacht', "
-            "'Aufwachen-Szene starten'."
-        ),
-    )
-    activate.add_argument("scene_id", help="Scene entity ID, e.g. scene.filmabend, scene.gute_nacht")
+    subparsers.add_parser("list-scenes", help="List all scenes.")
+    activate = subparsers.add_parser("activate-scene", help="Activate a scene.")
+    activate.add_argument("scene_id", help="Scene entity ID")
+    activate.set_defaults(_is_write=True)
 
     # Scripts
-    subparsers.add_parser(
-        "list-scripts",
-        help="List all Home Assistant scripts. Use for 'welche Skripte gibt es in HA'.",
-    )
-
-    run_script = subparsers.add_parser(
-        "run-script",
-        help=(
-            "Run a Home Assistant script (one-shot sequence of service calls). "
-            "Use for 'starte Skript X', 'führe HA Skript Y aus'."
-        ),
-    )
-    run_script.add_argument("script_id", help="Script entity ID, e.g. script.kaffee_machen")
-
-    stop_script = subparsers.add_parser(
-        "stop-script",
-        help=(
-            "Stop a currently running Home Assistant script. "
-            "Use for 'stoppe Skript X', 'breche HA Skript ab'."
-        ),
-    )
-    stop_script.add_argument("script_id", help="Script entity ID, e.g. script.kaffee_machen")
+    subparsers.add_parser("list-scripts", help="List all scripts.")
+    run_script = subparsers.add_parser("run-script", help="Run a script.")
+    run_script.add_argument("script_id", help="Script entity ID")
+    run_script.set_defaults(_is_write=True)
+    stop_script = subparsers.add_parser("stop-script", help="Stop a running script.")
+    stop_script.add_argument("script_id", help="Script entity ID")
+    stop_script.set_defaults(_is_write=True)
 
     # History
-    history = subparsers.add_parser(
-        "history",
-        help=(
-            "Get historical state changes for an entity over the last N hours. "
-            "Use for 'wie war die Temperatur die letzten 24h', 'wann war das Licht an', "
-            "'Verlauf vom Bewegungssensor'."
-        ),
-    )
+    history = subparsers.add_parser("history", help="Get historical state changes for an entity over the last N hours.")
     history.add_argument("entity_id", nargs="?", help="Entity ID (optional — leave empty for all)")
     history.add_argument("--hours", type=int, default=24, help="Lookback window in hours (default 24)")
 
     # Logbook
-    logbook = subparsers.add_parser(
-        "logbook",
-        help=(
-            "Get the Home Assistant logbook (human-readable event log) for the last N hours. "
-            "Use for 'was ist im Smart Home passiert', 'zeig mir das HA Logbuch', "
-            "'welche Ereignisse die letzte Stunde'."
-        ),
-    )
+    logbook = subparsers.add_parser("logbook", help="Get HA logbook (human-readable event log) for the last N hours.")
     logbook.add_argument("--hours", type=int, default=1, help="Lookback window in hours (default 1)")
 
     args = parser.parse_args()
@@ -837,36 +623,6 @@ def main():
         if args.data:
             data.update(json.loads(args.data))
         result = api.call_service(args.domain, args.service, data)
-
-    # Cover (Rollo / Jalousie) — high-level commands that hide HA's service-name layout.
-    # Wrap HA's empty-list success in a structured {ok:true,...} so the LLM
-    # doesn't mis-read "[]" as failure (real prod bug, see commit history).
-    elif args.command == "cover-open":
-        api.call_service("cover", "open_cover", {"entity_id": args.entity_id})
-        result = {"ok": True, "entity_id": args.entity_id, "action": "open"}
-        if not args.json:
-            print(f"Opened {args.entity_id}")
-            return
-    elif args.command == "cover-close":
-        api.call_service("cover", "close_cover", {"entity_id": args.entity_id})
-        result = {"ok": True, "entity_id": args.entity_id, "action": "close"}
-        if not args.json:
-            print(f"Closed {args.entity_id}")
-            return
-    elif args.command == "cover-set-position":
-        api.call_service("cover", "set_cover_position",
-                         {"entity_id": args.entity_id, "position": args.position})
-        result = {"ok": True, "entity_id": args.entity_id, "position": args.position}
-        if not args.json:
-            print(f"Set position of {args.entity_id} to {args.position}%")
-            return
-    elif args.command == "cover-set-tilt":
-        api.call_service("cover", "set_cover_tilt_position",
-                         {"entity_id": args.entity_id, "tilt_position": args.tilt_position})
-        result = {"ok": True, "entity_id": args.entity_id, "tilt_position": args.tilt_position}
-        if not args.json:
-            print(f"Set tilt of {args.entity_id} to {args.tilt_position}%")
-            return
 
     # Automation commands
     elif args.command == "list-automations":

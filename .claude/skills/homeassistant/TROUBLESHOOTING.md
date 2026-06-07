@@ -213,6 +213,50 @@ Error: File not found: backup.json
 2. Create new backup: `dashboard_api.py get -o backup.json`
 3. Verify file path is correct
 
+## KNX Issues
+
+### Imported ETS project (.knxproj) is gone / Group Monitor names missing
+**Cause**: The KNX project file was removed via `knx/project_file_remove` (WebSocket) or via HA UI → KNX → Remove project file. Symptoms: `knx/get_knx_project` returns empty info, `knx/group_monitor_info` shows `project_loaded: false`, telegrams in Group Monitor show no friendly names.
+**Important**: KNX **devices keep working** — each cover/light/switch entity has its GAs baked into its own config (entity registry or knx.yaml), not the project file. Only the metadata layer (CO names, GA descriptions, ETS-aware reconfiguration) is lost.
+**Recovery**:
+1. HA UI → Settings → Devices & Services → KNX → Reconfigure → re-upload the `.knxproj` file from ETS.
+2. Or via WebSocket: `knx/project_file_process` with the file payload (advanced).
+
+### WARNING: destructive KNX WebSocket commands
+Treat these commands as destructive and only invoke after explicit user confirmation:
+- `knx/project_file_remove` — wipes the imported ETS project (see above).
+- `knx/project_file_process` — replaces any current project with the uploaded one.
+- Any `*_remove`, `*_delete`, `*_reset` in the KNX namespace.
+
+Safe (read-only) commands for exploration: `knx/get_knx_project`, `knx/group_monitor_info`, `knx/subscribe_telegrams`.
+
+## HomeKit / Apple Home Issues
+
+### Room names in Apple Home don't update after HA rename
+**Cause**: HomeKit Bridge caches accessory metadata. Renaming areas/entities in HA doesn't automatically notify iOS.
+**Solution**:
+1. Reload the HomeKit Bridge config entry:
+   ```bash
+   POST /api/config/config_entries/entry/<homekit_entry_id>/reload
+   ```
+2. Wait ~10 seconds for the bridge to re-publish accessories.
+3. If Apple Home still shows old names: remove the bridge in Home app → re-add it via the pairing QR code shown in HA Integrations.
+
+### "homekit" appears in components but no bridge is accessible
+**Cause**: `GET /api/components` returning `homekit` only means the integration code is loaded — it does not mean a bridge is configured.
+**Solution**: Check for an actual config entry: `GET /api/config/config_entries/entry` and filter `domain == "homekit"`. If none exist, set up the HomeKit Bridge via HA Settings → Integrations → Add → HomeKit Bridge.
+
+### render-template not available as CLI command
+**Cause**: `HomeAssistantAPI.render_template()` exists as a Python method but is not exposed as a CLI subcommand in `homeassistant_api.py`.
+**Workaround**: Use the REST API directly:
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"template": "{{ states(\"sensor.temperature\") }}"}' \
+  http://$HOMEASSISTANT_HOST/api/template
+```
+Or import the class directly in a one-off Python script. A `render-template` CLI subcommand should be added to `homeassistant_api.py`.
+
 ---
 
 ## Adding New Issues

@@ -1,62 +1,55 @@
 ---
 name: homeassistant
-description: Smart Home über Home Assistant (HA, HASS) steuern — Lichter, Heizung, Rollos/Jalousien, Steckdosen, Sensoren, Szenen und Automationen in den verschiedenen Räumen
-version: 1.3.0
+description: Home Assistant (HA, HASS) administration — entities, services, scenes, scripts, automations, dashboards (Lovelace), area/entity registry, integrations (KNX, HomeKit Bridge), history/logbook. Low-level HA control plane; user-facing smart-home commands live in the smart-home skill.
+version: 1.4.0
 author: Philipp Rollmann
 tags:
   - homelab
-  - smarthome
   - homeassistant
   - hass
-  - lichter
-  - heizung
-  - rollos
-  - jalousien
-  - steckdose
-  - szenen
+  - rest-api
+  - websocket
+  - lovelace
+  - dashboards
+  - registry
+  - integrations
+  - knx
+  - homekit
   - automation
-  - sensoren
-  - iot
 requires:
   - python3
   - requests
 triggers:
   - /homeassistant
   - /hass
-  - licht
-  - lampe
-  - lichter
-  - heizung
-  - rollo
-  - rollos
-  - jalousie
-  - jalousien
-  - steckdose
-  - szene
-  - sensor
-  - temperatur
-  - thermostat
-  - smart home
   - home assistant
+  - hass
+  - lovelace
+  - dashboard
+  - registry
+  - integration
+  - knx
+  - homekit
+  - automation
 intent_hints:
-  - "Licht/Lampe an, aus, umschalten, dimmen, Farbe ändern"
-  - "Heizung wärmer/kälter, Thermostat einstellen, Soll-Temperatur"
-  - "Rollos/Jalousien hoch, runter, halbe Höhe"
-  - "Steckdose, Schalter ein/aus"
-  - "Szene aktivieren (z.B. Filmabend, Gute Nacht, Aufstehen)"
-  - "Sensor-Werte abfragen: Temperatur, Luftfeuchtigkeit, Bewegung"
-  - "Automation starten, stoppen, aktivieren, deaktivieren"
-  - "Welche Geräte sind an, was läuft im Wohnzimmer / Küche / Schlafzimmer"
-  - "Status von Home Assistant prüfen, ist HA erreichbar"
+  - "HA-Verwaltung: Entities listen, Services aufzählen, beliebigen Service aufrufen (call-service)"
+  - "Automations/Scenes/Scripts inspizieren, triggern, enable/disable, reload"
+  - "Dashboard/Lovelace lesen, schreiben, optimieren, Backup/Restore"
+  - "Area Registry / Entity Registry abfragen und umbenennen (WebSocket)"
+  - "Integrationen verwalten: Config-Entries reload (z.B. HomeKit Bridge nach Rename)"
+  - "KNX: ETS-Projekt-Metadaten, Group Monitor, Entity-CRUD (cover-Tilt für Raffstore etc.)"
+  - "Historie/Logbook abfragen, Template rendern (Jinja2)"
+  - "HA-Status, Konfiguration, geladene Komponenten prüfen"
+  - "Für End-User-Befehle (Licht/Rollo/Heizung in Räumen) → /smart-home"
 ---
 
 # Home Assistant Management
 
-Control Home Assistant: entities, scenes, automations, scripts, and smart home devices.
+Low-level Home Assistant control plane: every HA primitive exposed as a CLI, no domain logic on top. End-user smart-home commands ("alle OG-Lichter aus", "Rollo Schlafzimmer hoch") live in the [`smart-home`](../smart-home/SKILL.md) skill, which uses this skill as its REST/WS backend.
 
 ## Goal
 
-Automate Home Assistant operations via REST API without needing the web UI or mobile app.
+Drive any Home Assistant operation that the web UI or app can — entities, services, automations, scenes, scripts, dashboards, registry, integrations — from a script or agent tool, without HTTP boilerplate.
 
 ## Inputs
 
@@ -64,18 +57,22 @@ Automate Home Assistant operations via REST API without needing the web UI or mo
 |-------|--------|----------|-------------|
 | `HOMEASSISTANT_HOST` | `.env` | Yes | HA server (e.g., `homeassistant.local:8123`) |
 | `HOMEASSISTANT_TOKEN` | `.env` | Yes | Long-lived access token |
+| `HOMEASSISTANT_SSL` | `.env` | No | `true`/`false`, default `false` |
+| `HOMEASSISTANT_VERIFY_SSL` | `.env` | No | `true`/`false`, default `true` |
 
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `scripts/homeassistant_api.py` | CLI for entities, automations, scenes, scripts (REST API) |
+| `scripts/homeassistant_api.py` | CLI for entities, services, automations, scenes, scripts, history/logbook (REST API) |
 | `scripts/dashboard_api.py` | CLI for dashboard/Lovelace management (WebSocket API) |
+| `scripts/ha_setup.py` | Area/entity registry inspection + bulk area assignment (WebSocket) |
+| `scripts/homeassistant_catalogue.py` | Markdown snapshot of controllable entities for agent system prompts (not a discoverable tool) |
 
 ## Outputs
 
 - Entity states and attributes
-- Lists of automations, scenes, scripts
+- Lists of automations, scenes, scripts, services, components
 - Action confirmation messages
 - Error messages to stderr
 
@@ -98,76 +95,67 @@ Automate Home Assistant operations via REST API without needing the web UI or mo
 
 ## Resources
 
-- **[API.md](API.md)** - REST API reference, WebSocket API, and authentication details
-- **[OPERATIONS.md](OPERATIONS.md)** - Common operational tasks (entities, automations, scenes, scripts, dashboards)
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Known issues and solutions (connection, auth, entities, dashboards)
-- **[scripts/homeassistant_api.py](scripts/homeassistant_api.py)** - REST API client for entities and automations
+- **[API.md](API.md)** - REST API reference, WebSocket API, registry, config entries, KNX, authentication details
+- **[OPERATIONS.md](OPERATIONS.md)** - Operational tasks: entities, automations, scenes, scripts, dashboards, registry renames, HomeKit refresh
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Known issues (connection, auth, entities, dashboards, KNX, HomeKit)
+- **[scripts/homeassistant_api.py](scripts/homeassistant_api.py)** - REST API client
 - **[scripts/dashboard_api.py](scripts/dashboard_api.py)** - WebSocket API client for dashboard management
+- **[scripts/ha_setup.py](scripts/ha_setup.py)** - Area/entity registry tooling
 - **[dashboards/home.yaml](dashboards/home.yaml)** - Example dashboard configuration
 
 ## Common Commands
 
 ```bash
-# System Status
-homeassistant_api.py status               # HA running status
-homeassistant_api.py config               # System configuration
+# System status
+homeassistant_api.py status               # HA reachability + version
+homeassistant_api.py config               # Full configuration
+homeassistant_api.py components           # Loaded integrations
 
-# Entity Management
-homeassistant_api.py entities             # List all entities
-homeassistant_api.py entities --domain light    # Filter by domain
-homeassistant_api.py entities --domain switch
-homeassistant_api.py state <entity_id>    # Get entity state
+# Entity discovery
+homeassistant_api.py entities                            # All entities (capped)
+homeassistant_api.py entities --domain light             # Filter by domain
+homeassistant_api.py entities --area "Wohnzimmer"        # Filter by HA area
+homeassistant_api.py entities --state on                 # Filter by state
+homeassistant_api.py get-state <entity_id>               # One entity, full attrs
 
-# Light Control
-homeassistant_api.py turn-on light.living_room
-homeassistant_api.py turn-on light.bedroom --brightness 200
-homeassistant_api.py turn-on light.office --rgb 255,180,100
-homeassistant_api.py turn-off light.all
+# Generic control
+homeassistant_api.py turn-on <entity_id>
+homeassistant_api.py turn-off <entity_id>
+homeassistant_api.py toggle <entity_id>
 
-# Switch/Device Control
-homeassistant_api.py turn-on switch.coffee_maker
-homeassistant_api.py turn-off switch.bedroom_fan
-homeassistant_api.py toggle switch.desk_lamp
+# Arbitrary service call (the escape hatch)
+homeassistant_api.py call-service climate set_temperature \
+  --entity climate.wohnzimmer --data '{"temperature": 21}'
+homeassistant_api.py call-service cover set_cover_position \
+  --entity cover.dg_schlafen_rollo --data '{"position": 50}'
 
-# Scenes
+# Scenes / scripts / automations
 homeassistant_api.py list-scenes
-homeassistant_api.py activate-scene scene.movie_time
-homeassistant_api.py activate-scene scene.good_night
-
-# Automations
+homeassistant_api.py activate-scene <scene_id>
 homeassistant_api.py list-automations
-homeassistant_api.py trigger automation.motion_light
-homeassistant_api.py enable-automation automation.morning_routine
-homeassistant_api.py disable-automation automation.away_mode
-
-# Scripts
+homeassistant_api.py trigger <automation_id>
+homeassistant_api.py enable <automation_id>
+homeassistant_api.py disable <automation_id>
+homeassistant_api.py reload-automations
 homeassistant_api.py list-scripts
-homeassistant_api.py run-script script.morning_routine
-homeassistant_api.py run-script script.lock_all_doors
+homeassistant_api.py run-script <script_id>
+homeassistant_api.py stop-script <script_id>
+
+# Diagnostics / history
+homeassistant_api.py history [entity_id] --hours 24
+homeassistant_api.py logbook --hours 1
 ```
 
 ## Advanced API Operations
 
-```bash
-# System & Diagnose
-homeassistant_api.py components              # Geladene Komponenten auflisten
+`HomeAssistantAPI` (in `homeassistant_api.py`) exposes a few HA primitives that are not yet wired to subcommands but are callable from Python:
 
-# Alle verfügbaren Services auflisten
-homeassistant_api.py services
+- `api.set_state(entity_id, state, attributes)` — push a state directly (virtual sensors / template hacks)
+- `api.fire_event(event_type, data)` — fire arbitrary HA event
+- `api.render_template(template)` — render a Jinja2 template server-side
+- `api.entities_in_area(area)` — list entity_ids in an HA area
 
-# Entity-Status direkt setzen (für virtuelle Sensoren)
-homeassistant_api.py set-state <entity_id> <state> --attributes '{"key": "value"}'
-
-# Events auslösen
-homeassistant_api.py fire-event <event_type> --data '{"key": "value"}'
-
-# Templates rendern (Jinja2)
-homeassistant_api.py render-template "{{ states('sensor.temperature') }}"
-
-# Entity umschalten (toggle)
-homeassistant_api.py toggle switch.desk_lamp
-homeassistant_api.py toggle light.living_room
-```
+For area registry rename, entity friendly-name override, KNX entity CRUD, and HomeKit Bridge reload (all WebSocket / config-entries endpoints), see **[API.md](API.md)**.
 
 ## Dashboard API (Lovelace)
 
@@ -201,69 +189,65 @@ dashboard_api.py optimize --dry-run           # Preview changes without applying
 - Sets default time ranges for graph cards
 - Adds mobile-friendly titles
 
-## Workflows
+## Admin Workflows
 
-### Morning Routine
-1. Activate scene: `activate-scene scene.morning`
-2. Start coffee: `turn-on switch.coffee_maker`
-3. Trigger automation: `trigger automation.morning_routine`
+### Discover what's installed
+1. `homeassistant_api.py components` — which integrations are loaded
+2. `homeassistant_api.py entities --domain <d>` — what each integration exposes
+3. `homeassistant_api.py services` — what services are callable
 
-### Movie Night
-1. Activate scene: `activate-scene scene.movie_time`
-   - Dims lights, sets TV input, closes blinds (if configured)
+### Troubleshoot an automation
+1. `list-automations` — check enabled/disabled
+2. `get-state <trigger entity>` — confirm the trigger source is reporting
+3. `trigger <automation_id>` — manual fire, bypassing trigger but respecting conditions
+4. `disable <automation_id>` — take it offline while debugging
 
-### Leaving Home
-1. Run script: `run-script script.leaving_home`
-2. Or activate scene: `activate-scene scene.away`
-3. Verify all off: `entities --domain light` (check states)
+### Registry rename with HomeKit refresh
+1. WebSocket `config/area_registry/list` → find the `area_id`
+2. WebSocket `config/area_registry/update` → rename display
+3. WebSocket `config/entity_registry/update` → override friendly names if needed
+4. REST `POST /api/config/config_entries/entry/<homekit_entry_id>/reload` → push to Apple Home
 
-### Control Single Light
-1. Turn on: `turn-on light.living_room`
-2. Adjust brightness: `turn-on light.living_room --brightness 150`
-3. Change color: `turn-on light.living_room --rgb 255,200,150`
-4. Turn off: `turn-off light.living_room`
+Full step-by-step in **[OPERATIONS.md § 9](OPERATIONS.md)**.
 
-### Troubleshoot Automation
-1. List automations: `list-automations`
-2. Check automation state (enabled/disabled)
-3. Check trigger entity: `state binary_sensor.motion_hall`
-4. Manually trigger: `trigger automation.motion_light`
-5. If needed, disable: `disable-automation automation.motion_light`
+### Dashboard backup / restore
+1. `dashboard_api.py get -o backup_$(date +%Y%m%d).json` — snapshot
+2. Edit JSON/YAML or run `dashboard_api.py optimize --backup --dry-run`
+3. `dashboard_api.py set <file>` — push back
 
-### Update Dashboard
-1. Get current config: `dashboard_api.py get -o backup.json`
-2. Edit dashboard in HA UI or edit the JSON/YAML file
-3. Set updated config: `dashboard_api.py set dashboard.yaml`
-4. Or optimize existing: `dashboard_api.py optimize --backup`
+### Add KNX cover tilt (raffstore)
+WebSocket `knx/update_entity` with a combined `ga_angle` field carrying both `write` and `state`. After update, reload the HomeKit Bridge config entry so Apple Home picks up the new tilt slider. Payload + caveats in **[API.md § KNX Integration](API.md)**.
 
 ## Edge Cases
 
 | Scenario | Behavior | Mitigation |
 |----------|----------|------------|
 | Invalid token | 401 Unauthorized | Create new long-lived token |
-| Entity not found | 404 Not Found | Verify entity_id with `entities` |
-| Light doesn't support RGB | Attribute ignored | Check light capabilities first |
-| Automation disabled | Trigger fails silently | Enable first: `enable-automation` |
-| Script has required variables | Script fails | Pass variables via `--data` |
+| Entity not found | 404 Not Found | `call-service` validates entity_id first — verify with `entities` |
 | HA restarting | Connection refused | Wait and retry |
 | Dashboard WebSocket timeout | Connection drops | Check network stability, retry |
-| Missing websockets library | Import error | Install: `pip install websockets pyyaml` |
+| Missing websockets library | Import error | `pip install websockets pyyaml` |
 | Dashboard in YAML mode | Cannot save via API | Convert to storage mode in HA settings |
+| HomeKit cache stale after rename | Old names persist in Apple Home | Reload HomeKit Bridge config entry |
+| `knx/project_file_remove` | DESTRUCTIVE — wipes ETS project | Never invoke speculatively; see TROUBLESHOOTING.md |
 
 ## Entity ID Patterns
 
 Common Home Assistant entity ID patterns:
-- `light.living_room` - Lights
-- `switch.coffee_maker` - Switches
-- `binary_sensor.motion_hall` - Binary sensors
-- `sensor.temperature_outside` - Sensors
-- `automation.motion_light` - Automations
-- `scene.movie_time` - Scenes
-- `script.morning_routine` - Scripts
-- `climate.thermostat` - Climate/HVAC
+- `light.<name>` - Lights
+- `switch.<name>` - Switches / smart plugs
+- `cover.<name>` - Covers / blinds / shutters
+- `climate.<name>` - Thermostats / HVAC
+- `binary_sensor.<name>` - Binary sensors
+- `sensor.<name>` - Sensors (temperature, humidity, …)
+- `automation.<name>` - Automations
+- `scene.<name>` - Scenes
+- `script.<name>` - Scripts
+- `group.<name>` - Light/cover/etc. groups
 
 ## Related Skills
 
+- [/smart-home](../smart-home/SKILL.md) — User-facing domain layer (Etagen, Räume, deutsche Befehle); uses this skill as its HA backend
 - [/unifi-protect](../unifi-protect/SKILL.md) - Camera integration
 - [/unifi-network](../unifi-network/SKILL.md) - Presence detection
 - [/homelab](../homelab/SKILL.md) - Overview of all homelab skills
