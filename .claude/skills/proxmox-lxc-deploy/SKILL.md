@@ -1,7 +1,7 @@
 ---
 name: proxmox-lxc-deploy
-description: Deploying self-hosted apps as unprivileged Proxmox LXCs with Caddy + Let's Encrypt (DuckDNS DNS-01) public HTTPS. Use when deploying a service to the homelab.
-version: 1.0.0
+description: Deploying or RE-deploying self-hosted homelab apps (e.g. the Rolly Telegram bot) to the local Proxmox host as unprivileged LXCs with Caddy + Let's Encrypt (DuckDNS DNS-01) public HTTPS. Load this BEFORE running any infra/*/deploy.sh or reading deploy/setup scripts by hand. Triggers (DE+EN, non-exhaustive) - 'deployen', 'deploy', 'redeploy', 'neu deployen', 'ausrollen', 'auf die LXC bringen / spielen', 'Rolly deployen', 'Aenderung live bringen', 'roll out a service', 'push to the homelab', 'deploy to Proxmox'. Note - the LXC pulls origin/master via git, so commit+push first; deploy.sh does NOT rsync the local tree.
+version: 1.1.0
 author: Philipp Rollmann
 tags:
   - homelab
