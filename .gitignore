@@ -38,3 +38,6 @@ agent/node_modules/
 
 # Rolly deployment secrets (never commit the real config)
 infra/rolly/config.env
+
+# Scratch dir — local HA exports, pairing QRs, prompt dumps (may hold secrets)
+.tmp/
