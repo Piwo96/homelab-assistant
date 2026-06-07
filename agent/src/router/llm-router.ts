@@ -1,4 +1,5 @@
-import { generateText, type LanguageModel } from 'ai';
+import { generateObject, NoObjectGeneratedError, type LanguageModel } from 'ai';
+import { z } from 'zod';
 import { log } from '../utils/logger';
 
 export interface RouterCandidate {
@@ -30,34 +31,15 @@ ${list}
 Letzte Nachrichten (Kontext):
 ${recent}
 
-Anfrage: "${input.msg}"
-
-Antwort als JSON (keine Erklärung, kein Markdown):
-{ "skill": "<name>" }  ODER  { "skill": null }`;
+Anfrage: "${input.msg}"`;
 }
 
-/** Strip ```json fences, find the first balanced {...} block, parse, validate. */
-export function parseRouterResponse(raw: string, candidates: string[]): RouterResult | null {
-  const stripped = raw.replace(/```(?:json)?/gi, '').trim();
-  const firstBrace = stripped.indexOf('{');
-  if (firstBrace < 0) return null;
-  for (let end = stripped.length; end > firstBrace; end--) {
-    const slice = stripped.slice(firstBrace, end);
-    if (!slice.endsWith('}')) continue;
-    try {
-      const parsed = JSON.parse(slice) as { skill?: unknown };
-      const skill = parsed?.skill;
-      if (skill === null) return null;
-      if (typeof skill === 'string' && candidates.includes(skill)) {
-        return { skillId: skill };
-      }
-      return null; // unknown / wrong type
-    } catch {
-      // try a shorter window
-    }
-  }
-  return null;
-}
+const routerSchema = z.object({
+  skill: z
+    .string()
+    .nullable()
+    .describe('Skill-ID aus der Skills-Liste oder null bei Smalltalk / außerhalb des Homelabs'),
+});
 
 export interface LlmRouterDeps {
   model: LanguageModel;
@@ -71,20 +53,36 @@ export function createLlmRouter(deps: LlmRouterDeps): LlmRouter {
   return {
     async pick(input: RouterInput): Promise<RouterResult | null> {
       const prompt = buildRouterPrompt(input);
+      const validIds = new Set(input.candidates.map(c => c.id));
       const t0 = Date.now();
       try {
-        const { text } = await generateText({
+        const { object } = await generateObject({
           model: deps.model,
           prompt,
+          schema: routerSchema,
+          mode: 'json',
           temperature: 0,
-          maxTokens: 50,
+          maxTokens: 200,
         });
-        const result = parseRouterResponse(text, input.candidates.map(c => c.id));
-        log.info('llm_router_decision', { ms: Date.now() - t0, result: result?.skillId ?? null, textLen: text.length });
-        return result;
-      } catch (err) {
-        log.warn('llm_router_call_failed', { err: String(err) });
+        const skill = object.skill;
+        if (typeof skill === 'string' && validIds.has(skill)) {
+          log.info('llm_router_decision', { ms: Date.now() - t0, result: skill });
+          return { skillId: skill };
+        }
+        log.info('llm_router_decision', { ms: Date.now() - t0, result: null, returned: skill });
         return null;
+      } catch (err) {
+        if (NoObjectGeneratedError.isInstance(err)) {
+          // Schema violation / no parseable JSON — treat as "no skill picked"
+          // (smalltalk fallback). The model produced output, just not valid.
+          log.warn('llm_router_no_object_generated', { err: String(err) });
+          return null;
+        }
+        // Network / HTTP / retry-exhausted / unknown — propagate so the
+        // pipeline's outer error handler surfaces a real error to the user
+        // instead of silently routing to smalltalk.
+        log.error('llm_router_call_failed', { err: String(err) });
+        throw err;
       }
     },
   };
